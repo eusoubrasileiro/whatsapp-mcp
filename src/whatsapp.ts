@@ -17,6 +17,7 @@ import {
   initializeDatabase,
   storeMessage,
   storeChat,
+  storeContact,
   type Message as DbMessage,
 } from "./database.ts";
 
@@ -154,7 +155,20 @@ export async function startWhatsAppConnection(
     if (events["messaging-history.set"]) {
       const { chats, contacts, messages, isLatest, progress, syncType } =
         events["messaging-history.set"];
+      if (contacts.length > 0) {
+        logger.info(`Storing ${contacts.length} contacts from history sync.`);
+        contacts.forEach((c) =>
+          storeContact({
+            jid: c.id,
+            name: c.name ?? null,
+            notify: c.notify ?? null,
+            phoneNumber: (c as any).phoneNumber ?? null,
+          })
+        );
+        logger.info(`Stored ${contacts.length} contacts from history sync.`);
+      }
 
+      logger.info(`Storing ${chats.length} chats from history sync.`);
       chats.forEach((chat) =>
         storeChat({
           jid: chat.id,
