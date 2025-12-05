@@ -63,14 +63,18 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
     return null;
   }
 
-  const timestampNum =
-    typeof msg.messageTimestamp === "number"
-      ? msg.messageTimestamp * 1000
-      : typeof msg.messageTimestamp === "bigint"
-      ? Number(msg.messageTimestamp) * 1000
-      : Date.now();
+  // Use WhatsApp's original message timestamp (seconds since epoch)
+  let timestampSeconds: number;
 
-  const timestamp = new Date(timestampNum);
+  if (msg.messageTimestamp != null) {
+    // Handles number, bigint, and Long-like objects
+    timestampSeconds = Number(msg.messageTimestamp);
+  } else {
+    // Fallback only if WA didn't give us a timestamp at all
+    timestampSeconds = Date.now() / 1000;
+  }
+
+  const timestamp = new Date(timestampSeconds * 1000);
 
   let senderJid: string | null | undefined = msg.key.participant;
   if (!msg.key.fromMe && !senderJid && !isJidGroup(msg.key.remoteJid)) {
