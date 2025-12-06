@@ -62,6 +62,15 @@ export function initializeDatabase(): DatabaseSync {
         );
     `);
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        jid TEXT PRIMARY KEY,
+        name TEXT,
+        notify TEXT,
+        phone_number TEXT
+      );
+    `);
+
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`,
   );
@@ -343,24 +352,31 @@ export function getMessagesAround(
 
 export function searchDbForContacts(
   query: string,
-  limit: number = 20,
-): Pick<Chat, "jid" | "name">[] {
+  limit: number = 20
+): { jid: string; name: string | null }[] {
   const db = getDb();
   try {
-    const searchPattern = `%${query}%`;
+    const pattern = `%${query}%`;
+
     const stmt = db.prepare(`
-            SELECT DISTINCT jid, name
-            FROM chats
-            WHERE (LOWER(name) LIKE LOWER(?) OR jid LIKE ?) -- Positional params 1, 2
-              AND jid NOT LIKE '%@g.us' -- Exclude groups
-            ORDER BY name ASC, jid ASC
-            LIMIT ?                                         -- Positional param 3
-        `);
-    const rows = stmt.all(searchPattern, searchPattern, limit) as Pick<
-      Chat,
-      "jid" | "name"
-    >[];
-    return rows.map((row) => ({ jid: row.jid, name: row.name ?? null }));
+      SELECT
+        jid,
+        COALESCE(name, notify, phone_number, jid) AS display_name
+      FROM contacts
+      WHERE
+        LOWER(COALESCE(name, notify, phone_number, jid)) LIKE LOWER(?)
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(pattern, limit) as {
+      jid: string;
+      display_name: string | null;
+    }[];
+
+    return rows.map((r) => ({
+      jid: r.jid,
+      name: r.display_name,
+    }));
   } catch (error) {
     console.error("Error searching contacts:", error);
     return [];
@@ -414,5 +430,33 @@ export function closeDatabase(): void {
     } catch (error) {
       console.error("Error closing database:", error);
     }
+  }
+}
+
+export function storeContact(contact: {
+  jid: string;
+  name?: string | null;
+  notify?: string | null;
+  phoneNumber?: string | null;
+}): void {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO contacts (jid, name, notify, phone_number)
+      VALUES (@jid, @name, @notify, @phone_number)
+      ON CONFLICT(jid) DO UPDATE SET
+        name = COALESCE(excluded.name, name),
+        notify = COALESCE(excluded.notify, notify),
+        phone_number = COALESCE(excluded.phone_number, phone_number)
+    `);
+
+    stmt.run({
+      jid: contact.jid,
+      name: contact.name ?? null,
+      notify: contact.notify ?? null,
+      phone_number: contact.phoneNumber ?? null,
+    });
+  } catch (error) {
+    console.error("Error storing contact:", error);
   }
 }

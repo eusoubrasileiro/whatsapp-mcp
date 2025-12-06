@@ -17,6 +17,7 @@ import {
   initializeDatabase,
   storeMessage,
   storeChat,
+  storeContact,
   type Message as DbMessage,
 } from "./database.ts";
 
@@ -62,14 +63,18 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
     return null;
   }
 
-  const timestampNum =
-    typeof msg.messageTimestamp === "number"
-      ? msg.messageTimestamp * 1000
-      : typeof msg.messageTimestamp === "bigint"
-      ? Number(msg.messageTimestamp) * 1000
-      : Date.now();
+  // Use WhatsApp's original message timestamp (seconds since epoch)
+  let timestampSeconds: number;
 
-  const timestamp = new Date(timestampNum);
+  if (msg.messageTimestamp != null) {
+    // Handles number, bigint, and Long-like objects
+    timestampSeconds = Number(msg.messageTimestamp);
+  } else {
+    // Fallback only if WA didn't give us a timestamp at all
+    timestampSeconds = Date.now() / 1000;
+  }
+
+  const timestamp = new Date(timestampSeconds * 1000);
 
   let senderJid: string | null | undefined = msg.key.participant;
   if (!msg.key.fromMe && !senderJid && !isJidGroup(msg.key.remoteJid)) {
@@ -142,7 +147,7 @@ export async function startWhatsAppConnection(
         }
       } else if (connection === "open") {
         logger.info(`Connection opened. WA user: ${sock.user?.name}`);
-        console.log("Logged as", sock.user?.name);
+        // console.log("Logged as", sock.user?.name);
       }
     }
 
@@ -154,7 +159,20 @@ export async function startWhatsAppConnection(
     if (events["messaging-history.set"]) {
       const { chats, contacts, messages, isLatest, progress, syncType } =
         events["messaging-history.set"];
+      if (contacts.length > 0) {
+        logger.info(`Storing ${contacts.length} contacts from history sync.`);
+        contacts.forEach((c) =>
+          storeContact({
+            jid: c.id,
+            name: c.name ?? null,
+            notify: c.notify ?? null,
+            phoneNumber: (c as any).phoneNumber ?? null,
+          })
+        );
+        logger.info(`Stored ${contacts.length} contacts from history sync.`);
+      }
 
+      logger.info(`Storing ${chats.length} chats from history sync.`);
       chats.forEach((chat) =>
         storeChat({
           jid: chat.id,
