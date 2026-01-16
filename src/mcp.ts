@@ -14,7 +14,7 @@ import {
   searchMessages,
 } from "./database.ts";
 
-import { sendWhatsAppMessage, type WhatsAppSocket } from "./whatsapp.ts";
+import { sendWhatsAppMessage, connectionState, type WhatsAppSocket } from "./whatsapp.ts";
 import { type P } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
@@ -66,6 +66,36 @@ export async function startMcpServer(
       resources: {},
     },
   });
+
+  server.tool(
+    "get_connection_status",
+    {},
+    async () => {
+      mcpLogger.info("[MCP Tool] Executing get_connection_status");
+      const result: Record<string, unknown> = {
+        status: connectionState.status,
+      };
+
+      if (connectionState.user) {
+        result.user = connectionState.user;
+      }
+
+      if (connectionState.status === 'qr_pending' && connectionState.qrUrl) {
+        result.qr_url = connectionState.qrUrl;
+        result.message = "Scan QR code with WhatsApp mobile app (Settings > Linked Devices)";
+      } else if (connectionState.status === 'connected') {
+        result.message = "WhatsApp is connected and ready";
+      } else if (connectionState.status === 'connecting') {
+        result.message = "Connecting to WhatsApp...";
+      } else {
+        result.message = "WhatsApp is disconnected";
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
 
   server.tool(
     "search_contacts",

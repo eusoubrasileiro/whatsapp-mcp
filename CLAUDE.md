@@ -36,6 +36,7 @@ src/
 
 | Tool | Description |
 |------|-------------|
+| `get_connection_status` | Check WhatsApp connection, get QR URL if auth needed |
 | `search_contacts` | Find contacts by name or JID |
 | `list_messages` | Get paginated message history for a chat |
 | `list_chats` | List all chats with filtering/sorting |
@@ -43,6 +44,12 @@ src/
 | `get_message_context` | Get messages around a target message |
 | `send_message` | Send text message to recipient |
 | `search_messages` | Full-text search across messages |
+
+## Authentication
+
+On first run or after logout, call `get_connection_status` to get a QR code URL.
+Scan the QR code with WhatsApp mobile (Settings > Linked Devices).
+Auth credentials are saved in `auth_info/` for subsequent runs.
 
 ## Environment Variables
 
