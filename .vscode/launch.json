@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run WhatsApp MCP (QR Setup)",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": ["--experimental-strip-types"],
+      "program": "${workspaceFolder}/src/main.ts",
+      "console": "integratedTerminal",
+      "env": {
+        "LOG_LEVEL": "info"
+      }
+    }
+  ]
+}
