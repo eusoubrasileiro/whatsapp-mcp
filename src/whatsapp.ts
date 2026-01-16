@@ -10,7 +10,6 @@ import {
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import path from "node:path";
-import open from "open";
 
 import {
   initializeDatabase,
@@ -23,6 +22,16 @@ import {
 const AUTH_DIR = path.join(import.meta.dirname, "..", "auth_info");
 
 export type WhatsAppSocket = ReturnType<typeof makeWASocket>;
+
+// Connection state for MCP tool access
+export type ConnectionStatus = 'disconnected' | 'qr_pending' | 'connecting' | 'connected';
+
+export const connectionState = {
+  status: 'disconnected' as ConnectionStatus,
+  qrCode: null as string | null,
+  qrUrl: null as string | null,
+  user: null as string | null,
+};
 
 function parseMessageForDb(msg: WAMessage): DbMessage | null {
   if (!msg.message || !msg.key || !msg.key.remoteJid) {
@@ -119,16 +128,27 @@ export async function startWhatsAppConnection(
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        connectionState.status = 'qr_pending';
+        connectionState.qrCode = qr;
+        connectionState.qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qr)}`;
         logger.info(
-          { qrCodeData: qr },
-          "QR Code Received. Copy the qrCodeData string and use a QR code generator (e.g., online website) to display and scan it with your WhatsApp app."
+          { qrCodeData: qr, qrUrl: connectionState.qrUrl },
+          "QR Code Received. Use get_connection_status tool to retrieve the QR URL."
         );
-        // for now we roughly open the QR code in a browser
-        await open(`https://quickchart.io/qr?text=${encodeURIComponent(qr)}`);
+      }
+
+      if (connection === "connecting") {
+        connectionState.status = 'connecting';
+        connectionState.qrCode = null;
+        connectionState.qrUrl = null;
       }
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+        connectionState.status = 'disconnected';
+        connectionState.qrCode = null;
+        connectionState.qrUrl = null;
+        connectionState.user = null;
         logger.warn(
           `Connection closed. Reason: ${
             DisconnectReason[statusCode as number] || "Unknown"
@@ -145,8 +165,11 @@ export async function startWhatsAppConnection(
           process.exit(1);
         }
       } else if (connection === "open") {
+        connectionState.status = 'connected';
+        connectionState.qrCode = null;
+        connectionState.qrUrl = null;
+        connectionState.user = sock.user?.name ?? null;
         logger.info(`Connection opened. WA user: ${sock.user?.name}`);
-        // console.log("Logged as", sock.user?.name);
       }
     }
 
