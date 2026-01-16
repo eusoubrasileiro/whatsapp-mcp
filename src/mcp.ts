@@ -15,7 +15,7 @@ import {
 } from "./database.ts";
 
 import { sendWhatsAppMessage, connectionState, type WhatsAppSocket } from "./whatsapp.ts";
-import { type P } from "pino";
+import type { Logger } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
   return {
@@ -53,18 +53,14 @@ function formatDbChatForJson(chat: DbChat) {
 
 export async function startMcpServer(
   sock: WhatsAppSocket | null,
-  mcpLogger: P.Logger,
-  waLogger: P.Logger,
+  mcpLogger: Logger,
+  waLogger: Logger,
 ): Promise<void> {
   mcpLogger.info("Initializing MCP server...");
 
   const server = new McpServer({
     name: "whatsapp-baileys-ts",
     version: "0.1.0",
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
   });
 
   server.tool(
