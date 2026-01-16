@@ -10,6 +10,7 @@ import {
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import path from "node:path";
+import qrcode from "qrcode-terminal";
 
 import {
   initializeDatabase,
@@ -29,9 +30,18 @@ export type ConnectionStatus = 'disconnected' | 'qr_pending' | 'connecting' | 'c
 export const connectionState = {
   status: 'disconnected' as ConnectionStatus,
   qrCode: null as string | null,
-  qrUrl: null as string | null,
+  qrAscii: null as string | null,
   user: null as string | null,
 };
+
+// Generate ASCII QR code
+function generateAsciiQR(data: string): Promise<string> {
+  return new Promise((resolve) => {
+    qrcode.generate(data, { small: true }, (qr: string) => {
+      resolve(qr);
+    });
+  });
+}
 
 function parseMessageForDb(msg: WAMessage): DbMessage | null {
   if (!msg.message || !msg.key || !msg.key.remoteJid) {
@@ -130,24 +140,23 @@ export async function startWhatsAppConnection(
       if (qr) {
         connectionState.status = 'qr_pending';
         connectionState.qrCode = qr;
-        connectionState.qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qr)}`;
-        logger.info(
-          { qrCodeData: qr, qrUrl: connectionState.qrUrl },
-          "QR Code Received. Use get_connection_status tool to retrieve the QR URL."
-        );
+        connectionState.qrAscii = await generateAsciiQR(qr);
+        logger.info("QR Code Received. Use get_connection_status tool to retrieve the QR code.");
+        // Also print to stderr so it shows in terminal
+        console.error("\n" + connectionState.qrAscii);
       }
 
       if (connection === "connecting") {
         connectionState.status = 'connecting';
         connectionState.qrCode = null;
-        connectionState.qrUrl = null;
+        connectionState.qrAscii = null;
       }
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         connectionState.status = 'disconnected';
         connectionState.qrCode = null;
-        connectionState.qrUrl = null;
+        connectionState.qrAscii = null;
         connectionState.user = null;
         logger.warn(
           `Connection closed. Reason: ${
@@ -167,7 +176,7 @@ export async function startWhatsAppConnection(
       } else if (connection === "open") {
         connectionState.status = 'connected';
         connectionState.qrCode = null;
-        connectionState.qrUrl = null;
+        connectionState.qrAscii = null;
         connectionState.user = sock.user?.name ?? null;
         logger.info(`Connection opened. WA user: ${sock.user?.name}`);
       }
