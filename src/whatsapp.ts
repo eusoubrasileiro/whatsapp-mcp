@@ -5,7 +5,6 @@ import {
   makeCacheableSignalKeyStore,
   DisconnectReason,
   type WAMessage,
-  type proto,
   isJidGroup,
   jidNormalizedUser,
 } from "@whiskeysockets/baileys";
@@ -173,15 +172,16 @@ export async function startWhatsAppConnection(
       }
 
       logger.info(`Storing ${chats.length} chats from history sync.`);
-      chats.forEach((chat) =>
+      chats.forEach((chat) => {
+        if (!chat.id) return;
         storeChat({
           jid: chat.id,
           name: chat.name,
           last_message_time: chat.conversationTimestamp
             ? new Date(Number(chat.conversationTimestamp) * 1000)
             : undefined,
-        })
-      );
+        });
+      });
 
       let storedCount = 0;
       messages.forEach((msg) => {
@@ -250,7 +250,7 @@ export async function sendWhatsAppMessage(
   sock: WhatsAppSocket | null,
   recipientJid: string,
   text: string
-): Promise<proto.WebMessageInfo | void> {
+): Promise<WAMessage | void> {
   if (!sock || !sock.user) {
     logger.error(
       "Cannot send message: WhatsApp socket not connected or initialized."
