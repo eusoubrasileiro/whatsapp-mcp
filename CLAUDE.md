@@ -21,6 +21,7 @@ First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Lin
 |---------|-------------|
 | `npm start` | Run TypeScript directly with Node |
 | `npm run typecheck` | Type check with tsc |
+| `npm test` | Run tests with vitest |
 
 ## Architecture
 
