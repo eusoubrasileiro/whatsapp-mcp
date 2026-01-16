@@ -174,11 +174,17 @@ export async function startWhatsAppConnection(
           process.exit(1);
         }
       } else if (connection === "open") {
-        connectionState.status = 'connected';
-        connectionState.qrCode = null;
-        connectionState.qrAscii = null;
-        connectionState.user = sock.user?.name ?? null;
-        logger.info(`Connection opened. WA user: ${sock.user?.name}`);
+        // Only mark as connected when sock.user is available
+        if (sock.user) {
+          connectionState.status = 'connected';
+          connectionState.qrCode = null;
+          connectionState.qrAscii = null;
+          connectionState.user = sock.user.name ?? null;
+          logger.info(`Connection opened. WA user: ${sock.user.name}`);
+        } else {
+          connectionState.status = 'connecting';
+          logger.info("Connection opened but waiting for user info...");
+        }
       }
     }
 
