@@ -13,7 +13,6 @@ import path from "node:path";
 import qrcode from "qrcode-terminal";
 
 import {
-  initializeDatabase,
   storeMessage,
   storeChat,
   storeContact,
@@ -33,6 +32,31 @@ export const connectionState = {
   qrAscii: null as string | null,
   user: null as string | null,
 };
+
+// Socket state container (updated on reconnect)
+export const socketState = {
+  socket: null as WhatsAppSocket | null,
+};
+
+// Reconnection backoff state
+const reconnectState = {
+  attempts: 0,
+  maxAttempts: 10,
+  baseDelayMs: 1000,
+  maxDelayMs: 60000,
+};
+
+function getReconnectDelay(): number {
+  const delay = Math.min(
+    reconnectState.baseDelayMs * Math.pow(2, reconnectState.attempts),
+    reconnectState.maxDelayMs
+  );
+  return delay;
+}
+
+function resetReconnectState(): void {
+  reconnectState.attempts = 0;
+}
 
 // Generate ASCII QR code
 function generateAsciiQR(data: string): Promise<string> {
@@ -115,8 +139,6 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
 export async function startWhatsAppConnection(
   logger: P.Logger
 ): Promise<WhatsAppSocket> {
-  initializeDatabase();
-
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version, isLatest } = await fetchLatestBaileysVersion();
   logger.info(`Using WA v${version.join(".")}, isLatest: ${isLatest}`);
@@ -131,6 +153,9 @@ export async function startWhatsAppConnection(
     generateHighQualityLinkPreview: true,
     shouldIgnoreJid: (jid) => isJidGroup(jid),
   });
+
+  // Update shared socket reference for use by MCP tools
+  socketState.socket = sock;
 
   sock.ev.process(async (events) => {
     if (events["connection.update"]) {
@@ -158,6 +183,7 @@ export async function startWhatsAppConnection(
         connectionState.qrCode = null;
         connectionState.qrAscii = null;
         connectionState.user = null;
+        socketState.socket = null;
         logger.warn(
           { err: lastDisconnect?.error },
           `Connection closed. Reason: ${
@@ -165,8 +191,18 @@ export async function startWhatsAppConnection(
           }`
         );
         if (statusCode !== DisconnectReason.loggedOut) {
-          logger.info("Reconnecting...");
-          startWhatsAppConnection(logger);
+          reconnectState.attempts++;
+          if (reconnectState.attempts > reconnectState.maxAttempts) {
+            logger.error(
+              `Max reconnection attempts (${reconnectState.maxAttempts}) exceeded. Giving up.`
+            );
+            process.exit(1);
+          }
+          const delay = getReconnectDelay();
+          logger.info(
+            `Reconnecting in ${delay}ms (attempt ${reconnectState.attempts}/${reconnectState.maxAttempts})...`
+          );
+          setTimeout(() => startWhatsAppConnection(logger), delay);
         } else {
           logger.error(
             "Connection closed: Logged Out. Please delete auth_info and restart."
@@ -180,6 +216,7 @@ export async function startWhatsAppConnection(
           connectionState.qrCode = null;
           connectionState.qrAscii = null;
           connectionState.user = sock.user.name ?? null;
+          resetReconnectState(); // Reset backoff on successful connection
           logger.info(`Connection opened. WA user: ${sock.user.name}`);
         } else {
           connectionState.status = 'connecting';
@@ -285,10 +322,10 @@ export async function startWhatsAppConnection(
 
 export async function sendWhatsAppMessage(
   logger: P.Logger,
-  sock: WhatsAppSocket | null,
   recipientJid: string,
   text: string
 ): Promise<WAMessage | void> {
+  const sock = socketState.socket;
   if (!sock || !sock.user) {
     logger.error(
       "Cannot send message: WhatsApp socket not connected or initialized."

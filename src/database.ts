@@ -1,9 +1,33 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import fs from "node:fs";
+import type { Logger } from "pino";
 
 const DATA_DIR = path.join(import.meta.dirname, "..", "data");
 const DB_PATH = path.join(DATA_DIR, "whatsapp.db");
+
+// Module-level logger (can be set via setLogger)
+let dbLogger: Logger | null = null;
+
+export function setDatabaseLogger(logger: Logger): void {
+  dbLogger = logger;
+}
+
+function logError(message: string, error?: unknown): void {
+  if (dbLogger) {
+    dbLogger.error({ err: error }, message);
+  } else {
+    console.error(message, error);
+  }
+}
+
+function logInfo(message: string): void {
+  if (dbLogger) {
+    dbLogger.info(message);
+  } else {
+    console.log(message);
+  }
+}
 
 export interface Chat {
   jid: string;
@@ -108,7 +132,7 @@ export function storeChat(chat: Partial<Chat> & { jid: string }): void {
             : String(chat.last_message_time),
     });
   } catch (error) {
-    console.error("Error storing chat:", error);
+    logError("Error storing chat", error);
   }
 }
 
@@ -141,7 +165,7 @@ export function storeMessage(message: Message): void {
       jid: message.chat_jid,
     });
   } catch (error) {
-    console.error("Error storing message:", error);
+    logError("Error storing message", error);
   }
 }
 
@@ -199,7 +223,7 @@ export function getMessages(
     const rows = stmt.all(chatJid, limit, offset) as any[];
     return rows.map(rowToMessage);
   } catch (error) {
-    console.error("Error getting messages:", error);
+    logError("Error getting messages", error);
     return [];
   }
 }
@@ -251,7 +275,7 @@ export function getChats(
     const rows = stmt.all(...params) as any[];
     return rows.map(rowToChat);
   } catch (error) {
-    console.error("Error getting chats:", error);
+    logError("Error getting chats", error);
     return [];
   }
 }
@@ -284,7 +308,7 @@ export function getChat(
     const row = stmt.get(jid) as any | undefined;
     return row ? rowToChat(row) : null;
   } catch (error) {
-    console.error("Error getting chat:", error);
+    logError("Error getting chat", error);
     return null;
   }
 }
@@ -345,7 +369,7 @@ export function getMessagesAround(
 
     return result;
   } catch (error) {
-    console.error("Error getting messages around:", error);
+    logError("Error getting messages around", error);
     return result;
   }
 }
@@ -378,7 +402,7 @@ export function searchDbForContacts(
       name: r.display_name,
     }));
   } catch (error) {
-    console.error("Error searching contacts:", error);
+    logError("Error searching contacts", error);
     return [];
   }
 }
@@ -416,7 +440,7 @@ export function searchMessages(
     const rows = stmt.all(...params) as any[]; 
     return rows.map(rowToMessage);
   } catch (error) {
-    console.error("Error searching messages:", error);
+    logError("Error searching messages", error);
     return [];
   }
 }
@@ -426,9 +450,9 @@ export function closeDatabase(): void {
     try {
       dbInstance.close();
       dbInstance = null;
-      console.log("Database connection closed.");
+      logInfo("Database connection closed.");
     } catch (error) {
-      console.error("Error closing database:", error);
+      logError("Error closing database", error);
     }
   }
 }
@@ -457,6 +481,6 @@ export function storeContact(contact: {
       phone_number: contact.phoneNumber ?? null,
     });
   } catch (error) {
-    console.error("Error storing contact:", error);
+    logError("Error storing contact", error);
   }
 }

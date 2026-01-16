@@ -18,7 +18,9 @@
   },
   "scripts": {
     "start": "node --experimental-strip-types src/main.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
@@ -29,7 +31,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.14",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.17"
   },
   "engines": {
     "node": ">=23.10.0"

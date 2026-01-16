@@ -14,7 +14,7 @@ import {
   searchMessages,
 } from "./database.ts";
 
-import { sendWhatsAppMessage, connectionState, type WhatsAppSocket } from "./whatsapp.ts";
+import { sendWhatsAppMessage, connectionState, socketState } from "./whatsapp.ts";
 import type { Logger } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
@@ -52,7 +52,6 @@ function formatDbChatForJson(chat: DbChat) {
 }
 
 export async function startMcpServer(
-  sock: WhatsAppSocket | null,
   mcpLogger: Logger,
   waLogger: Logger,
 ): Promise<void> {
@@ -428,7 +427,7 @@ export async function startMcpServer(
     },
     async ({ recipient, message }) => {
       mcpLogger.info(`[MCP Tool] Executing send_message to ${recipient}`);
-      if (!sock) {
+      if (!socketState.socket) {
         mcpLogger.error(
           "[MCP Tool Error] send_message failed: WhatsApp socket is not available.",
         );
@@ -464,7 +463,6 @@ export async function startMcpServer(
       try {
         const result = await sendWhatsAppMessage(
           waLogger,
-          sock,
           normalizedRecipient,
           message,
         );
