@@ -72,6 +72,14 @@ export async function startMcpServer(
     {},
     async () => {
       mcpLogger.info("[MCP Tool] Executing get_connection_status");
+
+      if (connectionState.status === 'qr_pending' && connectionState.qrAscii) {
+        const message = `Status: ${connectionState.status}\n\nScan this QR code with WhatsApp mobile app (Settings > Linked Devices):\n\n${connectionState.qrAscii}`;
+        return {
+          content: [{ type: "text", text: message }],
+        };
+      }
+
       const result: Record<string, unknown> = {
         status: connectionState.status,
       };
@@ -80,10 +88,7 @@ export async function startMcpServer(
         result.user = connectionState.user;
       }
 
-      if (connectionState.status === 'qr_pending' && connectionState.qrUrl) {
-        result.qr_url = connectionState.qrUrl;
-        result.message = "Scan QR code with WhatsApp mobile app (Settings > Linked Devices)";
-      } else if (connectionState.status === 'connected') {
+      if (connectionState.status === 'connected') {
         result.message = "WhatsApp is connected and ready";
       } else if (connectionState.status === 'connecting') {
         result.message = "Connecting to WhatsApp...";
