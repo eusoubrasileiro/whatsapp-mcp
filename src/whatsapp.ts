@@ -159,10 +159,10 @@ export async function startWhatsAppConnection(
         connectionState.qrAscii = null;
         connectionState.user = null;
         logger.warn(
+          { err: lastDisconnect?.error },
           `Connection closed. Reason: ${
             DisconnectReason[statusCode as number] || "Unknown"
-          }`,
-          lastDisconnect?.error
+          }`
         );
         if (statusCode !== DisconnectReason.loggedOut) {
           logger.info("Reconnecting...");
