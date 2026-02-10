@@ -4,7 +4,11 @@ import {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   DisconnectReason,
+  downloadContentFromMessage,
+  toBuffer,
+  getUrlFromDirectPath,
   type WAMessage,
+  type MediaType,
   isJidGroup,
   jidNormalizedUser,
 } from "@whiskeysockets/baileys";
@@ -22,6 +26,78 @@ import {
 } from "./database.ts";
 
 const AUTH_DIR = path.join(import.meta.dirname, "..", "auth_info");
+const DATA_DIR = path.join(import.meta.dirname, "..", "data");
+
+export type MediaInfo = {
+  media_type: string;
+  mimetype: string | null;
+  media_key: string | null;  // base64
+  direct_path: string | null;
+  media_url: string | null;
+  file_length: number | null;
+  file_sha256: string | null;    // base64
+  file_enc_sha256: string | null; // base64
+};
+
+function uint8ArrayToBase64(arr: Uint8Array | Buffer | null | undefined): string | null {
+  if (!arr) return null;
+  return Buffer.from(arr).toString('base64');
+}
+
+const mimetypeToExtension: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'audio/ogg': 'ogg',
+  'audio/ogg; codecs=opus': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/zip': 'zip',
+  'text/plain': 'txt',
+};
+
+export function extractMediaInfo(message: WAMessage['message']): MediaInfo | null {
+  if (!message) return null;
+
+  const mediaTypes = [
+    { key: 'imageMessage' as const, type: 'image' },
+    { key: 'videoMessage' as const, type: 'video' },
+    { key: 'audioMessage' as const, type: 'audio' },
+    { key: 'documentMessage' as const, type: 'document' },
+    { key: 'stickerMessage' as const, type: 'sticker' },
+  ];
+
+  for (const { key, type } of mediaTypes) {
+    const media = message[key];
+    if (!media) continue;
+
+    let mediaType = type;
+    // Voice notes (ptt) use 'ptt' mediaType, not 'audio'
+    if (key === 'audioMessage' && (media as any).ptt === true) {
+      mediaType = 'ptt';
+    }
+
+    return {
+      media_type: mediaType,
+      mimetype: (media as any).mimetype ?? null,
+      media_key: uint8ArrayToBase64((media as any).mediaKey),
+      direct_path: (media as any).directPath ?? null,
+      media_url: (media as any).url ?? null,
+      file_length: (media as any).fileLength ? Number((media as any).fileLength) : null,
+      file_sha256: uint8ArrayToBase64((media as any).fileSha256),
+      file_enc_sha256: uint8ArrayToBase64((media as any).fileEncSha256),
+    };
+  }
+
+  return null;
+}
 
 export type WhatsAppSocket = ReturnType<typeof makeWASocket>;
 
@@ -110,6 +186,8 @@ export function parseMessageForDb(msg: WAMessage): DbMessage | null {
     senderJid = null;
   }
 
+  const mediaInfo = extractMediaInfo(msg.message);
+
   return {
     id: msg.key.id!,
     chat_jid: msg.key.remoteJid,
@@ -117,6 +195,14 @@ export function parseMessageForDb(msg: WAMessage): DbMessage | null {
     content: content,
     timestamp: timestamp,
     is_from_me: msg.key.fromMe ?? false,
+    media_type: mediaInfo?.media_type ?? null,
+    mimetype: mediaInfo?.mimetype ?? null,
+    media_key: mediaInfo?.media_key ?? null,
+    direct_path: mediaInfo?.direct_path ?? null,
+    media_url: mediaInfo?.media_url ?? null,
+    file_length: mediaInfo?.file_length ?? null,
+    file_sha256: mediaInfo?.file_sha256 ?? null,
+    file_enc_sha256: mediaInfo?.file_enc_sha256 ?? null,
   };
 }
 
@@ -393,4 +479,44 @@ export async function sendWhatsAppMedia(
     logger.error({ err: error, recipientJid, filePath }, "Failed to send media");
     return;
   }
+}
+
+export async function downloadMedia(
+  logger: P.Logger,
+  mediaKey: string,       // base64-encoded
+  directPath: string,
+  mediaUrl: string | null,
+  mediaType: string,
+  mimetype: string | null,
+  chatJid: string,
+  messageId: string,
+): Promise<string> {
+  // Create media directory
+  const sanitizedChatJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, '_');
+  const mediaDir = path.join(DATA_DIR, 'media', sanitizedChatJid);
+  fs.mkdirSync(mediaDir, { recursive: true });
+
+  // Convert base64 mediaKey back to Uint8Array
+  const mediaKeyBuffer = new Uint8Array(Buffer.from(mediaKey, 'base64'));
+
+  // Refresh URL from directPath
+  const refreshedUrl = getUrlFromDirectPath(directPath);
+
+  logger.info({ messageId, mediaType, directPath }, "Downloading media");
+
+  const stream = await downloadContentFromMessage(
+    { mediaKey: mediaKeyBuffer, directPath, url: refreshedUrl || mediaUrl || undefined },
+    mediaType as MediaType,
+  );
+  const buffer = await toBuffer(stream);
+
+  // Determine file extension
+  const ext = (mimetype && mimetypeToExtension[mimetype]) || 'bin';
+  const fileName = `${messageId}.${ext}`;
+  const filePath = path.join(mediaDir, fileName);
+
+  fs.writeFileSync(filePath, buffer);
+  logger.info({ filePath, size: buffer.length }, "Media downloaded successfully");
+
+  return filePath;
 }

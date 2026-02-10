@@ -14,14 +14,17 @@ import {
   getMessagesWithDateFilter,
   searchDbForContacts,
   searchMessages,
+  getMessageById,
+  updateMessageMediaLocalPath,
 } from "./database.ts";
 
-import { sendWhatsAppMessage, sendWhatsAppMedia, connectionState, socketState } from "./whatsapp.ts";
+import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, connectionState, socketState } from "./whatsapp.ts";
+import fs from "node:fs";
 import type { Logger } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
   const contactName = msg.sender ? getContactName(msg.sender) : null;
-  return {
+  const result: Record<string, unknown> = {
     id: msg.id,
     chat_jid: msg.chat_jid,
     chat_name: msg.chat_name ?? "Unknown Chat",
@@ -33,6 +36,18 @@ function formatDbMessageForJson(msg: DbMessage) {
     timestamp: msg.timestamp.toISOString(),
     is_from_me: msg.is_from_me,
   };
+
+  if (msg.media_type) {
+    result.media = {
+      type: msg.media_type,
+      mimetype: msg.mimetype,
+      file_size: msg.file_length,
+      downloaded: !!msg.media_local_path,
+      local_path: msg.media_local_path ?? null,
+    };
+  }
+
+  return result;
 }
 
 function formatDbChatForJson(chat: DbChat) {
@@ -448,6 +463,62 @@ export async function startMcpServer(
       await socketState.socket.readMessages([{ remoteJid: chat_jid, id: undefined! }]);
 
       return `Chat ${chat_jid} marked as read.`;
+    },
+  });
+
+  // ── Media Download ──────────────────────────────────────────────
+
+  server.addTool({
+    name: "download_media",
+    description: "Download media (image, video, audio, document, sticker) from a WhatsApp message to local disk",
+    parameters: z.object({
+      message_id: z.string().describe("The ID of the message containing media"),
+      chat_jid: z.string().describe("The JID of the chat where the message is"),
+    }),
+    execute: async ({ message_id, chat_jid }) => {
+      mcpLogger.info(`[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid}`);
+
+      const message = getMessageById(message_id, chat_jid);
+      if (!message) {
+        throw new Error(`Message ${message_id} not found in chat ${chat_jid}.`);
+      }
+
+      if (!message.media_type || !message.media_key || !message.direct_path) {
+        throw new Error(`Message ${message_id} does not contain downloadable media or media metadata is missing.`);
+      }
+
+      // Check if already downloaded
+      if (message.media_local_path && fs.existsSync(message.media_local_path)) {
+        mcpLogger.info(`[MCP Tool] Media already downloaded: ${message.media_local_path}`);
+        return JSON.stringify({
+          status: "already_downloaded",
+          file_path: message.media_local_path,
+          media_type: message.media_type,
+          mimetype: message.mimetype,
+          file_size: message.file_length,
+        }, null, 2);
+      }
+
+      const filePath = await downloadMedia(
+        waLogger,
+        message.media_key,
+        message.direct_path,
+        message.media_url ?? null,
+        message.media_type,
+        message.mimetype ?? null,
+        chat_jid,
+        message_id,
+      );
+
+      updateMessageMediaLocalPath(message_id, chat_jid, filePath);
+
+      return JSON.stringify({
+        status: "downloaded",
+        file_path: filePath,
+        media_type: message.media_type,
+        mimetype: message.mimetype,
+        file_size: message.file_length,
+      }, null, 2);
     },
   });
 

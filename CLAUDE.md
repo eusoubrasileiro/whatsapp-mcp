@@ -28,14 +28,14 @@ First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Lin
 ```
 src/
 ├── main.ts        # Entry point, logging setup, graceful shutdown
-├── mcp.ts         # MCP server, tool definitions (16 tools)
+├── mcp.ts         # MCP server, tool definitions (17 tools)
 ├── whatsapp.ts    # Baileys integration, message sync, p-retry reconnection
 ├── database.ts    # Drizzle ORM + better-sqlite3 (chats, messages, contacts)
 └── db/
     └── schema.ts  # Drizzle table schemas
 ```
 
-## MCP Tools (16 total)
+## MCP Tools (17 total)
 
 ### Connection / Auth
 | Tool | Description |
@@ -81,6 +81,11 @@ src/
 | `delete_message` | Delete/revoke a message you sent |
 | `mark_chat_read` | Mark all messages in chat as read |
 
+### Media
+| Tool | Description |
+|------|-------------|
+| `download_media` | Download media (image/video/audio/document/sticker) from a message to local disk |
+
 ## Authentication
 
 On first run or after logout, call `get_connection_status` to get a QR code URL.
@@ -98,6 +103,7 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
+- `data/media/` - Downloaded media files (organized by chat JID)
 - `wa-logs.txt` - WhatsApp/Baileys logs
 - `mcp-logs.txt` - MCP server logs
 
@@ -183,6 +189,15 @@ CREATE TABLE messages (
   content TEXT,
   timestamp TEXT,
   is_from_me INTEGER,
+  media_type TEXT,        -- 'image'|'video'|'audio'|'ptt'|'document'|'sticker'
+  mimetype TEXT,          -- e.g. 'image/jpeg'
+  media_key TEXT,         -- base64 encryption key
+  direct_path TEXT,       -- WhatsApp CDN path
+  media_url TEXT,         -- full CDN URL (may expire)
+  file_length INTEGER,    -- file size in bytes
+  file_sha256 TEXT,       -- base64 hash
+  file_enc_sha256 TEXT,   -- base64 encrypted hash
+  media_local_path TEXT,  -- local path after download
   PRIMARY KEY (id, chat_jid),
   FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 );
