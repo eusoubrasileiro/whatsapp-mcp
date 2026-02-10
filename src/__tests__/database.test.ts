@@ -14,6 +14,8 @@ import {
   getMessagesWithDateFilter,
   searchDbForContacts,
   searchMessages,
+  getMessageById,
+  updateMessageMediaLocalPath,
   type Message,
 } from "../database.ts";
 
@@ -310,6 +312,125 @@ describe("database", () => {
       }));
       const msgs = searchMessages("hello", null, "2025-01-01T00:00:00Z", null, 10, 0);
       expect(msgs).toHaveLength(2); // m1 and m3, not m4
+    });
+  });
+
+  // ── Media metadata storage ──────────────────────────────────────
+
+  describe("media metadata", () => {
+    it("stores and retrieves media metadata", () => {
+      storeMessage(makeMsg({
+        id: "media1",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "[Image] Nice photo",
+        media_type: "image",
+        mimetype: "image/jpeg",
+        media_key: "AQID",
+        direct_path: "/v/t62.1234/image.enc",
+        media_url: "https://mmg.whatsapp.net/image.enc",
+        file_length: 54321,
+        file_sha256: "ChQe",
+        file_enc_sha256: "KDI8",
+      }));
+
+      const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].media_type).toBe("image");
+      expect(msgs[0].mimetype).toBe("image/jpeg");
+      expect(msgs[0].media_key).toBe("AQID");
+      expect(msgs[0].direct_path).toBe("/v/t62.1234/image.enc");
+      expect(msgs[0].file_length).toBe(54321);
+    });
+
+    it("preserves media metadata on upsert with COALESCE", () => {
+      storeMessage(makeMsg({
+        id: "media2",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "[Image]",
+        media_type: "image",
+        media_key: "KEY123",
+        direct_path: "/path/img.enc",
+      }));
+
+      // Re-store without media fields (simulating a text-only update)
+      storeMessage(makeMsg({
+        id: "media2",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "[Image] Updated",
+      }));
+
+      const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
+      expect(msgs[0].media_key).toBe("KEY123");
+      expect(msgs[0].direct_path).toBe("/path/img.enc");
+      expect(msgs[0].content).toBe("[Image] Updated");
+    });
+
+    it("text messages have null media fields", () => {
+      storeMessage(makeMsg({
+        id: "text1",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "Just text",
+      }));
+
+      const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
+      expect(msgs[0].media_type).toBeNull();
+      expect(msgs[0].media_key).toBeNull();
+      expect(msgs[0].media_local_path).toBeNull();
+    });
+  });
+
+  // ── getMessageById ─────────────────────────────────────────────
+
+  describe("getMessageById", () => {
+    it("retrieves a specific message by id and chat_jid", () => {
+      storeMessage(makeMsg({
+        id: "specific1",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "Find me",
+        media_type: "image",
+        media_key: "KEY",
+      }));
+
+      const msg = getMessageById("specific1", "chat@s.whatsapp.net");
+      expect(msg).not.toBeNull();
+      expect(msg!.content).toBe("Find me");
+      expect(msg!.media_type).toBe("image");
+    });
+
+    it("returns null for nonexistent message", () => {
+      const msg = getMessageById("nonexistent", "chat@s.whatsapp.net");
+      expect(msg).toBeNull();
+    });
+
+    it("returns null when id matches but chat_jid differs", () => {
+      storeMessage(makeMsg({
+        id: "msg_in_chat_a",
+        chat_jid: "chatA@s.whatsapp.net",
+        content: "In chat A",
+      }));
+
+      const msg = getMessageById("msg_in_chat_a", "chatB@s.whatsapp.net");
+      expect(msg).toBeNull();
+    });
+  });
+
+  // ── updateMessageMediaLocalPath ────────────────────────────────
+
+  describe("updateMessageMediaLocalPath", () => {
+    it("updates the media_local_path field", () => {
+      storeMessage(makeMsg({
+        id: "dl1",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "[Image]",
+        media_type: "image",
+        media_key: "KEY",
+      }));
+
+      updateMessageMediaLocalPath("dl1", "chat@s.whatsapp.net", "/data/media/dl1.jpg");
+
+      const msg = getMessageById("dl1", "chat@s.whatsapp.net");
+      expect(msg).not.toBeNull();
+      expect(msg!.media_local_path).toBe("/data/media/dl1.jpg");
     });
   });
 });

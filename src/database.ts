@@ -49,6 +49,16 @@ export type Message = {
   timestamp: Date;
   is_from_me: boolean;
   chat_name?: string | null;
+  // Media fields (optional, populated for media messages)
+  media_type?: string | null;
+  mimetype?: string | null;
+  media_key?: string | null;
+  direct_path?: string | null;
+  media_url?: string | null;
+  file_length?: number | null;
+  file_sha256?: string | null;
+  file_enc_sha256?: string | null;
+  media_local_path?: string | null;
 };
 
 let sqliteInstance: Database.Database | null = null;
@@ -120,6 +130,27 @@ export function initializeDatabase(dbPath?: string): Database.Database {
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats (last_message_time);`);
 
+  // Media columns migration (safe to run on existing DBs)
+  const mediaColumns = [
+    ['media_type', 'TEXT'],
+    ['mimetype', 'TEXT'],
+    ['media_key', 'TEXT'],
+    ['direct_path', 'TEXT'],
+    ['media_url', 'TEXT'],
+    ['file_length', 'INTEGER'],
+    ['file_sha256', 'TEXT'],
+    ['file_enc_sha256', 'TEXT'],
+    ['media_local_path', 'TEXT'],
+  ] as const;
+  for (const [col, type] of mediaColumns) {
+    try {
+      sqlite.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type};`);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages (media_type);`);
+
   return sqlite;
 }
 
@@ -160,6 +191,15 @@ export function storeMessage(message: Message): void {
         content: message.content,
         timestamp: message.timestamp.toISOString(),
         isFromMe: message.is_from_me,
+        mediaType: message.media_type ?? null,
+        mimetype: message.mimetype ?? null,
+        mediaKey: message.media_key ?? null,
+        directPath: message.direct_path ?? null,
+        mediaUrl: message.media_url ?? null,
+        fileLength: message.file_length ?? null,
+        fileSha256: message.file_sha256 ?? null,
+        fileEncSha256: message.file_enc_sha256 ?? null,
+        mediaLocalPath: message.media_local_path ?? null,
       })
       .onConflictDoUpdate({
         target: [schema.messages.id, schema.messages.chatJid],
@@ -168,6 +208,14 @@ export function storeMessage(message: Message): void {
             content: message.content,
             timestamp: message.timestamp.toISOString(),
             isFromMe: message.is_from_me,
+            mediaType: sql`COALESCE(excluded.media_type, messages.media_type)`,
+            mimetype: sql`COALESCE(excluded.mimetype, messages.mimetype)`,
+            mediaKey: sql`COALESCE(excluded.media_key, messages.media_key)`,
+            directPath: sql`COALESCE(excluded.direct_path, messages.direct_path)`,
+            mediaUrl: sql`COALESCE(excluded.media_url, messages.media_url)`,
+            fileLength: sql`COALESCE(excluded.file_length, messages.file_length)`,
+            fileSha256: sql`COALESCE(excluded.file_sha256, messages.file_sha256)`,
+            fileEncSha256: sql`COALESCE(excluded.file_enc_sha256, messages.file_enc_sha256)`,
         }
       })
       .run();
@@ -204,6 +252,15 @@ function rowToMessage(row: any): Message {
     timestamp: parseDateSafe(row.timestamp)!,
     is_from_me: row.is_from_me ?? false,
     chat_name: row.chat_name,
+    media_type: row.media_type ?? null,
+    mimetype: row.mimetype ?? null,
+    media_key: row.media_key ?? null,
+    direct_path: row.direct_path ?? null,
+    media_url: row.media_url ?? null,
+    file_length: row.file_length ?? null,
+    file_sha256: row.file_sha256 ?? null,
+    file_enc_sha256: row.file_enc_sha256 ?? null,
+    media_local_path: row.media_local_path ?? null,
   };
 }
 
@@ -215,6 +272,15 @@ const messageColumns = {
   timestamp: schema.messages.timestamp,
   is_from_me: schema.messages.isFromMe,
   chat_name: schema.chats.name,
+  media_type: schema.messages.mediaType,
+  mimetype: schema.messages.mimetype,
+  media_key: schema.messages.mediaKey,
+  direct_path: schema.messages.directPath,
+  media_url: schema.messages.mediaUrl,
+  file_length: schema.messages.fileLength,
+  file_sha256: schema.messages.fileSha256,
+  file_enc_sha256: schema.messages.fileEncSha256,
+  media_local_path: schema.messages.mediaLocalPath,
 };
 
 export function getMessages(
@@ -487,6 +553,34 @@ export function searchMessages(
   }
 }
 
+export function getMessageById(messageId: string, chatJid: string): Message | null {
+  const db = getDb();
+  try {
+    const row = db.select(messageColumns)
+      .from(schema.messages)
+      .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+      .get();
+
+    return row ? rowToMessage(row) : null;
+  } catch (error) {
+    logError("Error getting message by id", error);
+    return null;
+  }
+}
+
+export function updateMessageMediaLocalPath(messageId: string, chatJid: string, localPath: string): void {
+  const db = getDb();
+  try {
+    db.update(schema.messages)
+      .set({ mediaLocalPath: localPath })
+      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+      .run();
+  } catch (error) {
+    logError("Error updating media local path", error);
+  }
+}
+
 export function closeDatabase(): void {
   if (sqliteInstance) {
     try {
@@ -593,15 +687,7 @@ export function getMessagesWithDateFilter(
       filters.push(lt(schema.messages.timestamp, toDate));
     }
 
-    const rows = db.select({
-      id: schema.messages.id,
-      chat_jid: schema.messages.chatJid,
-      sender: schema.messages.sender,
-      content: schema.messages.content,
-      timestamp: schema.messages.timestamp,
-      is_from_me: schema.messages.isFromMe,
-      chat_name: schema.chats.name,
-    })
+    const rows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
     .where(filters.length > 0 ? and(...filters) : undefined)

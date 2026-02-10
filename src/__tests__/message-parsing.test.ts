@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMessageForDb } from "../whatsapp.ts";
+import { parseMessageForDb, extractMediaInfo } from "../whatsapp.ts";
 import type { WAMessage } from "@whiskeysockets/baileys";
 
 function makeWAMsg(overrides: Partial<WAMessage> = {}): WAMessage {
@@ -176,5 +176,123 @@ describe("parseMessageForDb", () => {
       },
     }));
     expect(result!.sender).toBe("5511777777777@s.whatsapp.net");
+  });
+
+  // ── Media metadata extraction ──────────────────────────────────
+
+  it("extracts media metadata from image message", () => {
+    const mediaKey = new Uint8Array([1, 2, 3, 4]);
+    const result = parseMessageForDb(makeWAMsg({
+      message: {
+        imageMessage: {
+          caption: "Photo",
+          mimetype: "image/jpeg",
+          mediaKey: mediaKey,
+          directPath: "/v/t62.1234/image.enc",
+          url: "https://mmg.whatsapp.net/image.enc",
+          fileLength: 54321 as any,
+          fileSha256: new Uint8Array([10, 20, 30]),
+          fileEncSha256: new Uint8Array([40, 50, 60]),
+        } as any,
+      },
+    }));
+    expect(result!.media_type).toBe("image");
+    expect(result!.mimetype).toBe("image/jpeg");
+    expect(result!.media_key).toBe(Buffer.from(mediaKey).toString('base64'));
+    expect(result!.direct_path).toBe("/v/t62.1234/image.enc");
+    expect(result!.media_url).toBe("https://mmg.whatsapp.net/image.enc");
+    expect(result!.file_length).toBe(54321);
+    expect(result!.content).toBe("[Image] Photo");
+  });
+
+  it("does not extract media info from text messages", () => {
+    const result = parseMessageForDb(makeWAMsg());
+    expect(result!.media_type).toBeNull();
+    expect(result!.media_key).toBeNull();
+  });
+
+  it("detects ptt (voice note) as ptt media type", () => {
+    const result = parseMessageForDb(makeWAMsg({
+      message: {
+        audioMessage: {
+          mimetype: "audio/ogg; codecs=opus",
+          ptt: true,
+          mediaKey: new Uint8Array([5, 6, 7]),
+          directPath: "/v/t62.1234/audio.enc",
+          url: "https://mmg.whatsapp.net/audio.enc",
+        } as any,
+      },
+    }));
+    expect(result!.media_type).toBe("ptt");
+    expect(result!.mimetype).toBe("audio/ogg; codecs=opus");
+  });
+
+  it("detects regular audio (non-ptt) as audio media type", () => {
+    const result = parseMessageForDb(makeWAMsg({
+      message: {
+        audioMessage: {
+          mimetype: "audio/mpeg",
+          ptt: false,
+          mediaKey: new Uint8Array([8, 9]),
+          directPath: "/v/t62.1234/audio2.enc",
+        } as any,
+      },
+    }));
+    expect(result!.media_type).toBe("audio");
+  });
+
+  it("extracts media metadata from sticker message", () => {
+    const result = parseMessageForDb(makeWAMsg({
+      message: {
+        stickerMessage: {
+          mimetype: "image/webp",
+          mediaKey: new Uint8Array([11, 12]),
+          directPath: "/v/t62.1234/sticker.enc",
+        } as any,
+      },
+    }));
+    expect(result!.media_type).toBe("sticker");
+    expect(result!.mimetype).toBe("image/webp");
+  });
+});
+
+describe("extractMediaInfo", () => {
+  it("returns null for null message", () => {
+    expect(extractMediaInfo(null as any)).toBeNull();
+  });
+
+  it("returns null for text-only message", () => {
+    expect(extractMediaInfo({ conversation: "hello" })).toBeNull();
+  });
+
+  it("extracts video media info", () => {
+    const info = extractMediaInfo({
+      videoMessage: {
+        mimetype: "video/mp4",
+        mediaKey: new Uint8Array([1, 2, 3]),
+        directPath: "/v/video.enc",
+        url: "https://cdn/video.enc",
+        fileLength: 999999 as any,
+      } as any,
+    });
+    expect(info).not.toBeNull();
+    expect(info!.media_type).toBe("video");
+    expect(info!.mimetype).toBe("video/mp4");
+    expect(info!.file_length).toBe(999999);
+  });
+
+  it("extracts document media info", () => {
+    const info = extractMediaInfo({
+      documentMessage: {
+        mimetype: "application/pdf",
+        mediaKey: new Uint8Array([4, 5]),
+        directPath: "/v/doc.enc",
+        fileName: "report.pdf",
+        fileLength: 12345 as any,
+      } as any,
+    });
+    expect(info).not.toBeNull();
+    expect(info!.media_type).toBe("document");
+    expect(info!.mimetype).toBe("application/pdf");
   });
 });
