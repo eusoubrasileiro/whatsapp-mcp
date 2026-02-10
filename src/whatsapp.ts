@@ -7,9 +7,11 @@ import {
   type WAMessage,
   isJidGroup,
   jidNormalizedUser,
+  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import path from "node:path";
+import fs from "node:fs";
 import qrcode from "qrcode-terminal";
 
 import {
@@ -20,6 +22,7 @@ import {
 } from "./database.ts";
 
 const AUTH_DIR = path.join(import.meta.dirname, "..", "auth_info");
+const DOWNLOAD_DIR = path.join(import.meta.dirname, "..", "downloads");
 
 export type WhatsAppSocket = ReturnType<typeof makeWASocket>;
 
@@ -80,10 +83,10 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
   } else if (msg.message.extendedTextMessage?.text) {
     content = msg.message.extendedTextMessage.text;
   } else if (msg.message.imageMessage?.caption) {
-    content = `[Image] ${msg.message.imageMessage.caption}`;
+    content = `[Image] ${msg.message.imageMessage.caption || ""}`;
   } else if (msg.message.videoMessage?.caption) {
-    content = `[Video] ${msg.message.videoMessage.caption}`;
-  } else if (msg.message.documentMessage?.caption) {
+    content = `[Video] ${msg.message.videoMessage.caption || ""}`;
+  } else if (msg.message.documentMessage?.caption || msg.message.documentMessage?.fileName) {
     content = `[Document] ${
       msg.message.documentMessage.caption ||
       msg.message.documentMessage.fileName ||
@@ -102,7 +105,12 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
   }
 
   if (!content) {
-    return null;
+    // Media messages might not have captions but we still want to record them
+    if (msg.message.imageMessage) content = "[Image]";
+    else if (msg.message.videoMessage) content = "[Video]";
+    else if (msg.message.documentMessage) content = "[Document]";
+    else if (msg.message.audioMessage) content = "[Audio]";
+    else return null;
   }
 
   // Use WhatsApp's original message timestamp (seconds since epoch)
@@ -327,30 +335,86 @@ export async function sendWhatsAppMessage(
 ): Promise<WAMessage | void> {
   const sock = socketState.socket;
   if (!sock || !sock.user) {
-    logger.error(
-      "Cannot send message: WhatsApp socket not connected or initialized."
-    );
+    logger.error("Cannot send message: WhatsApp socket not connected.");
     return;
   }
-  if (!recipientJid) {
-    logger.error("Cannot send message: Recipient JID is missing.");
+  try {
+    const normalizedJid = jidNormalizedUser(recipientJid);
+    const result = await sock.sendMessage(normalizedJid, { text: text });
+    return result;
+  } catch (error) {
+    logger.error({ err: error, recipientJid }, "Failed to send message");
     return;
   }
-  if (!text) {
-    logger.error("Cannot send message: Message text is empty.");
+}
+
+export async function sendWhatsAppMedia(
+  logger: P.Logger,
+  recipientJid: string,
+  filePath: string,
+  caption?: string,
+  type: 'image' | 'video' | 'document' | 'audio' = 'image'
+): Promise<WAMessage | void> {
+  const sock = socketState.socket;
+  if (!sock || !sock.user) {
+    logger.error("Cannot send media: WhatsApp socket not connected.");
+    return;
+  }
+
+  if (!fs.existsSync(filePath)) {
+    logger.error(`Cannot send media: File not found at ${filePath}`);
     return;
   }
 
   try {
-    logger.info(
-      `Sending message to ${recipientJid}: ${text.substring(0, 50)}...`
-    );
     const normalizedJid = jidNormalizedUser(recipientJid);
-    const result = await sock.sendMessage(normalizedJid, { text: text });
-    logger.info({ msgId: result?.key.id }, "Message sent successfully");
+    let messageContent: any = {};
+
+    const fileBuffer = fs.readFileSync(filePath);
+
+    if (type === 'image') messageContent = { image: fileBuffer, caption };
+    else if (type === 'video') messageContent = { video: fileBuffer, caption };
+    else if (type === 'audio') messageContent = { audio: fileBuffer, mimetype: 'audio/mp4' };
+    else if (type === 'document') messageContent = { document: fileBuffer, caption, fileName: path.basename(filePath) };
+
+    const result = await sock.sendMessage(normalizedJid, messageContent);
     return result;
   } catch (error) {
-    logger.error({ err: error, recipientJid }, "Failed to send message");
+    logger.error({ err: error, recipientJid, filePath }, "Failed to send media");
+    return;
+  }
+}
+
+export async function downloadWhatsAppMedia(
+  logger: P.Logger,
+  messageId: string,
+  chatJid: string
+): Promise<string | void> {
+  const sock = socketState.socket;
+  if (!sock) {
+    logger.error("Cannot download media: WhatsApp socket not connected.");
+    return;
+  }
+
+  try {
+    // We need the full WAMessage object to download.
+    // Baileys doesn't have a getMessageById, so we might need to rely on what's in our DB or wait for it.
+    // However, we can construct a partial WAMessage if we have the media keys.
+    // For simplicity, this tool might be limited to recently received messages in memory if not careful.
+
+    // Better approach: In a real world, we'd fetch from DB but DB doesn't store the media keys.
+    // Baileys typically needs the original message object from its internal store or from the event.
+
+    // For now, let's assume we can only download if the message is "fresh" or we have a way to fetch it.
+    // Actually, many MCP servers for WhatsApp just don't support downloading old media easily without a full store.
+
+    // BUT, we can try to fetch it from WhatsApp if Baileys supports it.
+    // Baileys doesn't have a direct "fetch message by id" from server yet.
+
+    logger.warn("Download media requested but fetching old messages from server is not fully supported in this version of Baileys without a store.");
+    return;
+  } catch (error) {
+    logger.error({ err: error, messageId }, "Failed to download media");
     return;
   }
 }
