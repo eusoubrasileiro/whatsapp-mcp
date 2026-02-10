@@ -7,8 +7,8 @@ import {
   type WAMessage,
   isJidGroup,
   jidNormalizedUser,
-  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
+import pRetry from "p-retry";
 import P from "pino";
 import path from "node:path";
 import fs from "node:fs";
@@ -22,7 +22,6 @@ import {
 } from "./database.ts";
 
 const AUTH_DIR = path.join(import.meta.dirname, "..", "auth_info");
-const DOWNLOAD_DIR = path.join(import.meta.dirname, "..", "downloads");
 
 export type WhatsAppSocket = ReturnType<typeof makeWASocket>;
 
@@ -41,26 +40,6 @@ export const socketState = {
   socket: null as WhatsAppSocket | null,
 };
 
-// Reconnection backoff state
-const reconnectState = {
-  attempts: 0,
-  maxAttempts: 10,
-  baseDelayMs: 1000,
-  maxDelayMs: 60000,
-};
-
-function getReconnectDelay(): number {
-  const delay = Math.min(
-    reconnectState.baseDelayMs * Math.pow(2, reconnectState.attempts),
-    reconnectState.maxDelayMs
-  );
-  return delay;
-}
-
-function resetReconnectState(): void {
-  reconnectState.attempts = 0;
-}
-
 // Generate ASCII QR code
 function generateAsciiQR(data: string): Promise<string> {
   return new Promise((resolve) => {
@@ -70,22 +49,21 @@ function generateAsciiQR(data: string): Promise<string> {
   });
 }
 
-function parseMessageForDb(msg: WAMessage): DbMessage | null {
+export function parseMessageForDb(msg: WAMessage): DbMessage | null {
   if (!msg.message || !msg.key || !msg.key.remoteJid) {
     return null;
   }
 
   let content: string | null = null;
-  const messageType = Object.keys(msg.message)[0];
 
   if (msg.message.conversation) {
     content = msg.message.conversation;
   } else if (msg.message.extendedTextMessage?.text) {
     content = msg.message.extendedTextMessage.text;
   } else if (msg.message.imageMessage?.caption) {
-    content = `[Image] ${msg.message.imageMessage.caption || ""}`;
+    content = `[Image] ${msg.message.imageMessage.caption}`;
   } else if (msg.message.videoMessage?.caption) {
-    content = `[Video] ${msg.message.videoMessage.caption || ""}`;
+    content = `[Video] ${msg.message.videoMessage.caption}`;
   } else if (msg.message.documentMessage?.caption || msg.message.documentMessage?.fileName) {
     content = `[Document] ${
       msg.message.documentMessage.caption ||
@@ -105,7 +83,7 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
   }
 
   if (!content) {
-    // Media messages might not have captions but we still want to record them
+    // Media without captions — still record them
     if (msg.message.imageMessage) content = "[Image]";
     else if (msg.message.videoMessage) content = "[Video]";
     else if (msg.message.documentMessage) content = "[Document]";
@@ -117,10 +95,8 @@ function parseMessageForDb(msg: WAMessage): DbMessage | null {
   let timestampSeconds: number;
 
   if (msg.messageTimestamp != null) {
-    // Handles number, bigint, and Long-like objects
     timestampSeconds = Number(msg.messageTimestamp);
   } else {
-    // Fallback only if WA didn't give us a timestamp at all
     timestampSeconds = Date.now() / 1000;
   }
 
@@ -175,7 +151,6 @@ export async function startWhatsAppConnection(
         connectionState.qrCode = qr;
         connectionState.qrAscii = await generateAsciiQR(qr);
         logger.info("QR Code Received. Use get_connection_status tool to retrieve the QR code.");
-        // Also print to stderr so it shows in terminal
         console.error("\n" + connectionState.qrAscii);
       }
 
@@ -199,18 +174,18 @@ export async function startWhatsAppConnection(
           }`
         );
         if (statusCode !== DisconnectReason.loggedOut) {
-          reconnectState.attempts++;
-          if (reconnectState.attempts > reconnectState.maxAttempts) {
-            logger.error(
-              `Max reconnection attempts (${reconnectState.maxAttempts}) exceeded. Giving up.`
-            );
+          pRetry(() => startWhatsAppConnection(logger), {
+            retries: 10,
+            minTimeout: 1000,
+            maxTimeout: 60000,
+            factor: 2,
+            onFailedAttempt: (err) => {
+              logger.warn(`Reconnect attempt ${err.attemptNumber} failed, ${err.retriesLeft} retries left`);
+            },
+          }).catch((err) => {
+            logger.error({ err }, "All reconnection attempts failed. Exiting.");
             process.exit(1);
-          }
-          const delay = getReconnectDelay();
-          logger.info(
-            `Reconnecting in ${delay}ms (attempt ${reconnectState.attempts}/${reconnectState.maxAttempts})...`
-          );
-          setTimeout(() => startWhatsAppConnection(logger), delay);
+          });
         } else {
           logger.error(
             "Connection closed: Logged Out. Please delete auth_info and restart."
@@ -218,14 +193,24 @@ export async function startWhatsAppConnection(
           process.exit(1);
         }
       } else if (connection === "open") {
-        // Only mark as connected when sock.user is available
         if (sock.user) {
           connectionState.status = 'connected';
           connectionState.qrCode = null;
           connectionState.qrAscii = null;
           connectionState.user = sock.user.name ?? null;
-          resetReconnectState(); // Reset backoff on successful connection
           logger.info(`Connection opened. WA user: ${sock.user.name}`);
+
+          // Sync group metadata
+          try {
+            const groups = await sock.groupFetchAllParticipating();
+            logger.info(`Syncing ${Object.keys(groups).length} groups...`);
+            for (const [jid, metadata] of Object.entries(groups)) {
+              storeChat({ jid, name: metadata.subject });
+            }
+            logger.info("Group metadata synced.");
+          } catch (err) {
+            logger.warn({ err }, "Failed to sync group metadata");
+          }
         } else {
           connectionState.status = 'connecting';
           logger.info("Connection opened but waiting for user info...");
@@ -239,7 +224,7 @@ export async function startWhatsAppConnection(
     }
 
     if (events["messaging-history.set"]) {
-      const { chats, contacts, messages, isLatest, progress, syncType } =
+      const { chats, contacts, messages } =
         events["messaging-history.set"];
       if (contacts.length > 0) {
         logger.info(`Storing ${contacts.length} contacts from history sync.`);
@@ -251,7 +236,6 @@ export async function startWhatsAppConnection(
             phoneNumber: (c as any).phoneNumber ?? null,
           })
         );
-        logger.info(`Stored ${contacts.length} contacts from history sync.`);
       }
 
       logger.info(`Storing ${chats.length} chats from history sync.`);
@@ -275,6 +259,32 @@ export async function startWhatsAppConnection(
         }
       });
       logger.info(`Stored ${storedCount} messages from history sync.`);
+    }
+
+    if (events["contacts.upsert"]) {
+      const contacts = events["contacts.upsert"];
+      logger.info({ count: contacts.length }, "Received contacts.upsert event");
+      for (const c of contacts) {
+        storeContact({
+          jid: c.id,
+          name: c.name ?? null,
+          notify: c.notify ?? null,
+        });
+      }
+    }
+
+    if (events["contacts.update"]) {
+      const contacts = events["contacts.update"];
+      logger.info({ count: contacts.length }, "Received contacts.update event");
+      for (const c of contacts) {
+        if (c.id) {
+          storeContact({
+            jid: c.id,
+            name: c.name ?? null,
+            notify: c.notify ?? null,
+          });
+        }
+      }
     }
 
     if (events["messages.upsert"]) {
@@ -381,40 +391,6 @@ export async function sendWhatsAppMedia(
     return result;
   } catch (error) {
     logger.error({ err: error, recipientJid, filePath }, "Failed to send media");
-    return;
-  }
-}
-
-export async function downloadWhatsAppMedia(
-  logger: P.Logger,
-  messageId: string,
-  chatJid: string
-): Promise<string | void> {
-  const sock = socketState.socket;
-  if (!sock) {
-    logger.error("Cannot download media: WhatsApp socket not connected.");
-    return;
-  }
-
-  try {
-    // We need the full WAMessage object to download.
-    // Baileys doesn't have a getMessageById, so we might need to rely on what's in our DB or wait for it.
-    // However, we can construct a partial WAMessage if we have the media keys.
-    // For simplicity, this tool might be limited to recently received messages in memory if not careful.
-
-    // Better approach: In a real world, we'd fetch from DB but DB doesn't store the media keys.
-    // Baileys typically needs the original message object from its internal store or from the event.
-
-    // For now, let's assume we can only download if the message is "fresh" or we have a way to fetch it.
-    // Actually, many MCP servers for WhatsApp just don't support downloading old media easily without a full store.
-
-    // BUT, we can try to fetch it from WhatsApp if Baileys supports it.
-    // Baileys doesn't have a direct "fetch message by id" from server yet.
-
-    logger.warn("Download media requested but fetching old messages from server is not fully supported in this version of Baileys without a store.");
-    return;
-  } catch (error) {
-    logger.error({ err: error, messageId }, "Failed to download media");
     return;
   }
 }

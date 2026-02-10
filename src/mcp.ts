@@ -1,8 +1,6 @@
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
 import { jidNormalizedUser } from "@whiskeysockets/baileys";
-import path from "node:path";
-import fs from "node:fs";
 
 import {
   type Message as DbMessage,
@@ -11,6 +9,9 @@ import {
   getChats,
   getChat,
   getMessagesAround,
+  getContactName,
+  getContacts,
+  getMessagesWithDateFilter,
   searchDbForContacts,
   searchMessages,
 } from "./database.ts";
@@ -19,16 +20,15 @@ import { sendWhatsAppMessage, sendWhatsAppMedia, connectionState, socketState } 
 import type { Logger } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
+  const contactName = msg.sender ? getContactName(msg.sender) : null;
   return {
     id: msg.id,
     chat_jid: msg.chat_jid,
     chat_name: msg.chat_name ?? "Unknown Chat",
     sender_jid: msg.sender ?? null,
-    sender_display: msg.sender
-      ? msg.sender.split("@")[0]
-      : msg.is_from_me
-        ? "Me"
-        : "Unknown",
+    sender_display: contactName
+      ?? (msg.sender ? msg.sender.split("@")[0] : null)
+      ?? (msg.is_from_me ? "Me" : "Unknown"),
     content: msg.content,
     timestamp: msg.timestamp.toISOString(),
     is_from_me: msg.is_from_me,
@@ -36,6 +36,7 @@ function formatDbMessageForJson(msg: DbMessage) {
 }
 
 function formatDbChatForJson(chat: DbChat) {
+  const lastSenderName = chat.last_sender ? getContactName(chat.last_sender) : null;
   return {
     jid: chat.jid,
     name: chat.name ?? chat.jid.split("@")[0] ?? "Unknown Chat",
@@ -43,11 +44,9 @@ function formatDbChatForJson(chat: DbChat) {
     last_message_time: chat.last_message_time?.toISOString() ?? null,
     last_message_preview: chat.last_message ?? null,
     last_sender_jid: chat.last_sender ?? null,
-    last_sender_display: chat.last_sender
-      ? chat.last_sender.split("@")[0]
-      : chat.last_is_from_me
-        ? "Me"
-        : null,
+    last_sender_display: lastSenderName
+      ?? (chat.last_sender ? chat.last_sender.split("@")[0] : null)
+      ?? (chat.last_is_from_me ? "Me" : null),
     last_is_from_me: chat.last_is_from_me ?? null,
   };
 }
@@ -60,8 +59,10 @@ export async function startMcpServer(
 
   const server = new FastMCP({
     name: "whatsapp-baileys-ts",
-    version: "0.2.0",
+    version: "0.3.0",
   });
+
+  // ── Connection / Auth ─────────────────────────────────────────────
 
   server.addTool({
     name: "get_connection_status",
@@ -99,14 +100,16 @@ export async function startMcpServer(
     description: "Log out from WhatsApp and clear session data",
     parameters: z.object({}),
     execute: async () => {
-        mcpLogger.info("[MCP Tool] Executing logout");
-        if (socketState.socket) {
-            await socketState.socket.logout();
-            return "Logged out successfully. You will need to scan the QR code again to reconnect.";
-        }
-        return "Not currently connected.";
+      mcpLogger.info("[MCP Tool] Executing logout");
+      if (socketState.socket) {
+        await socketState.socket.logout();
+        return "Logged out successfully. You will need to scan the QR code again to reconnect.";
+      }
+      return "Not currently connected.";
     }
   });
+
+  // ── Contacts ──────────────────────────────────────────────────────
 
   server.addTool({
     name: "search_contacts",
@@ -125,22 +128,99 @@ export async function startMcpServer(
   });
 
   server.addTool({
+    name: "list_contacts",
+    description: "List all contacts with optional name/number filter",
+    parameters: z.object({
+      query: z.string().optional().describe("Optional filter by name or phone number"),
+      limit: z.number().int().positive().optional().default(50).describe("Max contacts to return (default 50)"),
+    }),
+    execute: async ({ query, limit }) => {
+      mcpLogger.info(`[MCP Tool] Executing list_contacts, query="${query ?? ""}", limit=${limit}`);
+      const contacts = getContacts(query ?? undefined, limit);
+      if (!contacts.length) {
+        return query ? `No contacts found matching "${query}".` : "No contacts found.";
+      }
+      return JSON.stringify(contacts, null, 2);
+    },
+  });
+
+  // ── Messages ──────────────────────────────────────────────────────
+
+  server.addTool({
     name: "list_messages",
-    description: "Retrieve message history for a specific chat with pagination",
+    description: "Retrieve message history for a specific chat with pagination and optional date filtering",
     parameters: z.object({
       chat_jid: z.string().describe("The JID of the chat (e.g., '123456@s.whatsapp.net' or 'group@g.us')"),
       limit: z.number().int().positive().optional().default(20).describe("Max messages per page (default 20)"),
       page: z.number().int().nonnegative().optional().default(0).describe("Page number (0-indexed, default 0)"),
+      from_date: z.string().optional().describe("Filter messages from this date (ISO 8601, e.g., '2025-01-01')"),
+      to_date: z.string().optional().describe("Filter messages up to this date (ISO 8601, e.g., '2025-02-01')"),
     }),
-    execute: async ({ chat_jid, limit, page }) => {
-      mcpLogger.info(`[MCP Tool] Executing list_messages for chat ${chat_jid}, limit=${limit}, page=${page}`);
-      const messages = getMessages(chat_jid, limit, page);
+    execute: async ({ chat_jid, limit, page, from_date, to_date }) => {
+      mcpLogger.info(`[MCP Tool] Executing list_messages for chat ${chat_jid}, limit=${limit}, page=${page}, from=${from_date}, to=${to_date}`);
+
+      let messages: DbMessage[];
+      if (from_date || to_date) {
+        messages = getMessagesWithDateFilter(chat_jid, from_date, to_date, limit, page);
+      } else {
+        messages = getMessages(chat_jid, limit, page);
+      }
+
       if (!messages.length) {
         return page === 0 ? `No messages found for chat ${chat_jid}.` : `No more messages found on page ${page} for chat ${chat_jid}.`;
       }
       return JSON.stringify(messages.map(formatDbMessageForJson), null, 2);
     },
   });
+
+  server.addTool({
+    name: "get_messages_today",
+    description: "Get today's messages, optionally filtered to a specific chat",
+    parameters: z.object({
+      chat_jid: z.string().optional().describe("Optional: filter to a specific chat JID"),
+      limit: z.number().int().positive().optional().default(50).describe("Max messages (default 50)"),
+    }),
+    execute: async ({ chat_jid, limit }) => {
+      mcpLogger.info(`[MCP Tool] Executing get_messages_today, chat=${chat_jid}`);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const fromDate = today.toISOString();
+
+      const messages = getMessagesWithDateFilter(chat_jid, fromDate, null, limit, 0);
+
+      if (!messages.length) {
+        const scope = chat_jid ? ` in chat ${chat_jid}` : "";
+        return `No messages found for today${scope}.`;
+      }
+      return JSON.stringify(messages.map(formatDbMessageForJson), null, 2);
+    },
+  });
+
+  server.addTool({
+    name: "search_messages",
+    description: "Search for messages across all chats or within a specific chat, with optional date filtering",
+    parameters: z.object({
+      query: z.string().min(1).describe("The text to search for"),
+      chat_jid: z.string().optional().describe("Optional: Search within a specific chat JID"),
+      from_date: z.string().optional().describe("Filter from this date (ISO 8601)"),
+      to_date: z.string().optional().describe("Filter up to this date (ISO 8601)"),
+      limit: z.number().int().positive().optional().default(10).describe("Max results (default 10)"),
+      page: z.number().int().nonnegative().optional().default(0).describe("Page number (default 0)"),
+    }),
+    execute: async ({ chat_jid, query, from_date, to_date, limit, page }) => {
+      mcpLogger.info(`[MCP Tool] Executing search_messages, query="${query}", from=${from_date}, to=${to_date}`);
+      const messages = searchMessages(query, chat_jid, from_date, to_date, limit, page);
+
+      if (!messages.length) {
+        const scope = chat_jid ? `in chat ${chat_jid}` : "across all chats";
+        return page === 0 ? `No messages found containing "${query}" ${scope}.` : `No more messages found on page ${page}.`;
+      }
+
+      return JSON.stringify(messages.map(formatDbMessageForJson), null, 2);
+    },
+  });
+
+  // ── Chats ─────────────────────────────────────────────────────────
 
   server.addTool({
     name: "list_chats",
@@ -174,7 +254,7 @@ export async function startMcpServer(
       mcpLogger.info(`[MCP Tool] Executing get_chat for ${chat_jid}`);
       const chat = getChat(chat_jid, include_last_message);
       if (!chat) {
-          throw new Error(`Chat with JID ${chat_jid} not found.`);
+        throw new Error(`Chat with JID ${chat_jid} not found.`);
       }
       return JSON.stringify(formatDbChatForJson(chat), null, 2);
     },
@@ -192,7 +272,7 @@ export async function startMcpServer(
       mcpLogger.info(`[MCP Tool] Executing get_message_context for msg ${message_id}`);
       const context = getMessagesAround(message_id, before, after);
       if (!context.target) {
-          throw new Error(`Message with ID ${message_id} not found.`);
+        throw new Error(`Message with ID ${message_id} not found.`);
       }
       return JSON.stringify({
         target: formatDbMessageForJson(context.target),
@@ -201,6 +281,43 @@ export async function startMcpServer(
       }, null, 2);
     },
   });
+
+  // ── Groups ────────────────────────────────────────────────────────
+
+  server.addTool({
+    name: "get_group_info",
+    description: "Get metadata for a WhatsApp group (name, description, participants, admins)",
+    parameters: z.object({
+      group_jid: z.string().describe("The group JID (must end with '@g.us')"),
+    }),
+    execute: async ({ group_jid }) => {
+      mcpLogger.info(`[MCP Tool] Executing get_group_info for ${group_jid}`);
+      if (!socketState.socket) {
+        throw new Error("WhatsApp connection is not active.");
+      }
+      if (!group_jid.endsWith("@g.us")) {
+        throw new Error(`Invalid group JID: "${group_jid}". Must end with "@g.us".`);
+      }
+
+      const metadata = await socketState.socket.groupMetadata(group_jid);
+
+      return JSON.stringify({
+        jid: metadata.id,
+        name: metadata.subject,
+        description: metadata.desc ?? null,
+        owner: metadata.owner ?? null,
+        creation_time: metadata.creation ? new Date(metadata.creation * 1000).toISOString() : null,
+        participant_count: metadata.participants.length,
+        participants: metadata.participants.map((p) => ({
+          jid: p.id,
+          name: getContactName(p.id) ?? p.id.split("@")[0],
+          admin: p.admin ?? null,
+        })),
+      }, null, 2);
+    },
+  });
+
+  // ── Sending ───────────────────────────────────────────────────────
 
   server.addTool({
     name: "send_message",
@@ -217,7 +334,7 @@ export async function startMcpServer(
 
       const normalizedRecipient = jidNormalizedUser(recipient);
       if (!normalizedRecipient.includes("@")) {
-          throw new Error(`Invalid recipient format: "${recipient}". JID must contain "@".`);
+        throw new Error(`Invalid recipient format: "${recipient}". JID must contain "@".`);
       }
 
       const result = await sendWhatsAppMessage(waLogger, normalizedRecipient, message);
@@ -256,39 +373,98 @@ export async function startMcpServer(
     },
   });
 
-  server.addTool({
-    name: "search_messages",
-    description: "Search for messages across all chats or within a specific chat",
-    parameters: z.object({
-      query: z.string().min(1).describe("The text to search for"),
-      chat_jid: z.string().optional().describe("Optional: Search within a specific chat JID"),
-      limit: z.number().int().positive().optional().default(10).describe("Max results (default 10)"),
-      page: z.number().int().nonnegative().optional().default(0).describe("Page number (default 0)"),
-    }),
-    execute: async ({ chat_jid, query, limit, page }) => {
-      mcpLogger.info(`[MCP Tool] Executing search_messages, query="${query}"`);
-      const messages = searchMessages(query, chat_jid, limit, page);
+  // ── Message Actions ───────────────────────────────────────────────
 
-      if (!messages.length) {
-        const scope = chat_jid ? `in chat ${chat_jid}` : "across all chats";
-        return page === 0 ? `No messages found containing "${query}" ${scope}.` : `No more messages found on page ${page}.`;
+  server.addTool({
+    name: "react_to_message",
+    description: "React to a message with an emoji",
+    parameters: z.object({
+      chat_jid: z.string().describe("The chat JID where the message is"),
+      message_id: z.string().describe("The ID of the message to react to"),
+      emoji: z.string().describe("The emoji to react with (e.g., '👍', '❤️', '😂'). Use empty string to remove reaction."),
+      from_me: z.boolean().optional().default(false).describe("Whether the target message was sent by you"),
+    }),
+    execute: async ({ chat_jid, message_id, emoji, from_me }) => {
+      mcpLogger.info(`[MCP Tool] Executing react_to_message: ${emoji} on ${message_id} in ${chat_jid}`);
+      if (!socketState.socket) {
+        throw new Error("WhatsApp connection is not active.");
       }
 
-      return JSON.stringify(messages.map(formatDbMessageForJson), null, 2);
+      await socketState.socket.sendMessage(chat_jid, {
+        react: {
+          text: emoji,
+          key: {
+            remoteJid: chat_jid,
+            id: message_id,
+            fromMe: from_me,
+          },
+        },
+      });
+
+      return emoji
+        ? `Reacted with ${emoji} to message ${message_id}.`
+        : `Removed reaction from message ${message_id}.`;
     },
   });
+
+  server.addTool({
+    name: "delete_message",
+    description: "Delete (revoke) a message you sent",
+    parameters: z.object({
+      chat_jid: z.string().describe("The chat JID where the message is"),
+      message_id: z.string().describe("The ID of the message to delete"),
+      from_me: z.boolean().optional().default(true).describe("Whether the message was sent by you (default true)"),
+    }),
+    execute: async ({ chat_jid, message_id, from_me }) => {
+      mcpLogger.info(`[MCP Tool] Executing delete_message: ${message_id} in ${chat_jid}`);
+      if (!socketState.socket) {
+        throw new Error("WhatsApp connection is not active.");
+      }
+
+      await socketState.socket.sendMessage(chat_jid, {
+        delete: {
+          remoteJid: chat_jid,
+          id: message_id,
+          fromMe: from_me,
+        },
+      });
+
+      return `Message ${message_id} deleted successfully.`;
+    },
+  });
+
+  server.addTool({
+    name: "mark_chat_read",
+    description: "Mark all messages in a chat as read",
+    parameters: z.object({
+      chat_jid: z.string().describe("The chat JID to mark as read"),
+    }),
+    execute: async ({ chat_jid }) => {
+      mcpLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
+      if (!socketState.socket) {
+        throw new Error("WhatsApp connection is not active.");
+      }
+
+      await socketState.socket.readMessages([{ remoteJid: chat_jid, id: undefined! }]);
+
+      return `Chat ${chat_jid} marked as read.`;
+    },
+  });
+
+  // ── Resource ──────────────────────────────────────────────────────
 
   server.addResource({
     uri: "schema://whatsapp/main",
     name: "Database Schema",
     description: "The SQLite schema for WhatsApp data",
     async load() {
-        return {
-            text: `
+      return {
+        text: `
 TABLE chats (jid TEXT PK, name TEXT, last_message_time TIMESTAMP)
 TABLE messages (id TEXT, chat_jid TEXT, sender TEXT, content TEXT, timestamp TIMESTAMP, is_from_me BOOLEAN, PK(id, chat_jid), FK(chat_jid) REFERENCES chats(jid))
-            `.trim()
-        };
+TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
+        `.trim()
+      };
     }
   });
 
