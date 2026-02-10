@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import type { Logger } from "pino";
 import * as schema from './db/schema.ts';
-import { eq, and, or, like, desc, asc, sql } from 'drizzle-orm';
+import { eq, and, or, like, gte, lt, desc, asc, sql, type SQL } from 'drizzle-orm';
 
 const DATA_DIR = path.join(import.meta.dirname, "..", "data");
 const DB_PATH = path.join(DATA_DIR, "whatsapp.db");
@@ -56,18 +56,32 @@ let dbInstance: BetterSQLite3Database<typeof schema> | null = null;
 
 function getDb() {
   if (!dbInstance) {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    sqliteInstance = new Database(DB_PATH);
-    dbInstance = drizzle(sqliteInstance, { schema });
+    throw new Error("Database not initialized. Call initializeDatabase() first.");
   }
   return dbInstance;
 }
 
-export function initializeDatabase(): Database.Database {
-  const db = getDb();
-  const sqlite = sqliteInstance!;
+export function initializeDatabase(dbPath?: string): Database.Database {
+  // Allow re-initialization (for tests)
+  if (sqliteInstance) {
+    sqliteInstance.close();
+    sqliteInstance = null;
+    dbInstance = null;
+  }
+
+  if (dbPath === ':memory:') {
+    sqliteInstance = new Database(':memory:');
+  } else {
+    const resolvedPath = dbPath ?? DB_PATH;
+    const dir = path.dirname(resolvedPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    sqliteInstance = new Database(resolvedPath);
+  }
+  dbInstance = drizzle(sqliteInstance, { schema });
+
+  const sqlite = sqliteInstance;
 
   sqlite.pragma("journal_mode = WAL");
 
@@ -181,6 +195,28 @@ function parseDateSafe(dateString: string | null | undefined): Date | null {
   }
 }
 
+function rowToMessage(row: any): Message {
+  return {
+    id: row.id!,
+    chat_jid: row.chat_jid!,
+    sender: row.sender,
+    content: row.content!,
+    timestamp: parseDateSafe(row.timestamp)!,
+    is_from_me: row.is_from_me ?? false,
+    chat_name: row.chat_name,
+  };
+}
+
+const messageColumns = {
+  id: schema.messages.id,
+  chat_jid: schema.messages.chatJid,
+  sender: schema.messages.sender,
+  content: schema.messages.content,
+  timestamp: schema.messages.timestamp,
+  is_from_me: schema.messages.isFromMe,
+  chat_name: schema.chats.name,
+};
+
 export function getMessages(
   chatJid: string,
   limit: number = 20,
@@ -190,15 +226,7 @@ export function getMessages(
   try {
     const offset = page * limit;
 
-    const rows = db.select({
-        id: schema.messages.id,
-        chat_jid: schema.messages.chatJid,
-        sender: schema.messages.sender,
-        content: schema.messages.content,
-        timestamp: schema.messages.timestamp,
-        is_from_me: schema.messages.isFromMe,
-        chat_name: schema.chats.name,
-    })
+    const rows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
     .where(eq(schema.messages.chatJid, chatJid))
@@ -207,13 +235,7 @@ export function getMessages(
     .offset(offset)
     .all();
 
-    return rows.map((row: any) => ({
-        ...row,
-        timestamp: parseDateSafe(row.timestamp)!,
-        is_from_me: row.is_from_me ?? false,
-        chat_jid: row.chat_jid!,
-        id: row.id!,
-    }));
+    return rows.map(rowToMessage);
   } catch (error) {
     logError("Error getting messages", error);
     return [];
@@ -355,15 +377,7 @@ export function getMessagesAround(
   } = { before: [], target: null, after: [] };
 
   try {
-    const targetRow: any = db.select({
-        id: schema.messages.id,
-        chat_jid: schema.messages.chatJid,
-        sender: schema.messages.sender,
-        content: schema.messages.content,
-        timestamp: schema.messages.timestamp,
-        is_from_me: schema.messages.isFromMe,
-        chat_name: schema.chats.name,
-    })
+    const targetRow = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
     .where(eq(schema.messages.id, messageId))
@@ -373,50 +387,21 @@ export function getMessagesAround(
       return result;
     }
 
-    result.target = {
-        ...targetRow,
-        timestamp: parseDateSafe(targetRow.timestamp)!,
-        is_from_me: targetRow.is_from_me ?? false,
-        chat_jid: targetRow.chat_jid!,
-        id: targetRow.id!,
-    };
-
+    result.target = rowToMessage(targetRow);
     const targetTimestamp = targetRow.timestamp!;
     const chatJid = targetRow.chat_jid!;
 
-    const beforeRows = db.select({
-        id: schema.messages.id,
-        chat_jid: schema.messages.chatJid,
-        sender: schema.messages.sender,
-        content: schema.messages.content,
-        timestamp: schema.messages.timestamp,
-        is_from_me: schema.messages.isFromMe,
-        chat_name: schema.chats.name,
-    })
+    const beforeRows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(and(eq(schema.messages.chatJid, chatJid), sql`${schema.messages.timestamp} < ${targetTimestamp}`))
+    .where(and(eq(schema.messages.chatJid, chatJid), lt(schema.messages.timestamp, targetTimestamp)))
     .orderBy(desc(schema.messages.timestamp))
     .limit(before)
     .all();
 
-    result.before = beforeRows.map((row: any) => ({
-        ...row,
-        timestamp: parseDateSafe(row.timestamp)!,
-        is_from_me: row.is_from_me ?? false,
-        chat_jid: row.chat_jid!,
-        id: row.id!,
-    })).reverse();
+    result.before = beforeRows.map(rowToMessage).reverse();
 
-    const afterRows = db.select({
-        id: schema.messages.id,
-        chat_jid: schema.messages.chatJid,
-        sender: schema.messages.sender,
-        content: schema.messages.content,
-        timestamp: schema.messages.timestamp,
-        is_from_me: schema.messages.isFromMe,
-        chat_name: schema.chats.name,
-    })
+    const afterRows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
     .where(and(eq(schema.messages.chatJid, chatJid), sql`${schema.messages.timestamp} > ${targetTimestamp}`))
@@ -424,13 +409,7 @@ export function getMessagesAround(
     .limit(after)
     .all();
 
-    result.after = afterRows.map((row: any) => ({
-        ...row,
-        timestamp: parseDateSafe(row.timestamp)!,
-        is_from_me: row.is_from_me ?? false,
-        chat_jid: row.chat_jid!,
-        id: row.id!,
-    }));
+    result.after = afterRows.map(rowToMessage);
 
     return result;
   } catch (error) {
@@ -468,7 +447,9 @@ export function searchDbForContacts(
 
 export function searchMessages(
   searchQuery: string,
-  chatJid?: string | null, 
+  chatJid?: string | null,
+  fromDate?: string | null,
+  toDate?: string | null,
   limit: number = 10,
   page: number = 0,
 ): Message[] {
@@ -476,37 +457,30 @@ export function searchMessages(
   try {
     const offset = page * limit;
     const searchPattern = `%${searchQuery}%`;
-
-    let whereClause = like(sql`LOWER(${schema.messages.content})`, searchPattern.toLowerCase());
+    const filters: SQL[] = [
+      like(sql`LOWER(${schema.messages.content})`, searchPattern.toLowerCase()),
+    ];
 
     if (chatJid) {
-      whereClause = and(whereClause, eq(schema.messages.chatJid, chatJid)) as any;
+      filters.push(eq(schema.messages.chatJid, chatJid));
+    }
+    if (fromDate) {
+      filters.push(gte(schema.messages.timestamp, fromDate));
+    }
+    if (toDate) {
+      filters.push(lt(schema.messages.timestamp, toDate));
     }
 
-    const rows = db.select({
-        id: schema.messages.id,
-        chat_jid: schema.messages.chatJid,
-        sender: schema.messages.sender,
-        content: schema.messages.content,
-        timestamp: schema.messages.timestamp,
-        is_from_me: schema.messages.isFromMe,
-        chat_name: schema.chats.name,
-    })
+    const rows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(whereClause)
+    .where(and(...filters))
     .orderBy(desc(schema.messages.timestamp))
     .limit(limit)
     .offset(offset)
     .all();
 
-    return rows.map((row: any) => ({
-        ...row,
-        timestamp: parseDateSafe(row.timestamp)!,
-        is_from_me: row.is_from_me ?? false,
-        chat_jid: row.chat_jid!,
-        id: row.id!,
-    }));
+    return rows.map(rowToMessage);
   } catch (error) {
     logError("Error searching messages", error);
     return [];
@@ -552,5 +526,101 @@ export function storeContact(contact: {
       .run();
   } catch (error) {
     logError("Error storing contact", error);
+  }
+}
+
+export function getContactName(jid: string): string | null {
+  const db = getDb();
+  try {
+    const row: any = db.select({
+      display_name: sql`COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber})`,
+    })
+    .from(schema.contacts)
+    .where(eq(schema.contacts.jid, jid))
+    .get();
+    return row?.display_name ?? null;
+  } catch (error) {
+    logError("Error getting contact name", error);
+    return null;
+  }
+}
+
+export function getContacts(query?: string, limit: number = 50): { jid: string; name: string }[] {
+  const db = getDb();
+  try {
+    let q = db.select({
+      jid: schema.contacts.jid,
+      name: sql`COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid})`.as('name'),
+    })
+    .from(schema.contacts)
+    .$dynamic();
+
+    if (query) {
+      q = q.where(
+        like(
+          sql`LOWER(COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid}))`,
+          `%${query.toLowerCase()}%`
+        )
+      );
+    }
+
+    return q.orderBy(sql`name`).limit(limit).all() as { jid: string; name: string }[];
+  } catch (error) {
+    logError("Error getting contacts", error);
+    return [];
+  }
+}
+
+export function getMessagesWithDateFilter(
+  chatJid?: string | null,
+  fromDate?: string | null,
+  toDate?: string | null,
+  limit: number = 50,
+  page: number = 0
+): Message[] {
+  const db = getDb();
+  try {
+    const offset = page * limit;
+    const filters: SQL[] = [];
+
+    if (chatJid) {
+      filters.push(eq(schema.messages.chatJid, chatJid));
+    }
+    if (fromDate) {
+      filters.push(gte(schema.messages.timestamp, fromDate));
+    }
+    if (toDate) {
+      filters.push(lt(schema.messages.timestamp, toDate));
+    }
+
+    const rows = db.select({
+      id: schema.messages.id,
+      chat_jid: schema.messages.chatJid,
+      sender: schema.messages.sender,
+      content: schema.messages.content,
+      timestamp: schema.messages.timestamp,
+      is_from_me: schema.messages.isFromMe,
+      chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(filters.length > 0 ? and(...filters) : undefined)
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(limit)
+    .offset(offset)
+    .all();
+
+    return rows.map(rowToMessage);
+  } catch (error) {
+    logError("Error getting messages with date filter", error);
+    return [];
+  }
+}
+
+export function resetDatabase(): void {
+  if (sqliteInstance) {
+    sqliteInstance.close();
+    sqliteInstance = null;
+    dbInstance = null;
   }
 }
