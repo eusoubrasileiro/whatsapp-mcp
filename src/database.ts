@@ -1,7 +1,10 @@
-import { DatabaseSync } from "node:sqlite";
+import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 import path from "node:path";
 import fs from "node:fs";
 import type { Logger } from "pino";
+import * as schema from './db/schema.ts';
+import { eq, and, or, like, desc, asc, sql } from 'drizzle-orm';
 
 const DATA_DIR = path.join(import.meta.dirname, "..", "data");
 const DB_PATH = path.join(DATA_DIR, "whatsapp.db");
@@ -48,45 +51,48 @@ export type Message = {
   chat_name?: string | null;
 };
 
-let dbInstance: DatabaseSync | null = null;
+let sqliteInstance: Database.Database | null = null;
+let dbInstance: BetterSQLite3Database<typeof schema> | null = null;
 
-function getDb(): DatabaseSync {
+function getDb() {
   if (!dbInstance) {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    dbInstance = new DatabaseSync(DB_PATH);
+    sqliteInstance = new Database(DB_PATH);
+    dbInstance = drizzle(sqliteInstance, { schema });
   }
   return dbInstance;
 }
 
-export function initializeDatabase(): DatabaseSync {
+export function initializeDatabase(): Database.Database {
   const db = getDb();
+  const sqlite = sqliteInstance!;
 
-  db.exec("PRAGMA journal_mode = WAL");
+  sqlite.pragma("journal_mode = WAL");
 
-  db.exec(`
+  sqlite.exec(`
         CREATE TABLE IF NOT EXISTS chats (
             jid TEXT PRIMARY KEY,
             name TEXT,
-            last_message_time TEXT -- Store dates as ISO strings
+            last_message_time TEXT
         );
     `);
 
-  db.exec(`
+  sqlite.exec(`
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT,
             chat_jid TEXT,
-            sender TEXT,      -- JID of the sender (can be group participant or contact)
+            sender TEXT,
             content TEXT,
-            timestamp TEXT, -- Store dates as ISO strings
-            is_from_me INTEGER, -- Store booleans as 0 or 1
+            timestamp TEXT,
+            is_from_me INTEGER,
             PRIMARY KEY (id, chat_jid),
             FOREIGN KEY (chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
         );
     `);
 
-    db.exec(`
+  sqlite.exec(`
       CREATE TABLE IF NOT EXISTS contacts (
         jid TEXT PRIMARY KEY,
         name TEXT,
@@ -95,42 +101,33 @@ export function initializeDatabase(): DatabaseSync {
       );
     `);
 
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages (chat_jid);`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender);`,
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats (last_message_time);`,
-  );
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages (chat_jid);`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender);`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats (last_message_time);`);
 
-  return db;
+  return sqlite;
 }
 
 export function storeChat(chat: Partial<Chat> & { jid: string }): void {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-            INSERT INTO chats (jid, name, last_message_time)
-            VALUES (@jid, @name, @last_message_time)
-            ON CONFLICT(jid) DO UPDATE SET
-                name = COALESCE(excluded.name, name),
-                last_message_time = COALESCE(excluded.last_message_time, last_message_time)
-        `);
-    stmt.run({
-      jid: chat.jid,
-      name: chat.name ?? null,
-      last_message_time:
-        chat.last_message_time instanceof Date
+    db.insert(schema.chats)
+      .values({
+        jid: chat.jid,
+        name: chat.name ?? null,
+        lastMessageTime: chat.last_message_time instanceof Date
           ? chat.last_message_time.toISOString()
-          : chat.last_message_time === null
-            ? null
-            : String(chat.last_message_time),
-    });
+          : chat.last_message_time === null ? null : String(chat.last_message_time),
+      })
+      .onConflictDoUpdate({
+        target: schema.chats.jid,
+        set: {
+          name: sql`COALESCE(excluded.name, chats.name)`,
+          lastMessageTime: sql`COALESCE(excluded.last_message_time, chats.last_message_time)`,
+        },
+      })
+      .run();
   } catch (error) {
     logError("Error storing chat", error);
   }
@@ -141,29 +138,34 @@ export function storeMessage(message: Message): void {
   try {
     storeChat({ jid: message.chat_jid, last_message_time: message.timestamp });
 
-    const stmt = db.prepare(`
-            INSERT OR REPLACE INTO messages (id, chat_jid, sender, content, timestamp, is_from_me)
-            VALUES (@id, @chat_jid, @sender, @content, @timestamp, @is_from_me)
-        `);
+    db.insert(schema.messages)
+      .values({
+        id: message.id,
+        chatJid: message.chat_jid,
+        sender: message.sender ?? null,
+        content: message.content,
+        timestamp: message.timestamp.toISOString(),
+        isFromMe: message.is_from_me,
+      })
+      .onConflictDoUpdate({
+        target: [schema.messages.id, schema.messages.chatJid],
+        set: {
+            sender: message.sender ?? null,
+            content: message.content,
+            timestamp: message.timestamp.toISOString(),
+            isFromMe: message.is_from_me,
+        }
+      })
+      .run();
 
-    stmt.run({
-      id: message.id,
-      chat_jid: message.chat_jid,
-      sender: message.sender ?? null,
-      content: message.content,
-      timestamp: message.timestamp.toISOString(),
-      is_from_me: message.is_from_me ? 1 : 0,
-    });
+    // Update chat last message time
+    db.update(schema.chats)
+      .set({
+        lastMessageTime: sql`MAX(COALESCE(last_message_time, '1970-01-01T00:00:00.000Z'), ${message.timestamp.toISOString()})`
+      })
+      .where(eq(schema.chats.jid, message.chat_jid))
+      .run();
 
-    const updateChatTimeStmt = db.prepare(`
-            UPDATE chats
-            SET last_message_time = MAX(COALESCE(last_message_time, '1970-01-01T00:00:00.000Z'), @timestamp)
-            WHERE jid = @jid
-        `);
-    updateChatTimeStmt.run({
-      timestamp: message.timestamp.toISOString(),
-      jid: message.chat_jid,
-    });
   } catch (error) {
     logError("Error storing message", error);
   }
@@ -179,30 +181,6 @@ function parseDateSafe(dateString: string | null | undefined): Date | null {
   }
 }
 
-function rowToMessage(row: any): Message {
-  return {
-    id: row.id,
-    chat_jid: row.chat_jid,
-    sender: row.sender,
-    content: row.content,
-    timestamp: parseDateSafe(row.timestamp)!,
-    is_from_me: Boolean(row.is_from_me),
-    chat_name: row.chat_name,
-  };
-}
-
-function rowToChat(row: any): Chat {
-  return {
-    jid: row.jid,
-    name: row.name,
-    last_message_time: parseDateSafe(row.last_message_time),
-    last_message: row.last_message,
-    last_sender: row.last_sender,
-    last_is_from_me:
-      row.last_is_from_me !== null ? Boolean(row.last_is_from_me) : null,
-  };
-}
-
 export function getMessages(
   chatJid: string,
   limit: number = 20,
@@ -211,17 +189,31 @@ export function getMessages(
   const db = getDb();
   try {
     const offset = page * limit;
-    const stmt = db.prepare(`
-            SELECT m.*, c.name as chat_name
-            FROM messages m
-            JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.chat_jid = ? -- Positional parameter 1
-            ORDER BY m.timestamp DESC
-            LIMIT ?             -- Positional parameter 2
-            OFFSET ?            -- Positional parameter 3
-        `);
-    const rows = stmt.all(chatJid, limit, offset) as any[];
-    return rows.map(rowToMessage);
+
+    const rows = db.select({
+        id: schema.messages.id,
+        chat_jid: schema.messages.chatJid,
+        sender: schema.messages.sender,
+        content: schema.messages.content,
+        timestamp: schema.messages.timestamp,
+        is_from_me: schema.messages.isFromMe,
+        chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(eq(schema.messages.chatJid, chatJid))
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(limit)
+    .offset(offset)
+    .all();
+
+    return rows.map((row: any) => ({
+        ...row,
+        timestamp: parseDateSafe(row.timestamp)!,
+        is_from_me: row.is_from_me ?? false,
+        chat_jid: row.chat_jid!,
+        id: row.id!,
+    }));
   } catch (error) {
     logError("Error getting messages", error);
     return [];
@@ -238,42 +230,60 @@ export function getChats(
   const db = getDb();
   try {
     const offset = page * limit;
-    let sql = `
-            SELECT
-                c.jid,
-                c.name,
-                c.last_message_time
-                ${
-                  includeLastMessage
-                    ? `,
-                (SELECT m.content FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_message,
-                (SELECT m.sender FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_sender,
-                (SELECT m.is_from_me FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_is_from_me
-                `
-                    : ""
-                }
-            FROM chats c
-        `;
 
-    const params: (string | number)[] = [];
+    // In better-sqlite3 we can use a simpler approach for last message if needed,
+    // but Drizzle's subquery/with should work.
 
-    if (query) {
-      sql += ` WHERE (LOWER(c.name) LIKE LOWER(?) OR c.jid LIKE ?)`;
-      params.push(`%${query}%`, `%${query}%`);
+    const lastMessageSq = db.$with('last_messages').as(
+        db.select({
+            chatJid: schema.messages.chatJid,
+            content: schema.messages.content,
+            sender: schema.messages.sender,
+            isFromMe: schema.messages.isFromMe,
+            row_num: sql`row_number() OVER (PARTITION BY ${schema.messages.chatJid} ORDER BY ${schema.messages.timestamp} DESC)`.as('row_num')
+        })
+        .from(schema.messages)
+    );
+
+    let baseQuery: any = db.with(lastMessageSq).select({
+        jid: schema.chats.jid,
+        name: schema.chats.name,
+        last_message_time: schema.chats.lastMessageTime,
+        last_message: includeLastMessage ? lastMessageSq.content : sql`NULL`,
+        last_sender: includeLastMessage ? lastMessageSq.sender : sql`NULL`,
+        last_is_from_me: includeLastMessage ? lastMessageSq.isFromMe : sql`NULL`,
+    })
+    .from(schema.chats);
+
+    if (includeLastMessage) {
+        baseQuery = baseQuery.leftJoin(lastMessageSq, and(eq(schema.chats.jid, lastMessageSq.chatJid), eq(lastMessageSq.row_num, 1)));
     }
 
-    const orderByClause =
-      sortBy === "last_active"
-        ? "c.last_message_time DESC NULLS LAST"
-        : "c.name ASC";
-    sql += ` ORDER BY ${orderByClause}, c.jid ASC`;
+    if (query) {
+        baseQuery = baseQuery.where(or(
+            like(sql`LOWER(${schema.chats.name})`, `%${query.toLowerCase()}%`),
+            like(schema.chats.jid, `%${query}%`)
+        ));
+    }
 
-    sql += ` LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const orderBy = sortBy === "last_active"
+        ? [desc(schema.chats.lastMessageTime), asc(schema.chats.jid)]
+        : [asc(schema.chats.name), asc(schema.chats.jid)];
 
-    const stmt = db.prepare(sql);
-    const rows = stmt.all(...params) as any[];
-    return rows.map(rowToChat);
+    const rows = baseQuery
+        .orderBy(...orderBy)
+        .limit(limit)
+        .offset(offset)
+        .all();
+
+    return rows.map((row: any) => ({
+        jid: row.jid,
+        name: row.name,
+        last_message_time: parseDateSafe(row.last_message_time as string),
+        last_message: row.last_message as string | null,
+        last_sender: row.last_sender as string | null,
+        last_is_from_me: row.last_is_from_me as boolean | null,
+    }));
   } catch (error) {
     logError("Error getting chats", error);
     return [];
@@ -286,27 +296,46 @@ export function getChat(
 ): Chat | null {
   const db = getDb();
   try {
-    let sql = `
-            SELECT
-                c.jid,
-                c.name,
-                c.last_message_time
-                ${
-                  includeLastMessage
-                    ? `,
-                (SELECT m.content FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_message,
-                (SELECT m.sender FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_sender,
-                (SELECT m.is_from_me FROM messages m WHERE m.chat_jid = c.jid ORDER BY m.timestamp DESC LIMIT 1) as last_is_from_me
-                `
-                    : ""
-                }
-            FROM chats c
-            WHERE c.jid = ? -- Positional parameter 1
-        `;
+    const lastMessageSq = db.$with('last_message').as(
+        db.select({
+            chatJid: schema.messages.chatJid,
+            content: schema.messages.content,
+            sender: schema.messages.sender,
+            isFromMe: schema.messages.isFromMe,
+        })
+        .from(schema.messages)
+        .where(eq(schema.messages.chatJid, jid))
+        .orderBy(desc(schema.messages.timestamp))
+        .limit(1)
+    );
 
-    const stmt = db.prepare(sql);
-    const row = stmt.get(jid) as any | undefined;
-    return row ? rowToChat(row) : null;
+    let baseQuery: any = db.with(lastMessageSq).select({
+        jid: schema.chats.jid,
+        name: schema.chats.name,
+        last_message_time: schema.chats.lastMessageTime,
+        last_message: includeLastMessage ? lastMessageSq.content : sql`NULL`,
+        last_sender: includeLastMessage ? lastMessageSq.sender : sql`NULL`,
+        last_is_from_me: includeLastMessage ? lastMessageSq.isFromMe : sql`NULL`,
+    })
+    .from(schema.chats)
+    .where(eq(schema.chats.jid, jid));
+
+    if (includeLastMessage) {
+        baseQuery = baseQuery.leftJoin(lastMessageSq, eq(schema.chats.jid, lastMessageSq.chatJid));
+    }
+
+    const row: any = baseQuery.get();
+
+    if (!row) return null;
+
+    return {
+        jid: row.jid,
+        name: row.name,
+        last_message_time: parseDateSafe(row.last_message_time as string),
+        last_message: row.last_message as string | null,
+        last_sender: row.last_sender as string | null,
+        last_is_from_me: row.last_is_from_me as boolean | null,
+    };
   } catch (error) {
     logError("Error getting chat", error);
     return null;
@@ -326,46 +355,82 @@ export function getMessagesAround(
   } = { before: [], target: null, after: [] };
 
   try {
-    const targetStmt = db.prepare(`
-             SELECT m.*, c.name as chat_name
-             FROM messages m
-             JOIN chats c ON m.chat_jid = c.jid
-             WHERE m.id = ? -- Positional parameter 1
-        `);
-    const targetRow = targetStmt.get(messageId) as any | undefined;
+    const targetRow: any = db.select({
+        id: schema.messages.id,
+        chat_jid: schema.messages.chatJid,
+        sender: schema.messages.sender,
+        content: schema.messages.content,
+        timestamp: schema.messages.timestamp,
+        is_from_me: schema.messages.isFromMe,
+        chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(eq(schema.messages.id, messageId))
+    .get();
 
     if (!targetRow) {
       return result;
     }
-    result.target = rowToMessage(targetRow);
-    const targetTimestamp = result.target.timestamp.toISOString();
-    const chatJid = result.target.chat_jid;
 
-    const beforeStmt = db.prepare(`
-            SELECT m.*, c.name as chat_name
-            FROM messages m
-            JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.chat_jid = ? AND m.timestamp < ? -- Positional params 1, 2
-            ORDER BY m.timestamp DESC
-            LIMIT ?                                  -- Positional param 3
-        `);
-    const beforeRows = beforeStmt.all(
-      chatJid,
-      targetTimestamp,
-      before,
-    ) as any[];
-    result.before = beforeRows.map(rowToMessage).reverse();
+    result.target = {
+        ...targetRow,
+        timestamp: parseDateSafe(targetRow.timestamp)!,
+        is_from_me: targetRow.is_from_me ?? false,
+        chat_jid: targetRow.chat_jid!,
+        id: targetRow.id!,
+    };
 
-    const afterStmt = db.prepare(`
-            SELECT m.*, c.name as chat_name
-            FROM messages m
-            JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.chat_jid = ? AND m.timestamp > ? -- Positional params 1, 2
-            ORDER BY m.timestamp ASC
-            LIMIT ?                                  -- Positional param 3
-        `);
-    const afterRows = afterStmt.all(chatJid, targetTimestamp, after) as any[];
-    result.after = afterRows.map(rowToMessage);
+    const targetTimestamp = targetRow.timestamp!;
+    const chatJid = targetRow.chat_jid!;
+
+    const beforeRows = db.select({
+        id: schema.messages.id,
+        chat_jid: schema.messages.chatJid,
+        sender: schema.messages.sender,
+        content: schema.messages.content,
+        timestamp: schema.messages.timestamp,
+        is_from_me: schema.messages.isFromMe,
+        chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(and(eq(schema.messages.chatJid, chatJid), sql`${schema.messages.timestamp} < ${targetTimestamp}`))
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(before)
+    .all();
+
+    result.before = beforeRows.map((row: any) => ({
+        ...row,
+        timestamp: parseDateSafe(row.timestamp)!,
+        is_from_me: row.is_from_me ?? false,
+        chat_jid: row.chat_jid!,
+        id: row.id!,
+    })).reverse();
+
+    const afterRows = db.select({
+        id: schema.messages.id,
+        chat_jid: schema.messages.chatJid,
+        sender: schema.messages.sender,
+        content: schema.messages.content,
+        timestamp: schema.messages.timestamp,
+        is_from_me: schema.messages.isFromMe,
+        chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(and(eq(schema.messages.chatJid, chatJid), sql`${schema.messages.timestamp} > ${targetTimestamp}`))
+    .orderBy(asc(schema.messages.timestamp))
+    .limit(after)
+    .all();
+
+    result.after = afterRows.map((row: any) => ({
+        ...row,
+        timestamp: parseDateSafe(row.timestamp)!,
+        is_from_me: row.is_from_me ?? false,
+        chat_jid: row.chat_jid!,
+        id: row.id!,
+    }));
 
     return result;
   } catch (error) {
@@ -382,24 +447,18 @@ export function searchDbForContacts(
   try {
     const pattern = `%${query}%`;
 
-    const stmt = db.prepare(`
-      SELECT
-        jid,
-        COALESCE(name, notify, phone_number, jid) AS display_name
-      FROM contacts
-      WHERE
-        LOWER(COALESCE(name, notify, phone_number, jid)) LIKE LOWER(?)
-      LIMIT ?
-    `);
+    const rows = db.select({
+        jid: schema.contacts.jid,
+        display_name: sql`COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid})`
+    })
+    .from(schema.contacts)
+    .where(like(sql`LOWER(COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid}))`, pattern.toLowerCase()))
+    .limit(limit)
+    .all();
 
-    const rows = stmt.all(pattern, limit) as {
-      jid: string;
-      display_name: string | null;
-    }[];
-
-    return rows.map((r) => ({
+    return rows.map((r: any) => ({
       jid: r.jid,
-      name: r.display_name,
+      name: r.display_name as string | null,
     }));
   } catch (error) {
     logError("Error searching contacts", error);
@@ -417,28 +476,37 @@ export function searchMessages(
   try {
     const offset = page * limit;
     const searchPattern = `%${searchQuery}%`;
-    let sql = `
-            SELECT m.*, c.name as chat_name
-            FROM messages m
-            JOIN chats c ON m.chat_jid = c.jid
-            WHERE LOWER(m.content) LIKE LOWER(?) -- Param 1: searchPattern
-        `;
-    const params: (string | number | null)[] = [searchPattern];
+
+    let whereClause = like(sql`LOWER(${schema.messages.content})`, searchPattern.toLowerCase());
 
     if (chatJid) {
-      sql += ` AND m.chat_jid = ?`; 
-      params.push(chatJid);
+      whereClause = and(whereClause, eq(schema.messages.chatJid, chatJid)) as any;
     }
 
-    sql += ` ORDER BY m.timestamp DESC`;
-    sql += ` LIMIT ?`;
-    params.push(limit);
-    sql += ` OFFSET ?`; 
-    params.push(offset);
+    const rows = db.select({
+        id: schema.messages.id,
+        chat_jid: schema.messages.chatJid,
+        sender: schema.messages.sender,
+        content: schema.messages.content,
+        timestamp: schema.messages.timestamp,
+        is_from_me: schema.messages.isFromMe,
+        chat_name: schema.chats.name,
+    })
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(whereClause)
+    .orderBy(desc(schema.messages.timestamp))
+    .limit(limit)
+    .offset(offset)
+    .all();
 
-    const stmt = db.prepare(sql);
-    const rows = stmt.all(...params) as any[]; 
-    return rows.map(rowToMessage);
+    return rows.map((row: any) => ({
+        ...row,
+        timestamp: parseDateSafe(row.timestamp)!,
+        is_from_me: row.is_from_me ?? false,
+        chat_jid: row.chat_jid!,
+        id: row.id!,
+    }));
   } catch (error) {
     logError("Error searching messages", error);
     return [];
@@ -446,9 +514,10 @@ export function searchMessages(
 }
 
 export function closeDatabase(): void {
-  if (dbInstance) {
+  if (sqliteInstance) {
     try {
-      dbInstance.close();
+      sqliteInstance.close();
+      sqliteInstance = null;
       dbInstance = null;
       logInfo("Database connection closed.");
     } catch (error) {
@@ -465,21 +534,22 @@ export function storeContact(contact: {
 }): void {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO contacts (jid, name, notify, phone_number)
-      VALUES (@jid, @name, @notify, @phone_number)
-      ON CONFLICT(jid) DO UPDATE SET
-        name = COALESCE(excluded.name, name),
-        notify = COALESCE(excluded.notify, notify),
-        phone_number = COALESCE(excluded.phone_number, phone_number)
-    `);
-
-    stmt.run({
-      jid: contact.jid,
-      name: contact.name ?? null,
-      notify: contact.notify ?? null,
-      phone_number: contact.phoneNumber ?? null,
-    });
+    db.insert(schema.contacts)
+      .values({
+        jid: contact.jid,
+        name: contact.name ?? null,
+        notify: contact.notify ?? null,
+        phoneNumber: contact.phoneNumber ?? null,
+      })
+      .onConflictDoUpdate({
+        target: schema.contacts.jid,
+        set: {
+            name: sql`COALESCE(excluded.name, contacts.name)`,
+            notify: sql`COALESCE(excluded.notify, contacts.notify)`,
+            phoneNumber: sql`COALESCE(excluded.phone_number, contacts.phone_number)`,
+        }
+      })
+      .run();
   } catch (error) {
     logError("Error storing contact", error);
   }
