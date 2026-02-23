@@ -18,7 +18,7 @@ import {
   updateMessageMediaLocalPath,
 } from "./database.ts";
 
-import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, connectionState, socketState } from "./whatsapp.ts";
+import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, startWhatsAppConnection, connectionState, socketState } from "./whatsapp.ts";
 import fs from "node:fs";
 import type { Logger } from "pino";
 
@@ -103,7 +103,11 @@ export async function startMcpServer(
       } else if (connectionState.status === 'connecting') {
         result.message = "Connecting to WhatsApp...";
       } else {
-        result.message = "WhatsApp is disconnected";
+        result.message = "WhatsApp is disconnected. Attempting to reconnect...";
+        // Trigger lazy reconnection
+        startWhatsAppConnection(waLogger).catch((err) => {
+          mcpLogger.error({ err }, "Reconnection attempt from get_connection_status failed");
+        });
       }
 
       return JSON.stringify(result, null, 2);
@@ -118,7 +122,7 @@ export async function startMcpServer(
       mcpLogger.info("[MCP Tool] Executing logout");
       if (socketState.socket) {
         await socketState.socket.logout();
-        return "Logged out successfully. You will need to scan the QR code again to reconnect.";
+        return "Logged out. Reconnecting for new QR code — call get_connection_status in a few seconds to scan.";
       }
       return "Not currently connected.";
     }
