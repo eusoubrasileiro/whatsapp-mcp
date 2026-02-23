@@ -23,7 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc.6",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
     "fastmcp": "^3.32.0",

@@ -17,6 +17,7 @@ import P from "pino";
 import path from "node:path";
 import fs from "node:fs";
 import qrcode from "qrcode-terminal";
+import { handleConnectionClose } from "./connection-handler.ts";
 
 import {
   storeMessage,
@@ -248,36 +249,23 @@ export async function startWhatsAppConnection(
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        connectionState.status = 'disconnected';
-        connectionState.qrCode = null;
-        connectionState.qrAscii = null;
-        connectionState.user = null;
-        socketState.socket = null;
-        logger.warn(
-          { err: lastDisconnect?.error },
-          `Connection closed. Reason: ${
-            DisconnectReason[statusCode as number] || "Unknown"
-          }`
+        handleConnectionClose(
+          statusCode,
+          lastDisconnect?.error as Error | undefined,
+          DisconnectReason[statusCode as number] || "Unknown",
+          {
+            logger,
+            connectionState,
+            socketState,
+            startConnection: () => startWhatsAppConnection(logger),
+            rmSync: fs.rmSync,
+            mkdirSync: fs.mkdirSync,
+            setTimeoutFn: (cb, ms) => setTimeout(cb, ms),
+            pRetryFn: pRetry,
+            authDir: AUTH_DIR,
+            loggedOutCode: DisconnectReason.loggedOut,
+          },
         );
-        if (statusCode !== DisconnectReason.loggedOut) {
-          pRetry(() => startWhatsAppConnection(logger), {
-            retries: 10,
-            minTimeout: 1000,
-            maxTimeout: 60000,
-            factor: 2,
-            onFailedAttempt: (err) => {
-              logger.warn(`Reconnect attempt ${err.attemptNumber} failed, ${err.retriesLeft} retries left`);
-            },
-          }).catch((err) => {
-            logger.error({ err }, "All reconnection attempts failed. Exiting.");
-            process.exit(1);
-          });
-        } else {
-          logger.error(
-            "Connection closed: Logged Out. Please delete auth_info and restart."
-          );
-          process.exit(1);
-        }
       } else if (connection === "open") {
         if (sock.user) {
           connectionState.status = 'connected';
