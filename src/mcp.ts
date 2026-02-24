@@ -544,5 +544,5 @@ TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
   });
 
   mcpLogger.info("FastMCP server configured. Starting...");
-  server.start();
+  await server.start();
 }
