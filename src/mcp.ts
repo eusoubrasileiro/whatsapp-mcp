@@ -1,6 +1,6 @@
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { jidNormalizedUser } from "@whiskeysockets/baileys";
+import { normalizeJid } from "@amiticia/baileys-client";
 
 import {
   type Message as DbMessage,
@@ -351,7 +351,7 @@ export async function startMcpServer(
         throw new Error("WhatsApp connection is not active.");
       }
 
-      const normalizedRecipient = jidNormalizedUser(recipient);
+      const normalizedRecipient = normalizeJid(recipient);
       if (!normalizedRecipient.includes("@")) {
         throw new Error(`Invalid recipient format: "${recipient}". JID must contain "@".`);
       }
@@ -381,7 +381,7 @@ export async function startMcpServer(
         throw new Error("WhatsApp connection is not active.");
       }
 
-      const normalizedRecipient = jidNormalizedUser(recipient);
+      const normalizedRecipient = normalizeJid(recipient);
       const result = await sendWhatsAppMedia(waLogger, normalizedRecipient, file_path, caption, type);
 
       if (result && result.key && result.key.id) {

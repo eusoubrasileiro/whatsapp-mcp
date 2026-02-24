@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseMessageForDb, extractMediaInfo } from "../whatsapp.ts";
-import type { WAMessage } from "@whiskeysockets/baileys";
+import { parseMessage, extractMediaInfo } from "@amiticia/baileys-client";
+import type { WAMessage } from "@amiticia/baileys-client";
 
 function makeWAMsg(overrides: Partial<WAMessage> = {}): WAMessage {
   return {
@@ -19,9 +19,9 @@ function makeWAMsg(overrides: Partial<WAMessage> = {}): WAMessage {
   } as WAMessage;
 }
 
-describe("parseMessageForDb", () => {
+describe("parseMessage", () => {
   it("parses a simple conversation message", () => {
-    const result = parseMessageForDb(makeWAMsg());
+    const result = parseMessage(makeWAMsg());
     expect(result).not.toBeNull();
     expect(result!.id).toBe("TEST_MSG_ID");
     expect(result!.content).toBe("Hello world");
@@ -30,103 +30,103 @@ describe("parseMessageForDb", () => {
   });
 
   it("parses extendedTextMessage", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { extendedTextMessage: { text: "Extended text" } },
     }));
     expect(result!.content).toBe("Extended text");
   });
 
   it("parses image with caption", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { imageMessage: { caption: "Nice photo", mimetype: "image/jpeg" } as any },
     }));
     expect(result!.content).toBe("[Image] Nice photo");
   });
 
   it("parses image without caption", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { imageMessage: { mimetype: "image/jpeg" } as any },
     }));
     expect(result!.content).toBe("[Image]");
   });
 
   it("parses video with caption", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { videoMessage: { caption: "Cool video", mimetype: "video/mp4" } as any },
     }));
     expect(result!.content).toBe("[Video] Cool video");
   });
 
   it("parses video without caption", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { videoMessage: { mimetype: "video/mp4" } as any },
     }));
     expect(result!.content).toBe("[Video]");
   });
 
   it("parses document with caption", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { documentMessage: { caption: "Report", fileName: "report.pdf" } as any },
     }));
     expect(result!.content).toBe("[Document] Report");
   });
 
   it("parses document with filename only", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { documentMessage: { fileName: "report.pdf" } as any },
     }));
     expect(result!.content).toBe("[Document] report.pdf");
   });
 
   it("parses audio message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { audioMessage: { mimetype: "audio/ogg" } as any },
     }));
     expect(result!.content).toBe("[Audio]");
   });
 
   it("parses sticker message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { stickerMessage: {} as any },
     }));
     expect(result!.content).toBe("[Sticker]");
   });
 
   it("parses location message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { locationMessage: { address: "123 Main St" } as any },
     }));
     expect(result!.content).toBe("[Location] 123 Main St");
   });
 
   it("parses contact message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { contactMessage: { displayName: "John Doe" } as any },
     }));
     expect(result!.content).toBe("[Contact] John Doe");
   });
 
   it("parses poll message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { pollCreationMessage: { name: "Lunch poll" } as any },
     }));
     expect(result!.content).toBe("[Poll] Lunch poll");
   });
 
   it("returns null for empty message", () => {
-    const result = parseMessageForDb({ key: { remoteJid: "a@s.whatsapp.net", id: "1" } } as WAMessage);
+    const result = parseMessage({ key: { remoteJid: "a@s.whatsapp.net", id: "1" } } as WAMessage);
     expect(result).toBeNull();
   });
 
   it("returns null for unsupported message type", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: { reactionMessage: { text: "👍" } as any },
     }));
     expect(result).toBeNull();
   });
 
   it("handles fromMe messages", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       key: {
         remoteJid: "5511999999999@s.whatsapp.net",
         fromMe: true,
@@ -138,7 +138,7 @@ describe("parseMessageForDb", () => {
   });
 
   it("uses messageTimestamp for timestamp", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       messageTimestamp: 1717200000,
     }));
     expect(result!.timestamp.getTime()).toBe(1717200000 * 1000);
@@ -146,7 +146,7 @@ describe("parseMessageForDb", () => {
 
   it("falls back to Date.now() when no timestamp", () => {
     const before = Date.now();
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       messageTimestamp: undefined as any,
     }));
     const after = Date.now();
@@ -155,7 +155,7 @@ describe("parseMessageForDb", () => {
   });
 
   it("extracts sender from group participant", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       key: {
         remoteJid: "group@g.us",
         fromMe: false,
@@ -168,7 +168,7 @@ describe("parseMessageForDb", () => {
   });
 
   it("uses remoteJid as sender for 1:1 incoming", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       key: {
         remoteJid: "5511777777777@s.whatsapp.net",
         fromMe: false,
@@ -182,7 +182,7 @@ describe("parseMessageForDb", () => {
 
   it("extracts media metadata from image message", () => {
     const mediaKey = new Uint8Array([1, 2, 3, 4]);
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: {
         imageMessage: {
           caption: "Photo",
@@ -206,13 +206,13 @@ describe("parseMessageForDb", () => {
   });
 
   it("does not extract media info from text messages", () => {
-    const result = parseMessageForDb(makeWAMsg());
+    const result = parseMessage(makeWAMsg());
     expect(result!.media_type).toBeNull();
     expect(result!.media_key).toBeNull();
   });
 
   it("detects ptt (voice note) as ptt media type", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: {
         audioMessage: {
           mimetype: "audio/ogg; codecs=opus",
@@ -228,7 +228,7 @@ describe("parseMessageForDb", () => {
   });
 
   it("detects regular audio (non-ptt) as audio media type", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: {
         audioMessage: {
           mimetype: "audio/mpeg",
@@ -242,7 +242,7 @@ describe("parseMessageForDb", () => {
   });
 
   it("extracts media metadata from sticker message", () => {
-    const result = parseMessageForDb(makeWAMsg({
+    const result = parseMessage(makeWAMsg({
       message: {
         stickerMessage: {
           mimetype: "image/webp",
