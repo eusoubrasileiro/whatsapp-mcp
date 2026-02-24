@@ -23,13 +23,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@amiticia/baileys-client": "link:/path/to/baileys-client",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
     "fastmcp": "^3.32.0",
-    "p-retry": "^7.1.1",
     "pino": "^9.6.0",
-    "qrcode-terminal": "^0.12.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -41,5 +40,11 @@
   },
   "engines": {
     "node": ">=23.10.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }
