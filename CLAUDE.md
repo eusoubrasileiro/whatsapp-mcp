@@ -5,8 +5,8 @@ MCP server for WhatsApp integration using Baileys, enabling Claude/Cursor to int
 ## Quick Start
 
 ```bash
-npm install
-npm start
+pnpm install
+pnpm start
 ```
 
 First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Linked Devices).
@@ -26,13 +26,13 @@ First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Lin
 node -v  # must show v23.10.0 or higher
 
 # Step 2: Install dependencies with the SAME Node version you'll use in claude mcp add
-npm install
+pnpm install
 
 # Step 3: First-run authentication (scan QR code with WhatsApp mobile)
-npm start
+pnpm start
 
 # Step 4: Register with Claude Code
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
 
 # Step 5: Verify
 claude mcp list          # should show: whatsapp: ... ✓ Connected
@@ -49,7 +49,7 @@ The MCP stdio server **MUST** start before the WhatsApp connection. `src/main.ts
 
 | Problem | Symptoms | Fix |
 |---------|----------|-----|
-| Native module ABI mismatch | Silent exit code 1, no logs written | Run `npm install` with the correct Node version in PATH |
+| Native module ABI mismatch | Silent exit code 1, no logs written | Run `pnpm install` with the correct Node version in PATH |
 | Wrong Node version in MCP config | Same as above | `claude mcp remove --scope user whatsapp` then re-add with Node 23 path |
 | Startup order reversed | Server starts but Claude Code kills it in ~1–4s | MCP server must initialize before WA connect in `main.ts` |
 | WhatsApp 401 loggedOut | WA logs show "loggedOut", tools fail after connect | Delete `auth_info/*`, restart, re-scan QR via `get_connection_status` |
@@ -66,16 +66,16 @@ The MCP stdio server **MUST** start before the WhatsApp connection. `src/main.ts
 
 ```bash
 # EVERY TIME you change Node versions, run ALL of these:
-export PATH="/home/you/.nvm/versions/node/v23.11.0/bin:$PATH"
+export PATH="/home/you/.nvm/versions/node/v23.11.1/bin:$PATH"
 
 # 1. Rebuild native modules (better-sqlite3 etc.)
-npm install
+pnpm install
 
 # 2. Remove old MCP config (it has the old Node path baked in)
 claude mcp remove --scope user whatsapp
 
 # 3. Re-add with new Node path
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
 
 # 4. Verify
 claude mcp list
@@ -87,9 +87,9 @@ claude mcp list
 
 | Command | Description |
 |---------|-------------|
-| `npm start` | Run TypeScript directly with Node |
-| `npm run typecheck` | Type check with tsc |
-| `npm test` | Run tests with vitest |
+| `pnpm start` | Run TypeScript directly with Node |
+| `pnpm typecheck` | Type check with tsc |
+| `pnpm test` | Run tests with vitest |
 
 ## Architecture
 
@@ -97,11 +97,13 @@ claude mcp list
 src/
 ├── main.ts        # Entry point, logging setup, graceful shutdown
 ├── mcp.ts         # MCP server, tool definitions (17 tools)
-├── whatsapp.ts    # Baileys integration, message sync, p-retry reconnection
+├── whatsapp.ts    # Adapter layer over @amiticia/baileys-client + media download
 ├── database.ts    # Drizzle ORM + better-sqlite3 (chats, messages, contacts)
 └── db/
     └── schema.ts  # Drizzle table schemas
 ```
+
+**Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
 
 ## MCP Tools (17 total)
 
@@ -202,8 +204,8 @@ All data directories are gitignored for security.
 
 ### Prerequisites
 - Node.js >= 23.10.0 (required — native modules like better-sqlite3 fail on 22.x)
-- WhatsApp MCP installed: `npm install`
-- First authentication completed: `npm start` (scan QR code)
+- WhatsApp MCP installed: `pnpm install`
+- First authentication completed: `pnpm start` (scan QR code)
 
 ### Install MCP Server
 
@@ -217,7 +219,7 @@ NODE_PATH=$(which node)
 claude mcp add --scope user whatsapp -- $NODE_PATH --experimental-strip-types /ABSOLUTE/PATH/TO/whatsapp-mcp/src/main.ts
 
 # Example with full paths:
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
 ```
 
 ### Verify Installation
@@ -278,7 +280,7 @@ This project builds on the WhatsApp MCP ecosystem. For additional implementation
 
 ## Security Notes
 
-- Uses official `@whiskeysockets/baileys` package only
+- Uses `@amiticia/baileys-client` (wrapping `@whiskeysockets/baileys`)
 - Auth credentials stored locally, never transmitted
 - All message data stays local in SQLite (better-sqlite3 + Drizzle ORM)
 - Data only sent to LLM when explicitly requested via MCP tools
