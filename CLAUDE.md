@@ -15,6 +15,74 @@ First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Lin
 
 - Node.js >= 23.10.0 (uses `--experimental-strip-types`)
 
+## Claude Code MCP Setup & Troubleshooting
+
+> **Read this first.** These lessons were learned the hard way through painful debugging sessions. Every item below has caused silent failures that waste hours.
+
+### 1. Correct Setup Procedure
+
+```bash
+# Step 1: Ensure Node.js >= 23.10.0 (NOT 22.x — native modules like better-sqlite3 won't work)
+node -v  # must show v23.10.0 or higher
+
+# Step 2: Install dependencies with the SAME Node version you'll use in claude mcp add
+npm install
+
+# Step 3: First-run authentication (scan QR code with WhatsApp mobile)
+npm start
+
+# Step 4: Register with Claude Code
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+
+# Step 5: Verify
+claude mcp list          # should show: whatsapp: ... ✓ Connected
+# Then inside Claude Code, type /mcp to confirm tools are available
+```
+
+### 2. Critical Architecture Constraint — Startup Order
+
+The MCP stdio server **MUST** start before the WhatsApp connection. `src/main.ts` starts MCP first, then launches WhatsApp connection in the background — **DO NOT reverse this order**.
+
+**Why:** Claude Code sends the MCP `initialize` message immediately after spawning the process. If WhatsApp's Baileys connection blocks startup, the MCP handshake times out and Claude Code kills the process.
+
+### 3. Troubleshooting "Failed to connect"
+
+| Problem | Symptoms | Fix |
+|---------|----------|-----|
+| Native module ABI mismatch | Silent exit code 1, no logs written | Run `npm install` with the correct Node version in PATH |
+| Wrong Node version in MCP config | Same as above | `claude mcp remove --scope user whatsapp` then re-add with Node 23 path |
+| Startup order reversed | Server starts but Claude Code kills it in ~1–4s | MCP server must initialize before WA connect in `main.ts` |
+| WhatsApp 401 loggedOut | WA logs show "loggedOut", tools fail after connect | Delete `auth_info/*`, restart, re-scan QR via `get_connection_status` |
+| Logs not where expected | Project dir logs are stale / empty | Claude Code CWD = `~`, so check `~/mcp-logs.txt` and `~/wa-logs.txt` |
+
+### 4. Debugging Silent Crashes
+
+- **Pino logs to files, NOT stderr** — errors are invisible by default in Claude Code's stdio transport
+- To debug: run the server manually with `node --trace-exit --experimental-strip-types src/main.ts`
+- Test MCP stdin handling: pipe `< /dev/null` to simulate Claude Code's closed stdin
+- The `process.exit(1)` in catch handlers can trigger pino's "sonic boom not ready" warning which **masks the real error** — look at the full log file, not just stderr
+
+### 5. After Switching Node.js Versions Checklist
+
+```bash
+# EVERY TIME you change Node versions, run ALL of these:
+export PATH="/home/you/.nvm/versions/node/v23.11.0/bin:$PATH"
+
+# 1. Rebuild native modules (better-sqlite3 etc.)
+npm install
+
+# 2. Remove old MCP config (it has the old Node path baked in)
+claude mcp remove --scope user whatsapp
+
+# 3. Re-add with new Node path
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+
+# 4. Verify
+claude mcp list
+```
+
+---
+
 ## Scripts
 
 | Command | Description |
@@ -133,7 +201,7 @@ All data directories are gitignored for security.
 ## Claude Code Installation
 
 ### Prerequisites
-- Node.js >= 22.6.0 (for `--experimental-strip-types`) or >= 23.10.0 (recommended)
+- Node.js >= 23.10.0 (required — native modules like better-sqlite3 fail on 22.x)
 - WhatsApp MCP installed: `npm install`
 - First authentication completed: `npm start` (scan QR code)
 
@@ -142,14 +210,14 @@ All data directories are gitignored for security.
 **IMPORTANT:** You must include `--experimental-strip-types` flag for Node.js to execute TypeScript directly.
 
 ```bash
-# Get your Node.js path (must be v22.6+)
+# Get your Node.js path (must be v23.10.0+)
 NODE_PATH=$(which node)
 
 # Add to Claude Code (user scope - works in all projects)
 claude mcp add --scope user whatsapp -- $NODE_PATH --experimental-strip-types /ABSOLUTE/PATH/TO/whatsapp-mcp/src/main.ts
 
 # Example with full paths:
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v22.14.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.0/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
 ```
 
 ### Verify Installation
@@ -161,15 +229,7 @@ claude mcp list
 
 ### Troubleshooting
 
-**"Failed to connect" error:**
-- Ensure `--experimental-strip-types` flag is included
-- Verify Node.js version is >= 22.6.0: `node -v`
-- Check logs: `tail -f /path/to/whatsapp-mcp/mcp-logs.txt`
-
-**Tools not available after restart:**
-- The config persists, but the server may fail to start
-- Run `claude mcp list` to check connection status
-- If showing `✗ Failed to connect`, re-add with correct command above
+See the comprehensive **"Claude Code MCP Setup & Troubleshooting"** section at the top of this file.
 
 ## Database Schema
 
