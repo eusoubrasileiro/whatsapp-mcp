@@ -238,7 +238,6 @@ export async function startWhatsAppConnection(
         connectionState.qrCode = qr;
         connectionState.qrAscii = await generateAsciiQR(qr);
         logger.info("QR Code Received. Use get_connection_status tool to retrieve the QR code.");
-        console.error("\n" + connectionState.qrAscii);
       }
 
       if (connection === "connecting") {

@@ -31,26 +31,25 @@ async function main() {
     initializeDatabase();
     mcpLogger.info("Database initialized successfully.");
 
-    mcpLogger.info("Attempting to connect to WhatsApp...");
-    await startWhatsAppConnection(waLogger);
-    mcpLogger.info("WhatsApp connection process initiated.");
+    // Start MCP server FIRST — stdio handshake must complete before any async network I/O
+    mcpLogger.info("Starting MCP server...");
+    await startMcpServer(mcpLogger, waLogger);
+    mcpLogger.info("MCP Server started and listening.");
   } catch (error: any) {
     mcpLogger.fatal(
       { err: error },
-      "Failed during initialization or WhatsApp connection attempt"
+      "Failed during initialization or MCP server startup"
     );
 
     process.exit(1);
   }
 
-  try {
-    mcpLogger.info("Starting MCP server...");
-    await startMcpServer(mcpLogger, waLogger);
-    mcpLogger.info("MCP Server started and listening.");
-  } catch (error: any) {
-    mcpLogger.fatal({ err: error }, "Failed to start MCP server");
-    process.exit(1);
-  }
+  // Start WhatsApp connection in background (non-blocking)
+  // MCP tools already handle socketState.socket being null gracefully
+  mcpLogger.info("Attempting to connect to WhatsApp...");
+  startWhatsAppConnection(waLogger).catch((error) => {
+    mcpLogger.error({ err: error }, "WhatsApp connection failed during startup");
+  });
 
   mcpLogger.info("Application setup complete. Running...");
 }
