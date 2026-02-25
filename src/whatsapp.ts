@@ -72,7 +72,7 @@ export async function startWhatsAppConnection(
         logger.info("Group metadata synced.");
       },
 
-      onHistorySync: async ({ chats, contacts, messages }) => {
+      onHistorySync: async ({ chats, contacts, messages, isLatest }) => {
         if (contacts.length > 0) {
           logger.info(`Storing ${contacts.length} contacts from history sync.`);
           contacts.forEach((c) =>
