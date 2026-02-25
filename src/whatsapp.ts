@@ -3,18 +3,14 @@ import {
   parseMessage,
   sendTextMessage,
   sendMediaMessage,
+  downloadMedia as baileysDownloadMedia,
   mimetypeToExtension,
   type ConnectionState,
   type SocketState,
   type BaileysClientConfig,
   type ParsedMessage,
+  type DownloadMediaParams,
 } from "@amiticia/baileys-client";
-import {
-  downloadContentFromMessage,
-  toBuffer,
-  getUrlFromDirectPath,
-  type MediaType,
-} from "@whiskeysockets/baileys";
 import type P from "pino";
 import path from "node:path";
 import fs from "node:fs";
@@ -240,25 +236,30 @@ export async function downloadMedia(
   mimetype: string | null,
   chatJid: string,
   messageId: string,
+  fromMe: boolean,
 ): Promise<string> {
+  const sock = socketState.socket;
+  if (!sock) {
+    throw new Error("Cannot download media: WhatsApp socket not connected.");
+  }
+
   const sanitizedChatJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
   const mediaDir = path.join(DATA_DIR, "media", sanitizedChatJid);
   fs.mkdirSync(mediaDir, { recursive: true });
 
-  const mediaKeyBuffer = new Uint8Array(Buffer.from(mediaKey, "base64"));
-  const refreshedUrl = getUrlFromDirectPath(directPath);
-
   logger.info({ messageId, mediaType, directPath }, "Downloading media");
 
-  const stream = await downloadContentFromMessage(
-    {
-      mediaKey: mediaKeyBuffer,
-      directPath,
-      url: refreshedUrl || mediaUrl || undefined,
-    },
-    mediaType as MediaType,
-  );
-  const buffer = await toBuffer(stream);
+  const params: DownloadMediaParams = {
+    mediaKey,
+    directPath,
+    mediaUrl,
+    mediaType,
+    messageId,
+    chatJid,
+    fromMe,
+  };
+
+  const buffer = await baileysDownloadMedia(sock, params, logger);
 
   const ext = (mimetype && mimetypeToExtension[mimetype]) || "bin";
   const fileName = `${messageId}.${ext}`;
