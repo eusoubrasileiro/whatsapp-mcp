@@ -512,6 +512,7 @@ export async function startMcpServer(
         message.mimetype ?? null,
         chat_jid,
         message_id,
+        Boolean(message.is_from_me),
       );
 
       updateMessageMediaLocalPath(message_id, chat_jid, filePath);
