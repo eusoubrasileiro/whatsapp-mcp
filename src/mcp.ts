@@ -100,6 +100,8 @@ export async function startMcpServer(
 
       if (connectionState.status === 'connected') {
         result.message = "WhatsApp is connected and ready";
+      } else if (connectionState.status === 'syncing') {
+        result.message = "WhatsApp is connected but syncing history. Some operations may fail.";
       } else if (connectionState.status === 'connecting') {
         result.message = "Connecting to WhatsApp...";
       } else {
