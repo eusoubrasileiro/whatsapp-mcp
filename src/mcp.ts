@@ -1,6 +1,6 @@
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { normalizeJid } from "@amiticia/baileys-client";
+import { normalizeJid, type MediaType } from "@amiticia/baileys-client";
 
 import {
   type Message as DbMessage,
@@ -503,17 +503,17 @@ export async function startMcpServer(
         }, null, 2);
       }
 
-      const filePath = await downloadMedia(
-        waLogger,
-        message.media_key,
-        message.direct_path,
-        message.media_url ?? null,
-        message.media_type,
-        message.mimetype ?? null,
-        chat_jid,
-        message_id,
-        Boolean(message.is_from_me),
-      );
+      const filePath = await downloadMedia({
+        logger: waLogger,
+        mediaKey: message.media_key,
+        directPath: message.direct_path,
+        mediaUrl: message.media_url ?? null,
+        mediaType: message.media_type as MediaType,
+        mimetype: message.mimetype ?? null,
+        chatJid: chat_jid,
+        messageId: message_id,
+        fromMe: Boolean(message.is_from_me),
+      });
 
       updateMessageMediaLocalPath(message_id, chat_jid, filePath);
 
