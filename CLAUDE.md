@@ -83,6 +83,18 @@ claude mcp list
 
 ---
 
+## Development Practices
+
+**TDD (Test-Driven Development) is mandatory.** Follow the Red-Green cycle:
+
+1. **Red** — Write failing tests first that describe the expected behavior
+2. **Green** — Write the minimal code to make the tests pass
+3. **Refactor** — Clean up while keeping tests green
+
+Every new feature, bug fix, or behavioral change must have tests written **before** the implementation code. No exceptions.
+
+---
+
 ## Scripts
 
 | Command | Description |
