@@ -110,7 +110,7 @@ src/
 ### Connection / Auth
 | Tool | Description |
 |------|-------------|
-| `get_connection_status` | Check WhatsApp connection, get QR code if pending |
+| `get_connection_status` | Check WhatsApp connection; saves QR as PNG and auto-opens it if pending |
 | `logout` | Log out from WhatsApp and clear session data |
 
 ### Contacts
@@ -158,8 +158,7 @@ src/
 
 ## Authentication
 
-On first run or after logout, call `get_connection_status` to get a QR code URL.
-Scan the QR code with WhatsApp mobile (Settings > Linked Devices).
+On first run or after logout, call `get_connection_status`. A QR code PNG will be saved to `/tmp/whatsapp-mcp-qr.png` and opened automatically in your default image viewer. Scan with WhatsApp mobile (Settings > Linked Devices).
 Auth credentials are saved in `auth_info/` for subsequent runs.
 
 ## Environment Variables
