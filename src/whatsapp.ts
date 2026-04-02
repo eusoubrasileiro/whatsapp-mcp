@@ -12,6 +12,7 @@ import {
   type DownloadMediaParams,
   type MediaType,
 } from "@amiticia/baileys-client";
+import pLimit from "p-limit";
 import type P from "pino";
 import path from "node:path";
 import fs from "node:fs";
@@ -38,6 +39,12 @@ export let socketState: SocketState = {
   socket: null,
 };
 
+// Prevents concurrent startWhatsAppConnection() calls from racing
+let connectionPromise: Promise<void> | null = null;
+
+// Limits parallel media downloads to prevent overwhelming the WhatsApp socket
+const downloadLimit = pLimit(2);
+
 function parsedToDbMessage(parsed: ParsedMessage): DbMessage {
   return {
     id: parsed.id,
@@ -60,6 +67,25 @@ function parsedToDbMessage(parsed: ParsedMessage): DbMessage {
 export async function startWhatsAppConnection(
   logger: P.Logger,
 ): Promise<void> {
+  if (connectionPromise) {
+    logger.info("Connection attempt already in progress, waiting for it...");
+    return connectionPromise;
+  }
+
+  if (connectionState.status === "connected" || connectionState.status === "syncing" || connectionState.status === "connecting") {
+    logger.info(`Skipping startWhatsAppConnection: already ${connectionState.status}`);
+    return;
+  }
+
+  connectionPromise = doStartConnection(logger);
+  try {
+    await connectionPromise;
+  } finally {
+    connectionPromise = null;
+  }
+}
+
+async function doStartConnection(logger: P.Logger): Promise<void> {
   const config: BaileysClientConfig = {
     authDir: AUTH_DIR,
     logger,
@@ -242,35 +268,38 @@ type DownloadMediaWrapperParams = {
 
 export async function downloadMedia(params: DownloadMediaWrapperParams): Promise<string> {
   const { logger, mediaKey, directPath, mediaUrl, mediaType, mimetype, chatJid, messageId, fromMe } = params;
-  const sock = socketState.socket;
-  if (!sock) {
-    throw new Error("Cannot download media: WhatsApp socket not connected.");
-  }
 
-  const sanitizedChatJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
-  const mediaDir = path.join(DATA_DIR, "media", sanitizedChatJid);
-  fs.mkdirSync(mediaDir, { recursive: true });
+  return downloadLimit(async () => {
+    const sock = socketState.socket;
+    if (!sock) {
+      throw new Error("Cannot download media: WhatsApp socket not connected.");
+    }
 
-  logger.info({ messageId, mediaType, directPath }, "Downloading media");
+    const sanitizedChatJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
+    const mediaDir = path.join(DATA_DIR, "media", sanitizedChatJid);
+    fs.mkdirSync(mediaDir, { recursive: true });
 
-  const downloadParams: DownloadMediaParams = {
-    mediaKey,
-    directPath,
-    mediaUrl,
-    mediaType,
-    messageId,
-    chatJid,
-    fromMe,
-  };
+    logger.info({ messageId, mediaType, directPath }, "Downloading media");
 
-  const buffer = await baileysDownloadMedia(sock, downloadParams, logger);
+    const downloadParams: DownloadMediaParams = {
+      mediaKey,
+      directPath,
+      mediaUrl,
+      mediaType,
+      messageId,
+      chatJid,
+      fromMe,
+    };
 
-  const ext = (mimetype && mimetypeToExtension[mimetype]) || "bin";
-  const fileName = `${messageId}.${ext}`;
-  const filePath = path.join(mediaDir, fileName);
+    const buffer = await baileysDownloadMedia(sock, downloadParams, logger);
 
-  fs.writeFileSync(filePath, buffer);
-  logger.info({ filePath, size: buffer.length }, "Media downloaded successfully");
+    const ext = (mimetype && mimetypeToExtension[mimetype]) || "bin";
+    const fileName = `${messageId}.${ext}`;
+    const filePath = path.join(mediaDir, fileName);
 
-  return filePath;
+    fs.writeFileSync(filePath, buffer);
+    logger.info({ filePath, size: buffer.length }, "Media downloaded successfully");
+
+    return filePath;
+  });
 }
