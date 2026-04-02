@@ -73,7 +73,7 @@ export async function startWhatsAppConnection(
     return connectionPromise;
   }
 
-  if (connectionState.status === "connected" || connectionState.status === "syncing" || connectionState.status === "connecting") {
+  if (connectionState.status === "connected" || connectionState.status === "syncing" || connectionState.status === "connecting" || connectionState.status === "qr_pending" || socketState.socket !== null) {
     logger.info(`Skipping startWhatsAppConnection: already ${connectionState.status}`);
     return;
   }
