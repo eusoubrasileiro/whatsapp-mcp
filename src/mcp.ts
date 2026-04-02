@@ -20,6 +20,8 @@ import {
 
 import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, startWhatsAppConnection, connectionState, socketState } from "./whatsapp.ts";
 import fs from "node:fs";
+import { spawn } from "node:child_process";
+import QRCode from "qrcode";
 import type { Logger } from "pino";
 
 function formatDbMessageForJson(msg: DbMessage) {
@@ -86,8 +88,22 @@ export async function startMcpServer(
     execute: async () => {
       mcpLogger.info("[MCP Tool] Executing get_connection_status");
 
-      if (connectionState.status === 'qr_pending' && connectionState.qrAscii) {
-        return `Status: ${connectionState.status}\n\nScan this QR code with WhatsApp mobile app (Settings > Linked Devices):\n\n${connectionState.qrAscii}`;
+      if (connectionState.status === 'qr_pending' && connectionState.qrCode) {
+        const qrPath = "/tmp/whatsapp-mcp-qr.png";
+        await QRCode.toFile(qrPath, connectionState.qrCode, { scale: 10 });
+        mcpLogger.info({ qrPath }, "QR code saved as PNG");
+
+        const child = spawn("xdg-open", [qrPath], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+
+        return JSON.stringify({
+          status: "qr_pending",
+          qr_code_path: qrPath,
+          message: "QR code saved and opened. Scan with WhatsApp mobile (Settings > Linked Devices). Call this tool again after scanning.",
+        }, null, 2);
       }
 
       const result: Record<string, unknown> = {
