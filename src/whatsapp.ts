@@ -33,6 +33,7 @@ export let connectionState: ConnectionState = {
   qrCode: null,
   qrAscii: null,
   user: null,
+  syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
 };
 
 export let socketState: SocketState = {
