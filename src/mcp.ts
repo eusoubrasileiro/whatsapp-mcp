@@ -118,6 +118,14 @@ export async function startMcpServer(
         result.message = "WhatsApp is connected and ready";
       } else if (connectionState.status === 'syncing') {
         result.message = "WhatsApp is connected but syncing history. Some operations may fail.";
+        result.sync_progress = {
+          chats: connectionState.syncProgress.chats,
+          contacts: connectionState.syncProgress.contacts,
+          messages: connectionState.syncProgress.messages,
+          last_batch_ago_seconds: connectionState.syncProgress.lastBatchAt
+            ? Math.round((Date.now() - connectionState.syncProgress.lastBatchAt.getTime()) / 1000)
+            : null,
+        };
       } else if (connectionState.status === 'connecting') {
         result.message = "Connecting to WhatsApp...";
       } else {
