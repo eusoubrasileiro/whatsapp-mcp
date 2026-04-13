@@ -85,13 +85,23 @@ claude mcp list
 
 ## Development Practices
 
-**TDD (Test-Driven Development) is mandatory.** Follow the Red-Green cycle:
+### Extreme TDD — non-negotiable
 
-1. **Red** — Write failing tests first that describe the expected behavior
-2. **Green** — Write the minimal code to make the tests pass
-3. **Refactor** — Clean up while keeping tests green
+Every change ships only after a failing test was written first. **No exceptions.** Follow the strict Red → Green → Refactor cycle:
 
-Every new feature, bug fix, or behavioral change must have tests written **before** the implementation code. No exceptions.
+1. **Red** — Write a failing test that describes the expected behavior.
+2. **Green** — Write the minimal code that makes the test pass.
+3. **Refactor** — Clean up while tests stay green.
+
+This rule applies to **all** of the following — not just new features:
+
+- New features and tool additions
+- Bug fixes and regressions (reproduce the bug as a failing test first)
+- Refactors (the existing tests become the safety net; if coverage is thin, add tests *before* refactoring)
+- Configuration changes with observable behavior (tsconfig flags, vitest options, MCP registration, pino transports)
+- **Dependency updates — both minor and major.** Before bumping any package version, a contract test must pin the consumed API surface (e.g. zod schema parsing, fastmcp tool registration, pino log-line shape, p-retry option shape). The test must pass on the current version and catch breakage on the new one.
+
+If a change has no observable behavior and genuinely cannot be tested (pure formatting or comment edits), document the reason in the commit message. This escape hatch is for cosmetics only — never for code, config, or dependency changes.
 
 ---
 
