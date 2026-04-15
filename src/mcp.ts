@@ -570,6 +570,22 @@ TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
     }
   });
 
-  mcpLogger.info("FastMCP server configured. Starting...");
-  await server.start();
+  const transport = (process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();
+  if (transport === "stdio") {
+    mcpLogger.info("FastMCP server configured. Starting (stdio)...");
+    await server.start();
+    return;
+  }
+  if (transport === "httpstream" || transport === "http" || transport === "sse") {
+    const port = Number(process.env.MCP_PORT ?? 3001);
+    const host = process.env.MCP_HOST ?? "127.0.0.1";
+    const endpoint = (process.env.MCP_ENDPOINT ?? "/mcp") as `/${string}`;
+    mcpLogger.info({ port, host, endpoint }, "FastMCP server configured. Starting (httpStream)...");
+    await server.start({
+      transportType: "httpStream",
+      httpStream: { port, host, endpoint },
+    });
+    return;
+  }
+  throw new Error(`Invalid MCP_TRANSPORT: "${transport}". Expected "stdio" or "httpStream".`);
 }
