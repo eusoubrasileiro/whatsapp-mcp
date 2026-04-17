@@ -6,8 +6,16 @@ import type { Logger } from "pino";
 import * as schema from './db/schema.ts';
 import { eq, and, or, like, gte, lt, desc, asc, sql, type SQL } from 'drizzle-orm';
 
-const DATA_DIR = path.join(import.meta.dirname, "..", "data");
-const DB_PATH = path.join(DATA_DIR, "whatsapp.db");
+/**
+ * Resolves the SQLite DB path with the same precedence as src/whatsapp.ts:34
+ * uses for auth_info and media. Exported so tests can verify path logic
+ * without touching the filesystem.
+ */
+export function resolveDbPath(override?: string): string {
+  if (override !== undefined) return override;
+  const baseDir = process.env.WHATSAPP_MCP_DATA_DIR ?? path.join(import.meta.dirname, "..");
+  return path.join(baseDir, "data", "whatsapp.db");
+}
 
 // Module-level logger (can be set via setLogger)
 let dbLogger: Logger | null = null;
@@ -82,7 +90,7 @@ export function initializeDatabase(dbPath?: string): Database.Database {
   if (dbPath === ':memory:') {
     sqliteInstance = new Database(':memory:');
   } else {
-    const resolvedPath = dbPath ?? DB_PATH;
+    const resolvedPath = resolveDbPath(dbPath);
     const dir = path.dirname(resolvedPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

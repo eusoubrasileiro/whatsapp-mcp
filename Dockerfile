@@ -31,7 +31,7 @@ RUN pnpm install --frozen-lockfile --prod
 # ── Stage 3: runtime ──
 FROM node:22-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini wget ca-certificates \
+    && apt-get install -y --no-install-recommends tini wget ca-certificates sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/whatsapp-mcp
 
@@ -43,6 +43,7 @@ COPY --from=whatsapp-deps /app/whatsapp-mcp/package.json ./package.json
 # Source for --experimental-strip-types runtime.
 COPY src ./src
 COPY tsconfig.json ./tsconfig.json
+COPY scripts ./scripts
 
 ENV NODE_ENV=production \
     MCP_TRANSPORT=httpstream \

@@ -219,10 +219,51 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
 - `data/media/` - Downloaded media files (organized by chat JID)
+- `backups/hourly/whatsapp.db` - Rolling hourly snapshot (overwritten, WAL-safe)
+- `backups/daily/whatsapp-YYYY-MM-DD.db` - Per-day snapshots (14-day retention)
+- `backups/daily/auth_info-YYYY-MM-DD.tar.gz` - Per-day auth tarball
 - `wa-logs.txt` - WhatsApp/Baileys logs
 - `mcp-logs.txt` - MCP server logs
 
 All data directories are gitignored for security.
+
+## Backup & Restore
+
+The DB and auth state live on the `/data` volume (bind mount on the VPS). Hourly snapshots are written by `scripts/backup.sh`, which ships inside the image.
+
+**Why a script and not just `cp whatsapp.db`:** SQLite runs in WAL mode here (see `src/database.ts` — `journal_mode = WAL`). Copying the `.db` file while the container is writing captures an inconsistent snapshot (WAL pages are still pending). `sqlite3 .backup` is the supported online-backup API and is WAL-safe.
+
+### Snapshot from host (cron)
+
+```
+0 * * * * docker exec whatsapp-mcp /app/whatsapp-mcp/scripts/backup.sh >> /var/log/whatsapp-mcp-backup.log 2>&1
+```
+
+Produces `backups/hourly/whatsapp.db` every run and promotes to `backups/daily/whatsapp-$(date).db` + `auth_info-$(date).tar.gz` once per day. Retention: 48h hourly, 14d daily — tune with `find` flags in `scripts/backup.sh` if needed.
+
+### Restore
+
+Container MUST be stopped (the live writer holds the WAL lock):
+
+```
+docker compose stop whatsapp-mcp
+# DB only (most common — keeps the already-paired linked device):
+./scripts/restore.sh /path/to/source.db
+# DB + auth (full disaster recovery, displaces the current linked device):
+./scripts/restore.sh /path/to/source.db /path/to/auth_info.tar.gz
+docker compose start whatsapp-mcp
+```
+
+On the VPS, either set `WHATSAPP_MCP_DATA_DIR=/storage/whatsapp-mcp` before calling `restore.sh` on the host, or use a helper container:
+
+```
+docker run --rm -v /storage/whatsapp-mcp:/data \
+  -v $(pwd)/scripts:/scripts alpine sh /scripts/restore.sh /data/incoming.db
+```
+
+### Offsite
+
+Backups are on the host side of the bind mount (`/storage/whatsapp-mcp/backups/` on the VPS). Point Borg at that directory using the operator reference in `your backup notes`. **Not automated in the stack today** — run Borg manually or add a separate host cron.
 
 ## Deploy (Docker + Traefik on VPS)
 
