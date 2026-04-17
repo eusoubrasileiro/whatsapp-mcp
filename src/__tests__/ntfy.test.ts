@@ -105,6 +105,28 @@ describe("createNtfy", () => {
     await expect(send({ title: "T", message: "M" })).resolves.toBeUndefined();
   });
 
+  it("strips non-Latin-1 characters from header values (em-dash etc.)", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response("", { status: 200 }),
+    );
+
+    const send = createNtfy(makeSilentLogger(), {
+      topicUrl: "https://ntfy.sh/t",
+    });
+    await send({
+      title: "WhatsApp \u2014 Escaneie",
+      message: "body \u00e9 utf-8",
+      tags: ["\u2014tag"],
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Title")).toBe("WhatsApp  Escaneie");
+    expect(headers.get("Tags")).toBe("tag");
+    expect(init?.body).toBe("body \u00e9 utf-8");
+  });
+
   it("omits optional headers when not provided", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response("", { status: 200 }),

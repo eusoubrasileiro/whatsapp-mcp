@@ -51,7 +51,7 @@ export function createConnectionNotifier(
     reminder = setTimer(() => {
       if (phase !== "qr_pending") return;
       void config.sendNtfy({
-        title: "WhatsApp — QR ainda aguardando",
+        title: "WhatsApp - QR ainda aguardando",
         message: "Escaneie o QR em wa.amiticia.cc para concluir o pareamento.",
         priority: 4,
         tags: ["hourglass_flowing_sand"],
@@ -69,7 +69,7 @@ export function createConnectionNotifier(
 
       logger.info("onQrCode → first QR, pushing ntfy + arming reminder");
       await config.sendNtfy({
-        title: "WhatsApp — Escaneie QR",
+        title: "WhatsApp - Escaneie QR",
         message: `Abra ${config.publicQrUrl} e escaneie com seu WhatsApp.`,
         priority: 4,
         tags: ["qrcode", "warning"],
@@ -92,7 +92,7 @@ export function createConnectionNotifier(
           "Unexpected WhatsApp number paired — triggering bad-pairing cleanup",
         );
         await config.sendNtfy({
-          title: "WhatsApp — Pareamento indevido",
+          title: "WhatsApp - Pareamento indevido",
           message: `Número inesperado (${user.id}). Sessão descartada. Acesse ${config.publicQrUrl} e escaneie novamente.`,
           priority: 5,
           tags: ["rotating_light", "no_entry"],
@@ -116,7 +116,7 @@ export function createConnectionNotifier(
 
       if (wasReconnect) {
         await config.sendNtfy({
-          title: "WhatsApp — reconectado",
+          title: "WhatsApp - reconectado",
           message: `Conexão restabelecida como ${user.name ?? user.id}.`,
           priority: 2,
           tags: ["white_check_mark"],
@@ -129,7 +129,7 @@ export function createConnectionNotifier(
       phase = "disconnected";
       wasDisconnected = true;
       await config.sendNtfy({
-        title: "WhatsApp — desconectado",
+        title: "WhatsApp - desconectado",
         message: "Conexão caiu. Aguardando reconexão automática.",
         priority: 4,
         tags: ["warning"],
