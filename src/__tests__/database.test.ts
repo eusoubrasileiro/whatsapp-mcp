@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import path from "node:path";
 import {
   initializeDatabase,
   resetDatabase,
+  resolveDbPath,
   storeChat,
   storeMessage,
   storeContact,
@@ -432,5 +434,41 @@ describe("database", () => {
       expect(msg).not.toBeNull();
       expect(msg!.media_local_path).toBe("/data/media/dl1.jpg");
     });
+  });
+});
+
+describe("resolveDbPath", () => {
+  const originalEnv = process.env.WHATSAPP_MCP_DATA_DIR;
+
+  afterEach(() => {
+    if (originalEnv !== undefined) {
+      process.env.WHATSAPP_MCP_DATA_DIR = originalEnv;
+    } else {
+      delete process.env.WHATSAPP_MCP_DATA_DIR;
+    }
+  });
+
+  it("uses WHATSAPP_MCP_DATA_DIR/data/whatsapp.db when env var is set", () => {
+    process.env.WHATSAPP_MCP_DATA_DIR = "/tmp/wa-resolve-test";
+    expect(resolveDbPath()).toBe("/tmp/wa-resolve-test/data/whatsapp.db");
+  });
+
+  it("falls back to repo-root/data/whatsapp.db when env var is unset", () => {
+    delete process.env.WHATSAPP_MCP_DATA_DIR;
+    const result = resolveDbPath();
+    // src/database.ts → parent is src/ → one level up is repo root → data/whatsapp.db
+    expect(result.endsWith(path.join("data", "whatsapp.db"))).toBe(true);
+    // Must NOT resolve inside src/ (the previous buggy path included /src/../data which normalizes away)
+    expect(path.basename(path.dirname(path.dirname(result)))).not.toBe("src");
+  });
+
+  it("explicit override wins over env var", () => {
+    process.env.WHATSAPP_MCP_DATA_DIR = "/tmp/wa-resolve-test";
+    expect(resolveDbPath("/custom/explicit.db")).toBe("/custom/explicit.db");
+  });
+
+  it(":memory: is passed through as-is", () => {
+    process.env.WHATSAPP_MCP_DATA_DIR = "/tmp/wa-resolve-test";
+    expect(resolveDbPath(":memory:")).toBe(":memory:");
   });
 });
