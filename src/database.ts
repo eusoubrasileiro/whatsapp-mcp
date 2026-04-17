@@ -66,7 +66,6 @@ export type Message = {
   file_length?: number | null;
   file_sha256?: string | null;
   file_enc_sha256?: string | null;
-  media_local_path?: string | null;
   media_object_key?: string | null;
 };
 
@@ -149,7 +148,6 @@ export function initializeDatabase(dbPath?: string): Database.Database {
     ['file_length', 'INTEGER'],
     ['file_sha256', 'TEXT'],
     ['file_enc_sha256', 'TEXT'],
-    ['media_local_path', 'TEXT'],
     ['media_object_key', 'TEXT'],
   ] as const;
   for (const [col, type] of mediaColumns) {
@@ -209,7 +207,6 @@ export function storeMessage(message: Message): void {
         fileLength: message.file_length ?? null,
         fileSha256: message.file_sha256 ?? null,
         fileEncSha256: message.file_enc_sha256 ?? null,
-        mediaLocalPath: message.media_local_path ?? null,
       })
       .onConflictDoUpdate({
         target: [schema.messages.id, schema.messages.chatJid],
@@ -270,7 +267,6 @@ function rowToMessage(row: any): Message {
     file_length: row.file_length ?? null,
     file_sha256: row.file_sha256 ?? null,
     file_enc_sha256: row.file_enc_sha256 ?? null,
-    media_local_path: row.media_local_path ?? null,
     media_object_key: row.media_object_key ?? null,
   };
 }
@@ -291,7 +287,6 @@ const messageColumns = {
   file_length: schema.messages.fileLength,
   file_sha256: schema.messages.fileSha256,
   file_enc_sha256: schema.messages.fileEncSha256,
-  media_local_path: schema.messages.mediaLocalPath,
   media_object_key: schema.messages.mediaObjectKey,
 };
 
@@ -578,18 +573,6 @@ export function getMessageById(messageId: string, chatJid: string): Message | nu
   } catch (error) {
     logError("Error getting message by id", error);
     return null;
-  }
-}
-
-export function updateMessageMediaLocalPath(messageId: string, chatJid: string, localPath: string): void {
-  const db = getDb();
-  try {
-    db.update(schema.messages)
-      .set({ mediaLocalPath: localPath })
-      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
-      .run();
-  } catch (error) {
-    logError("Error updating media local path", error);
   }
 }
 

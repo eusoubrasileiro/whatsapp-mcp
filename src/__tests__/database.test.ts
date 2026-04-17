@@ -17,7 +17,6 @@ import {
   searchDbForContacts,
   searchMessages,
   getMessageById,
-  updateMessageMediaLocalPath,
   updateMessageMediaObjectKey,
   type Message,
 } from "../database.ts";
@@ -378,7 +377,7 @@ describe("database", () => {
       const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
       expect(msgs[0].media_type).toBeNull();
       expect(msgs[0].media_key).toBeNull();
-      expect(msgs[0].media_local_path).toBeNull();
+      expect(msgs[0].media_object_key).toBeNull();
     });
   });
 
@@ -417,25 +416,6 @@ describe("database", () => {
     });
   });
 
-  // ── updateMessageMediaLocalPath ────────────────────────────────
-
-  describe("updateMessageMediaLocalPath", () => {
-    it("updates the media_local_path field", () => {
-      storeMessage(makeMsg({
-        id: "dl1",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "[Image]",
-        media_type: "image",
-        media_key: "KEY",
-      }));
-
-      updateMessageMediaLocalPath("dl1", "chat@s.whatsapp.net", "/data/media/dl1.jpg");
-
-      const msg = getMessageById("dl1", "chat@s.whatsapp.net");
-      expect(msg).not.toBeNull();
-      expect(msg!.media_local_path).toBe("/data/media/dl1.jpg");
-    });
-  });
 });
 
 describe("resolveDbPath", () => {
