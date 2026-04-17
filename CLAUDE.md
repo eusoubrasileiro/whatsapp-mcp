@@ -1,85 +1,96 @@
 # WhatsApp MCP Server
 
-MCP server for WhatsApp integration using Baileys, enabling Claude/Cursor to interact with WhatsApp messages and contacts.
+WhatsApp as an MCP server. Canonical deployment is a long-lived Docker daemon on the VPS, exposed as `https://mcp.amiticia.cc/mcp` (Bearer auth) with a public QR page at `https://wa.amiticia.cc/`. Built on `@amiticia/baileys-client`.
 
-## Quick Start
-
-```bash
-pnpm install
-pnpm start
-```
-
-First run opens a QR code in browser - scan with WhatsApp mobile (Settings > Linked Devices).
+User-facing overview lives in [`README.md`](./README.md). This file is the internal contributor / operator reference.
 
 ## Requirements
 
-- Node.js >= 23.10.0 (uses `--experimental-strip-types`)
+- Node.js `>= 23.10.0` (uses `--experimental-strip-types` and bundled `node:sqlite`)
+- pnpm (strict workspace, managed via `corepack`)
+- Docker + BuildKit for image builds
 
-## Claude Code MCP Setup & Troubleshooting
+## Claude Code MCP Setup
 
-> **Read this first.** These lessons were learned the hard way through painful debugging sessions. Every item below has caused silent failures that waste hours.
+> The canonical path is **HTTP-to-remote**. Do NOT reintroduce stdio via `claude mcp add` — it overwrites the working HTTP config.
 
-### 1. Correct Setup Procedure
+### Canonical setup (HTTP, connects to the deployed service)
 
-```bash
-# Step 1: Ensure Node.js >= 23.10.0 (NOT 22.x — native modules like better-sqlite3 won't work)
-node -v  # must show v23.10.0 or higher
+Edit `~/.claude.json`. Inside the top-level `mcpServers` object:
 
-# Step 2: Install dependencies with the SAME Node version you'll use in claude mcp add
-pnpm install
-
-# Step 3: First-run authentication (scan QR code with WhatsApp mobile)
-pnpm start
-
-# Step 4: Register with Claude Code
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
-
-# Step 5: Verify
-claude mcp list          # should show: whatsapp: ... ✓ Connected
-# Then inside Claude Code, type /mcp to confirm tools are available
+```json
+"whatsapp": {
+  "type": "http",
+  "url": "https://mcp.amiticia.cc/mcp",
+  "headers": {
+    "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
+  }
+}
 ```
 
-### 2. Critical Architecture Constraint — Startup Order
+Claude Code expands `${MCP_AUTH_TOKEN}` from your shell env. If you don't want env expansion, paste the literal token — `~/.claude.json` is `0600`.
 
-The MCP stdio server **MUST** start before the WhatsApp connection. `src/main.ts` starts MCP first, then launches WhatsApp connection in the background — **DO NOT reverse this order**.
-
-**Why:** Claude Code sends the MCP `initialize` message immediately after spawning the process. If WhatsApp's Baileys connection blocks startup, the MCP handshake times out and Claude Code kills the process.
-
-### 3. Troubleshooting "Failed to connect"
-
-| Problem | Symptoms | Fix |
-|---------|----------|-----|
-| Native module ABI mismatch | Silent exit code 1, no logs written | Run `pnpm install` with the correct Node version in PATH |
-| Wrong Node version in MCP config | Same as above | `claude mcp remove --scope user whatsapp` then re-add with Node 23 path |
-| Startup order reversed | Server starts but Claude Code kills it in ~1–4s | MCP server must initialize before WA connect in `main.ts` |
-| WhatsApp 401 loggedOut | WA logs show "loggedOut", tools fail after connect | Delete `auth_info/*`, restart, re-scan QR via `get_connection_status` |
-| Logs not where expected | Project dir logs are stale / empty | Claude Code CWD = `~`, so check `~/mcp-logs.txt` and `~/wa-logs.txt` |
-
-### 4. Debugging Silent Crashes
-
-- **Pino logs to files, NOT stderr** — errors are invisible by default in Claude Code's stdio transport
-- To debug: run the server manually with `node --trace-exit --experimental-strip-types src/main.ts`
-- Test MCP stdin handling: pipe `< /dev/null` to simulate Claude Code's closed stdin
-- The `process.exit(1)` in catch handlers can trigger pino's "sonic boom not ready" warning which **masks the real error** — look at the full log file, not just stderr
-
-### 5. After Switching Node.js Versions Checklist
+Verify:
 
 ```bash
-# EVERY TIME you change Node versions, run ALL of these:
-export PATH="/home/you/.nvm/versions/node/v23.11.1/bin:$PATH"
+claude mcp list          # whatsapp: ✓ Connected
+# In a session:
+/mcp                     # expects the 17 whatsapp tools listed
+```
 
-# 1. Rebuild native modules (better-sqlite3 etc.)
+The same JSON shape works for Claude Desktop (`~/.config/Claude/claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`). See `examples/mcp-clients.md` for all three.
+
+### Stdio fallback (local dev only)
+
+Useful when iterating on source without rebuilding the Docker image. The MCP stdio server must start before the WhatsApp connection — `src/main.ts` already enforces that order (MCP handshake completes first, Baileys connects in the background). Do not reverse it, or Claude Code kills the process during handshake timeout.
+
+```bash
 pnpm install
+pnpm start               # MCP_TRANSPORT defaults to stdio
+```
 
-# 2. Remove old MCP config (it has the old Node path baked in)
-claude mcp remove --scope user whatsapp
+Register with Claude Code only if you want to hit local dev instead of the deployed instance:
 
-# 3. Re-add with new Node path
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+```bash
+claude mcp remove --scope user whatsapp    # remove HTTP entry first
+claude mcp add --scope user whatsapp -- \
+  $(which node) --experimental-strip-types \
+  $(pwd)/src/main.ts
+```
 
-# 4. Verify
+Remember to swap back to the HTTP entry afterwards.
+
+### Troubleshooting (HTTP path)
+
+| Symptom | Fix |
+|---------|-----|
+| `claude mcp list` shows whatsapp `✗ Failed to connect` | Check `curl -sS -o /dev/null -w '%{http_code}' https://mcp.amiticia.cc/health` — if not reachable, DNS or Traefik issue. See `systems/vps/stacks/whatsapp-mcp/README.md`. |
+| `HTTP 401` from MCP endpoint | `MCP_AUTH_TOKEN` mismatch between `.env` on VPS and your `~/.claude.json`. Regenerate or re-sync. |
+| TLS cert failing (`SSL_ERROR_*`) | Let's Encrypt / Traefik didn't issue yet. Check CF DNS proxy is **off** (grey cloud) for `mcp`/`wa` records. |
+| `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
+| ntfy silent | `NTFY_TOPIC_URL` unset on VPS, or topic not subscribed in the ntfy app. Check `docker exec whatsapp-mcp grep ntfy /data/wa-logs.txt`. |
+| Container `unhealthy` | Healthcheck hits `http://127.0.0.1:39002/health`. If the QR web server failed to bind (port clash), container flaps. `docker logs whatsapp-mcp`. |
+
+### Troubleshooting (stdio fallback only)
+
+| Symptom | Fix |
+|---------|-----|
+| Silent exit code 1, no logs | Native module ABI mismatch — `pnpm install` with the correct Node version in PATH |
+| Server starts, Claude Code kills it in ~1-4s | Startup order regression — MCP server must initialize before WA connect in `main.ts` |
+| Logs stale / empty in repo dir | Claude Code CWD is usually `~`, so check `~/mcp-logs.txt` and `~/wa-logs.txt` |
+| "sonic boom not ready" masks real error | Look at the full log file, not stderr |
+
+### After switching Node.js versions (stdio only)
+
+```bash
+pnpm install                             # rebuild native modules
+claude mcp remove --scope user whatsapp  # nuke old Node path
+claude mcp add --scope user whatsapp -- \
+  $(which node) --experimental-strip-types $(pwd)/src/main.ts
 claude mcp list
 ```
+
+Not needed for the HTTP path — the container pins its own Node.
 
 ---
 
@@ -214,6 +225,8 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 All data directories are gitignored for security.
 
 ## Deploy (Docker + Traefik on VPS)
+
+Full deploy / update / rotate-secrets / troubleshoot runbook: [`systems/vps/stacks/whatsapp-mcp/README.md`](../systems/vps/stacks/whatsapp-mcp/README.md) (branch `non-swarm`).
 
 Production stack lives in the sibling `systems` repo at:
 `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`
