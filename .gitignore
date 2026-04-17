@@ -21,4 +21,4 @@ data/
 # OS generated files
 .DS_Store
 Thumbs.db
-.roo
+.rooexamples/__pycache__/
