@@ -1,4 +1,4 @@
-import { FastMCP } from "fastmcp";
+import { FastMCP, imageContent, audioContent } from "fastmcp";
 import { z } from "zod";
 import { normalizeJid, type MediaType } from "@amiticia/baileys-client";
 
@@ -16,10 +16,11 @@ import {
   searchMessages,
   getMessageById,
   updateMessageMediaLocalPath,
+  updateMessageMediaObjectKey,
 } from "./database.ts";
 
 import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, startWhatsAppConnection, connectionState, socketState } from "./whatsapp.ts";
-import fs from "node:fs";
+import { putMedia, publicUrlFor } from "./storage.ts";
 import { spawn } from "node:child_process";
 import QRCode from "qrcode";
 import type { Logger } from "pino";
@@ -44,8 +45,8 @@ function formatDbMessageForJson(msg: DbMessage) {
       type: msg.media_type,
       mimetype: msg.mimetype,
       file_size: msg.file_length,
-      downloaded: !!msg.media_local_path,
-      local_path: msg.media_local_path ?? null,
+      downloaded: !!(msg.media_object_key || msg.media_local_path),
+      object_key: msg.media_object_key ?? null,
     };
   }
 
@@ -66,6 +67,70 @@ function formatDbChatForJson(chat: DbChat) {
       ?? (chat.last_is_from_me ? "Me" : null),
     last_is_from_me: chat.last_is_from_me ?? null,
   };
+}
+
+const MEDIA_INLINE_MAX_BYTES = Number(process.env.MEDIA_INLINE_MAX_BYTES ?? 5_242_880);
+
+export async function executeDownloadMedia(
+  waLogger: Logger,
+  { message_id, chat_jid }: { message_id: string; chat_jid: string },
+) {
+  waLogger.info(`[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid}`);
+
+  const message = getMessageById(message_id, chat_jid);
+  if (!message) {
+    throw new Error(`Message ${message_id} not found in chat ${chat_jid}.`);
+  }
+  if (!message.media_type || !message.media_key || !message.direct_path) {
+    throw new Error(`Message ${message_id} does not contain downloadable media or media metadata is missing.`);
+  }
+
+  const mimetype = message.mimetype ?? "application/octet-stream";
+  const fileLength = message.file_length ?? 0;
+
+  // Cache hit: object already uploaded to S3
+  if (message.media_object_key) {
+    const url = publicUrlFor(message.media_object_key);
+    const ext = message.media_object_key.split(".").pop() ?? "bin";
+    waLogger.info(`[MCP Tool] Media already in S3: ${message.media_object_key}`);
+    return {
+      content: [
+        { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype },
+        { type: "text" as const, text: JSON.stringify({ status: "cached", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2) },
+      ],
+    };
+  }
+
+  const { buffer, ext } = await downloadMedia({
+    logger: waLogger,
+    mediaKey: message.media_key,
+    directPath: message.direct_path,
+    mediaUrl: message.media_url ?? null,
+    mediaType: message.media_type as MediaType,
+    mimetype: message.mimetype ?? null,
+    chatJid: chat_jid,
+    messageId: message_id,
+    fromMe: Boolean(message.is_from_me),
+  });
+
+  const { key, url } = await putMedia({ chatJid: chat_jid, messageId: message_id, ext, mimetype, buffer });
+  updateMessageMediaObjectKey(message_id, chat_jid, key);
+
+  const metaText = JSON.stringify({ status: "uploaded", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2);
+  const resLink = { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype };
+  const textBlock = { type: "text" as const, text: metaText };
+
+  if (mimetype.startsWith("image/") && fileLength < MEDIA_INLINE_MAX_BYTES) {
+    const img = await imageContent({ buffer });
+    return { content: [img, resLink, textBlock] };
+  }
+
+  if (mimetype.startsWith("audio/") && fileLength < MEDIA_INLINE_MAX_BYTES) {
+    const aud = await audioContent({ buffer });
+    return { content: [aud, resLink, textBlock] };
+  }
+
+  return { content: [resLink, textBlock] };
 }
 
 export async function startMcpServer(
@@ -526,57 +591,12 @@ export async function startMcpServer(
 
   server.addTool({
     name: "download_media",
-    description: "Download media (image, video, audio, document, sticker) from a WhatsApp message to local disk",
+    description: "Download media (image, video, audio, document, sticker) from a WhatsApp message and return it via S3-compatible storage",
     parameters: z.object({
       message_id: z.string().describe("The ID of the message containing media"),
       chat_jid: z.string().describe("The JID of the chat where the message is"),
     }),
-    execute: async ({ message_id, chat_jid }) => {
-      mcpLogger.info(`[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid}`);
-
-      const message = getMessageById(message_id, chat_jid);
-      if (!message) {
-        throw new Error(`Message ${message_id} not found in chat ${chat_jid}.`);
-      }
-
-      if (!message.media_type || !message.media_key || !message.direct_path) {
-        throw new Error(`Message ${message_id} does not contain downloadable media or media metadata is missing.`);
-      }
-
-      // Check if already downloaded
-      if (message.media_local_path && fs.existsSync(message.media_local_path)) {
-        mcpLogger.info(`[MCP Tool] Media already downloaded: ${message.media_local_path}`);
-        return JSON.stringify({
-          status: "already_downloaded",
-          file_path: message.media_local_path,
-          media_type: message.media_type,
-          mimetype: message.mimetype,
-          file_size: message.file_length,
-        }, null, 2);
-      }
-
-      const filePath = await downloadMedia({
-        logger: waLogger,
-        mediaKey: message.media_key,
-        directPath: message.direct_path,
-        mediaUrl: message.media_url ?? null,
-        mediaType: message.media_type as MediaType,
-        mimetype: message.mimetype ?? null,
-        chatJid: chat_jid,
-        messageId: message_id,
-        fromMe: Boolean(message.is_from_me),
-      });
-
-      updateMessageMediaLocalPath(message_id, chat_jid, filePath);
-
-      return JSON.stringify({
-        status: "downloaded",
-        file_path: filePath,
-        media_type: message.media_type,
-        mimetype: message.mimetype,
-        file_size: message.file_length,
-      }, null, 2);
-    },
+    execute: executeDownloadMedia.bind(null, waLogger),
   });
 
   // ── Resource ──────────────────────────────────────────────────────

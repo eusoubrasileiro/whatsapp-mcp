@@ -1,0 +1,61 @@
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/amiticia-media &&
+        mc anonymous set download local/amiticia-media &&
+        echo 'MinIO bucket ready.'
+      "
+
+  whatsapp-mcp:
+    build:
+      context: .
+      additional_contexts:
+        baileys: ../baileys-client
+    ports:
+      - "3001:3001"
+      - "39002:39002"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      S3_ENABLED: "true"
+      S3_ENDPOINT: minio
+      S3_PORT: "9000"
+      S3_USE_SSL: "false"
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: amiticia-media
+      S3_REGION: us-east-1
+      S3_SKIP_POLICY: "false"
+      MEDIA_PUBLIC_BASE_URL: http://localhost:9000/amiticia-media
+      TENANT_ID: default
+      MCP_TRANSPORT: httpstream
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "3001"
+      PUBLIC_QR_URL: http://localhost:39002/
+
+volumes:
+  minio-data:

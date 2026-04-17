@@ -67,6 +67,7 @@ export type Message = {
   file_sha256?: string | null;
   file_enc_sha256?: string | null;
   media_local_path?: string | null;
+  media_object_key?: string | null;
 };
 
 let sqliteInstance: Database.Database | null = null;
@@ -149,6 +150,7 @@ export function initializeDatabase(dbPath?: string): Database.Database {
     ['file_sha256', 'TEXT'],
     ['file_enc_sha256', 'TEXT'],
     ['media_local_path', 'TEXT'],
+    ['media_object_key', 'TEXT'],
   ] as const;
   for (const [col, type] of mediaColumns) {
     try {
@@ -269,6 +271,7 @@ function rowToMessage(row: any): Message {
     file_sha256: row.file_sha256 ?? null,
     file_enc_sha256: row.file_enc_sha256 ?? null,
     media_local_path: row.media_local_path ?? null,
+    media_object_key: row.media_object_key ?? null,
   };
 }
 
@@ -289,6 +292,7 @@ const messageColumns = {
   file_sha256: schema.messages.fileSha256,
   file_enc_sha256: schema.messages.fileEncSha256,
   media_local_path: schema.messages.mediaLocalPath,
+  media_object_key: schema.messages.mediaObjectKey,
 };
 
 export function getMessages(
@@ -586,6 +590,18 @@ export function updateMessageMediaLocalPath(messageId: string, chatJid: string, 
       .run();
   } catch (error) {
     logError("Error updating media local path", error);
+  }
+}
+
+export function updateMessageMediaObjectKey(messageId: string, chatJid: string, objectKey: string): void {
+  const db = getDb();
+  try {
+    db.update(schema.messages)
+      .set({ mediaObjectKey: objectKey })
+      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+      .run();
+  } catch (error) {
+    logError("Error updating media object key", error);
   }
 }
 

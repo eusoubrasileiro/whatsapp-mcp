@@ -18,6 +18,7 @@ import {
   searchMessages,
   getMessageById,
   updateMessageMediaLocalPath,
+  updateMessageMediaObjectKey,
   type Message,
 } from "../database.ts";
 
@@ -470,5 +471,50 @@ describe("resolveDbPath", () => {
   it(":memory: is passed through as-is", () => {
     process.env.WHATSAPP_MCP_DATA_DIR = "/tmp/wa-resolve-test";
     expect(resolveDbPath(":memory:")).toBe(":memory:");
+  });
+});
+
+// ── updateMessageMediaObjectKey / getMessageById ────────────────────
+
+describe("updateMessageMediaObjectKey", () => {
+  beforeEach(() => initializeDatabase(":memory:"));
+  afterEach(() => resetDatabase());
+
+  it("persists media_object_key and getMessageById returns it", () => {
+    storeMessage(makeMsg({
+      id: "mok1",
+      chat_jid: "chat@s.whatsapp.net",
+      content: "photo",
+      media_type: "image",
+    }));
+
+    updateMessageMediaObjectKey("mok1", "chat@s.whatsapp.net", "t/default/jid/mok1.jpg");
+
+    const msg = getMessageById("mok1", "chat@s.whatsapp.net");
+    expect(msg).not.toBeNull();
+    expect(msg!.media_object_key).toBe("t/default/jid/mok1.jpg");
+  });
+
+  it("does not overwrite an unrelated message", () => {
+    storeMessage(makeMsg({ id: "mok1", chat_jid: "chat@s.whatsapp.net", content: "a" }));
+    storeMessage(makeMsg({ id: "mok2", chat_jid: "chat@s.whatsapp.net", content: "b" }));
+
+    updateMessageMediaObjectKey("mok1", "chat@s.whatsapp.net", "t/default/jid/mok1.jpg");
+
+    const other = getMessageById("mok2", "chat@s.whatsapp.net");
+    expect(other!.media_object_key).toBeNull();
+  });
+});
+
+// ── Boot-time ALTER TABLE idempotency for media_object_key ──────────
+
+describe("initializeDatabase media_object_key migration idempotency", () => {
+  afterEach(() => resetDatabase());
+
+  it("runs twice without throwing (column already exists on second run)", () => {
+    expect(() => initializeDatabase(":memory:")).not.toThrow();
+    // Re-initialize same in-memory (different instance) — simulates server restart
+    resetDatabase();
+    expect(() => initializeDatabase(":memory:")).not.toThrow();
   });
 });
