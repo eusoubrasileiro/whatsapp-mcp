@@ -211,6 +211,18 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
 | `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |
 | `EXPECTED_WA_NUMBER` | _(unset)_ | If set, only pairings whose JID starts with this prefix are accepted. A mismatch triggers `socket.logout()`, purges `auth_info/`, and fires an ntfy alert. Critical when the QR page is publicly reachable. |
+| `S3_ENABLED` | `false` | Set to `true` to enable the S3-compatible media plane. Required for `download_media` to work in remote deployments. Prod uses MinIO running as a sidecar in the same compose stack — no managed cloud, no extra bill. |
+| `S3_ENDPOINT` | `localhost` | S3 endpoint hostname (dev/prod: `minio` — service name on the docker network). |
+| `S3_PORT` | `9000` | Port for the S3 endpoint. Always `9000` for the MinIO sidecar. |
+| `S3_USE_SSL` | `false` | Always `false` — Traefik terminates TLS in front of MinIO; the app talks to MinIO in-cluster over HTTP. |
+| `S3_ACCESS_KEY` | `minioadmin` | S3 access key. Prod: same value as `MINIO_ROOT_USER`. |
+| `S3_SECRET_KEY` | `minioadmin` | S3 secret key. Prod: same value as `MINIO_ROOT_PASSWORD`. |
+| `S3_BUCKET` | `amiticia-media` | Bucket name. The `mc` init sidecar creates it on first boot. |
+| `S3_REGION` | `us-east-1` | Bucket region (cosmetic for MinIO; SDK still requires it). |
+| `S3_SKIP_POLICY` | `false` | Keep `false` — MinIO accepts `setBucketPolicy`, so the app sets the public-read policy at boot. |
+| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`). |
+| `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. Hardcoded until 2nd customer. |
+| `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
 
 ## Data Storage
 
@@ -218,12 +230,13 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
-- `data/media/` - Downloaded media files (organized by chat JID)
 - `backups/hourly/whatsapp.db` - Rolling hourly snapshot (overwritten, WAL-safe)
 - `backups/daily/whatsapp-YYYY-MM-DD.db` - Per-day snapshots (14-day retention)
 - `backups/daily/auth_info-YYYY-MM-DD.tar.gz` - Per-day auth tarball
 - `wa-logs.txt` - WhatsApp/Baileys logs
 - `mcp-logs.txt` - MCP server logs
+
+> **Media**: downloaded media is stored in a MinIO sidecar on the same VPS (bind-mounted at `/storage/whatsapp-mcp/minio`). It is served publicly through Traefik at `https://mcp.amiticia.cc/media/<key>` — no separate subdomain, no managed cloud bucket, no recurring bill. The legacy `data/media/` directory existed in older deployments — run `scripts/backfill-media.sh` inside the container to upload existing files into MinIO; the script then drops the legacy column.
 
 All data directories are gitignored for security.
 
@@ -426,7 +439,8 @@ CREATE TABLE messages (
   file_length INTEGER,    -- file size in bytes
   file_sha256 TEXT,       -- base64 hash
   file_enc_sha256 TEXT,   -- base64 encrypted hash
-  media_local_path TEXT,  -- local path after download
+  media_local_path TEXT,  -- legacy local path (present only before backfill-media.sh drops it)
+  media_object_key TEXT,  -- S3/R2 object key (t/{tenantId}/{sanitizedJid}/{msgId}.{ext})
   PRIMARY KEY (id, chat_jid),
   FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 );

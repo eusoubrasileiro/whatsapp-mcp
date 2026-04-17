@@ -121,3 +121,33 @@ Run with `node --experimental-strip-types` if you keep it as `.ts`, or compile.
 ## Raw HTTP (no MCP SDK)
 
 See `README.md` in this directory for curl/Python examples if your runtime doesn't have an MCP SDK.
+
+## `download_media` response shape
+
+`download_media` returns multiple content blocks. The order and presence depends on whether this is a first download or a cache hit:
+
+```jsonc
+{
+  "content": [
+    // (first call only, if image and < MEDIA_INLINE_MAX_BYTES) inline base64 image
+    { "type": "image", "data": "<base64>", "mimeType": "image/jpeg" },
+    // always present — public URL to the stored object
+    {
+      "type": "resource_link",
+      "uri": "https://mcp.amiticia.cc/media/t/default/553188xxx@s.whatsapp.net/3EB0C1A....jpg",
+      "name": "3EB0C1A....jpg",
+      "mimeType": "image/jpeg"
+    },
+    // always present — JSON metadata
+    { "type": "text", "text": "{ \"status\": \"uploaded\" | \"cached\", \"url\": \"…\", \"media_type\": \"image\", \"mimetype\": \"image/jpeg\", \"file_size\": 123456 }" }
+  ]
+}
+```
+
+Notes for integrators:
+
+- The `resource_link.uri` is **public** — no `Authorization` header needed when fetching it.
+- The host is the same as the MCP endpoint (`mcp.amiticia.cc`), routed by path (`/media/*`) to a MinIO bucket on the VPS. Same TLS cert, no extra DNS.
+- Audio messages get `{ "type": "audio", … }` instead of `image` on first call.
+- For files larger than `MEDIA_INLINE_MAX_BYTES` (default 5 MiB), no inline block is returned — fetch via `resource_link.uri`.
+- Subsequent calls for the same `(message_id, chat_jid)` skip Baileys and return only the `resource_link` + JSON metadata (`status: "cached"`).

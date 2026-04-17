@@ -160,10 +160,10 @@ See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highligh
 
 - **Credentials**: `WHATSAPP_MCP_DATA_DIR/auth_info/` (Baileys multi-file auth state)
 - **Messages / chats / contacts**: `WHATSAPP_MCP_DATA_DIR/data/whatsapp.db` (SQLite via Drizzle + `better-sqlite3`)
-- **Media downloads**: `WHATSAPP_MCP_DATA_DIR/data/media/<chat_jid>/`
+- **Media**: served from a MinIO sidecar on the same VPS, behind Traefik at `https://mcp.amiticia.cc/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
 - **Logs**: `WHATSAPP_MCP_DATA_DIR/{wa,mcp}-logs.txt` (pino JSON lines)
 
-Everything stays local (Docker volume in production, filesystem in dev). Data leaves the VPS only when an MCP client explicitly invokes a tool.
+Everything stays on the VPS (Docker bind mount in production, filesystem in dev). Data leaves the VPS only when an MCP client explicitly invokes a tool.
 
 All data directories are `.gitignore`d. Treat them as sensitive — anyone with `auth_info/` can impersonate your WhatsApp session.
 
