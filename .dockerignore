@@ -1,0 +1,15 @@
+node_modules
+data
+auth_info
+*.txt
+*.log
+.git
+.gitignore
+.vscode
+.idea
+mcp-logs.txt
+wa-logs.txt
+README.md
+CLAUDE.md
+smithery.yaml
+mcp-example.json

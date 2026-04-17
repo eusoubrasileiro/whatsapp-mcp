@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@amiticia/baileys-client':
-        specifier: link:/path/to/baileys-client
+        specifier: link:../baileys-client
         version: link:../baileys-client
       '@whiskeysockets/baileys':
         specifier: ^7.0.0-rc.9
