@@ -22,11 +22,17 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
 
   const { topicUrl, token } = config;
 
+  // HTTP header values must be Latin-1 (bytes 0-255). Strip anything above
+  // so em-dashes and other Unicode glyphs don't crash fetch on Title/Tags/Click.
+  // Body (POST data) is UTF-8 so accented text still works there.
+  const toLatin1 = (s: string): string =>
+    s.replace(/[^\x00-\xff]/g, "");
+
   return async (msg) => {
-    const headers: Record<string, string> = { Title: msg.title };
+    const headers: Record<string, string> = { Title: toLatin1(msg.title) };
     if (msg.priority !== undefined) headers.Priority = String(msg.priority);
-    if (msg.tags && msg.tags.length > 0) headers.Tags = msg.tags.join(",");
-    if (msg.click) headers.Click = msg.click;
+    if (msg.tags && msg.tags.length > 0) headers.Tags = toLatin1(msg.tags.join(","));
+    if (msg.click) headers.Click = toLatin1(msg.click);
     if (token) headers.Authorization = `Bearer ${token}`;
 
     try {
