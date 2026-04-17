@@ -315,7 +315,7 @@ type DownloadMediaWrapperParams = {
   fromMe: boolean;
 };
 
-export async function downloadMedia(params: DownloadMediaWrapperParams): Promise<string> {
+export async function downloadMedia(params: DownloadMediaWrapperParams): Promise<{ buffer: Buffer; mimetype: string; ext: string }> {
   const { logger, mediaKey, directPath, mediaUrl, mediaType, mimetype, chatJid, messageId, fromMe } = params;
 
   return downloadLimit(async () => {
@@ -323,10 +323,6 @@ export async function downloadMedia(params: DownloadMediaWrapperParams): Promise
     if (!sock) {
       throw new Error("Cannot download media: WhatsApp socket not connected.");
     }
-
-    const sanitizedChatJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
-    const mediaDir = path.join(DATA_DIR, "media", sanitizedChatJid);
-    fs.mkdirSync(mediaDir, { recursive: true });
 
     logger.info({ messageId, mediaType, directPath }, "Downloading media");
 
@@ -341,14 +337,11 @@ export async function downloadMedia(params: DownloadMediaWrapperParams): Promise
     };
 
     const buffer = await baileysDownloadMedia(sock, downloadParams, logger);
-
+    const resolvedMimetype = mimetype ?? "application/octet-stream";
     const ext = (mimetype && mimetypeToExtension[mimetype]) || "bin";
-    const fileName = `${messageId}.${ext}`;
-    const filePath = path.join(mediaDir, fileName);
 
-    fs.writeFileSync(filePath, buffer);
-    logger.info({ filePath, size: buffer.length }, "Media downloaded successfully");
+    logger.info({ messageId, size: buffer.length, ext }, "Media downloaded successfully");
 
-    return filePath;
+    return { buffer, mimetype: resolvedMimetype, ext };
   });
 }

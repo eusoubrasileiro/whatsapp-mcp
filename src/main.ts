@@ -2,6 +2,7 @@ import pino from "pino";
 import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
 import { startWhatsAppConnection, getConnectionState } from "./whatsapp.ts";
 import { startMcpServer } from "./mcp.ts";
+import { ensureBucketReady } from "./storage.ts";
 import { createQrServer } from "./qr-server.ts";
 import fs from "node:fs";
 
@@ -33,6 +34,12 @@ async function main() {
     mcpLogger.info("Initializing database...");
     initializeDatabase();
     mcpLogger.info("Database initialized successfully.");
+
+    if (process.env.S3_ENABLED === "true") {
+      mcpLogger.info("Ensuring S3 bucket is ready...");
+      await ensureBucketReady();
+      mcpLogger.info("S3 bucket ready.");
+    }
 
     // Start MCP server FIRST — stdio handshake must complete before any async network I/O
     mcpLogger.info("Starting MCP server...");
