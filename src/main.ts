@@ -1,9 +1,12 @@
 import pino from "pino";
 import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
-import { startWhatsAppConnection } from "./whatsapp.ts";
+import { startWhatsAppConnection, getConnectionState } from "./whatsapp.ts";
 import { startMcpServer } from "./mcp.ts";
+import { createQrServer } from "./qr-server.ts";
+import fs from "node:fs";
 
 const dataDir = process.env.WHATSAPP_MCP_DATA_DIR || '.';
+fs.mkdirSync(dataDir, { recursive: true });
 const waLogger = pino(
   {
     level: process.env.LOG_LEVEL || "info",
@@ -43,6 +46,17 @@ async function main() {
 
     process.exit(1);
   }
+
+  // Start QR web server (non-blocking) — port 39002 by default.
+  const qrServerPort = Number(process.env.QR_SERVER_PORT ?? 39002);
+  const qrServerHost = process.env.QR_SERVER_HOST ?? "127.0.0.1";
+  const qrServer = createQrServer(waLogger, getConnectionState);
+  qrServer.listen(qrServerPort, qrServerHost, () => {
+    mcpLogger.info({ host: qrServerHost, port: qrServerPort }, "QR web server listening");
+  });
+  qrServer.on("error", (err) => {
+    mcpLogger.error({ err }, "QR web server error");
+  });
 
   // Start WhatsApp connection in background (non-blocking)
   // MCP tools already handle socketState.socket being null gracefully

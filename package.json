@@ -23,7 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@amiticia/baileys-client": "link:/path/to/baileys-client",
+    "@amiticia/baileys-client": "link:../baileys-client",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.9.0",
     "drizzle-orm": "^0.45.2",

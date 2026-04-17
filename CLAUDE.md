@@ -187,10 +187,23 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WHATSAPP_MCP_DATA_DIR` | `.` | Directory for database and logs |
+| `WHATSAPP_MCP_DATA_DIR` | `.` | Base directory for `auth_info/`, `data/`, and pino log files |
 | `LOG_LEVEL` | `info` | Pino log level |
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `httpstream` |
+| `MCP_HOST` | `127.0.0.1` | Bind host when `MCP_TRANSPORT=httpstream` |
+| `MCP_PORT` | `3001` | Bind port when `MCP_TRANSPORT=httpstream` |
+| `MCP_ENDPOINT` | `/mcp` | HTTP path for MCP when `MCP_TRANSPORT=httpstream` |
+| `MCP_AUTH_TOKEN` | _(unset)_ | If set, HTTP MCP requires `Authorization: Bearer <token>`. If unset, endpoint accepts unauthenticated requests (stdio/local dev only — never run like this in prod). |
+| `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the public QR web page |
+| `QR_SERVER_PORT` | `39002` | Bind port for the QR web page |
+| `PUBLIC_QR_URL` | `https://wa.amiticia.cc/` | URL sent in ntfy `Click` header so tapping the push opens the QR page |
+| `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
+| `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |
+| `EXPECTED_WA_NUMBER` | _(unset)_ | If set, only pairings whose JID starts with this prefix are accepted. A mismatch triggers `socket.logout()`, purges `auth_info/`, and fires an ntfy alert. Critical when the QR page is publicly reachable. |
 
 ## Data Storage
+
+Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via `pnpm start`, `/data` in the Docker image):
 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
@@ -199,6 +212,48 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 - `mcp-logs.txt` - MCP server logs
 
 All data directories are gitignored for security.
+
+## Deploy (Docker + Traefik on VPS)
+
+Production stack lives in the sibling `systems` repo at:
+`systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`
+
+Image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`.
+
+Build locally (BuildKit required — sibling `baileys-client/` must be present):
+
+```bash
+cd whatsapp-mcp
+DOCKER_BUILDKIT=1 docker build \
+  --build-context baileys=../baileys-client \
+  -t ghcr.io/amiticia-autosys/whatsapp-mcp:latest .
+```
+
+Smoke test:
+
+```bash
+docker run --rm -d --name wa-mcp-smoke \
+  -p 39001:39001 -p 39002:39002 \
+  -v /tmp/wa-mcp-test-data:/data \
+  -e MCP_AUTH_TOKEN=teste123 \
+  -e PUBLIC_QR_URL=http://localhost:39002/ \
+  ghcr.io/amiticia-autosys/whatsapp-mcp:latest
+curl -sS http://127.0.0.1:39002/health
+curl -sS -o /dev/null -w "%{http_code}\n" -H 'Authorization: Bearer teste123' \
+  http://127.0.0.1:39001/mcp
+```
+
+Publish (private GHCR):
+
+```bash
+gh auth refresh -s write:packages,read:packages
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
+docker push ghcr.io/amiticia-autosys/whatsapp-mcp:latest
+```
+
+Routes after deploy:
+- `https://wa.amiticia.cc/` — public QR page (safe because `EXPECTED_WA_NUMBER` check rejects wrong-phone pairings).
+- `https://mcp.amiticia.cc/mcp` — MCP endpoint, requires `Authorization: Bearer $MCP_AUTH_TOKEN`.
 
 ## MCP Client Configuration
 

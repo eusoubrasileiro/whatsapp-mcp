@@ -74,9 +74,35 @@ export async function startMcpServer(
 ): Promise<void> {
   mcpLogger.info("Initializing FastMCP server...");
 
+  const authToken = process.env.MCP_AUTH_TOKEN;
+  if (!authToken) {
+    mcpLogger.warn(
+      "MCP_AUTH_TOKEN not set — HTTP MCP endpoint will accept unauthenticated requests. OK for stdio/local, DO NOT run like this in production.",
+    );
+  }
+
   const server = new FastMCP({
     name: "whatsapp-baileys-ts",
     version: "0.3.0",
+    authenticate: async (request) => {
+      // stdio transport passes undefined — trust local invocation.
+      if (!request) return {};
+
+      if (!authToken) return {};
+
+      const header = request.headers.authorization;
+      const raw = Array.isArray(header) ? header[0] : header;
+      if (!raw || !raw.startsWith("Bearer ")) {
+        throw new Response(null, {
+          status: 401,
+          statusText: "Missing or invalid Authorization header",
+        });
+      }
+      if (raw.slice(7) !== authToken) {
+        throw new Response(null, { status: 401, statusText: "Invalid token" });
+      }
+      return {};
+    },
   });
 
   // ── Connection / Auth ─────────────────────────────────────────────

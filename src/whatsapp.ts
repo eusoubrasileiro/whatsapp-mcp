@@ -23,9 +23,17 @@ import {
   storeContact,
   type Message as DbMessage,
 } from "./database.ts";
+import { createNtfy, type NtfyConfig } from "./ntfy.ts";
+import { createConnectionNotifier } from "./connection-notifier.ts";
 
-const AUTH_DIR = path.join(import.meta.dirname, "..", "auth_info");
-const DATA_DIR = path.join(import.meta.dirname, "..", "data");
+/**
+ * Base directory for auth_info, data, and logs.
+ * If WHATSAPP_MCP_DATA_DIR is set (Docker), resolves paths under it.
+ * Otherwise falls back to legacy relative layout (repo-root/auth_info, repo-root/data).
+ */
+const BASE_DIR = process.env.WHATSAPP_MCP_DATA_DIR ?? path.join(import.meta.dirname, "..");
+const AUTH_DIR = path.join(BASE_DIR, "auth_info");
+const DATA_DIR = path.join(BASE_DIR, "data");
 
 // Connection state for MCP tool access (reassigned after startConnection returns)
 export let connectionState: ConnectionState = {
@@ -39,6 +47,11 @@ export let connectionState: ConnectionState = {
 export let socketState: SocketState = {
   socket: null,
 };
+
+/** Live accessor for consumers (e.g. qr-server) that need to read the current state at call time. */
+export function getConnectionState(): ConnectionState {
+  return connectionState;
+}
 
 // Prevents concurrent startWhatsAppConnection() calls from racing
 let connectionPromise: Promise<void> | null = null;
@@ -87,10 +100,45 @@ export async function startWhatsAppConnection(
 }
 
 async function doStartConnection(logger: P.Logger): Promise<void> {
+  const ntfyConfig: NtfyConfig | null = process.env.NTFY_TOPIC_URL
+    ? {
+        topicUrl: process.env.NTFY_TOPIC_URL,
+        token: process.env.NTFY_TOKEN,
+      }
+    : null;
+  const sendNtfy = createNtfy(logger, ntfyConfig);
+
+  const notifier = createConnectionNotifier(logger, {
+    sendNtfy,
+    publicQrUrl: process.env.PUBLIC_QR_URL ?? "https://wa.amiticia.cc/",
+    expectedWaNumber: process.env.EXPECTED_WA_NUMBER ?? null,
+    onBadPairing: async () => {
+      const sock = socketState.socket;
+      if (sock) {
+        try {
+          await sock.logout();
+        } catch (err) {
+          logger.warn({ err }, "socket.logout() during bad-pairing cleanup failed");
+        }
+      }
+      try {
+        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      } catch (err) {
+        logger.error({ err, AUTH_DIR }, "failed to purge auth_info during bad-pairing cleanup");
+      }
+    },
+  });
+
   const config: BaileysClientConfig = {
     authDir: AUTH_DIR,
     logger,
     hooks: {
+      onQrCode: notifier.onQrCode,
+      onConnecting: notifier.onConnecting,
+      onConnected: notifier.onConnected,
+      onDisconnected: notifier.onDisconnected,
+
       onGroupsSync: async (groups) => {
         logger.info(`Syncing ${Object.keys(groups).length} groups...`);
         for (const [jid, metadata] of Object.entries(groups)) {
