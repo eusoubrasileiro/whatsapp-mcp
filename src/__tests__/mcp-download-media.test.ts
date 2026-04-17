@@ -62,7 +62,6 @@ function makeMediaMessage(overrides: Record<string, unknown> = {}) {
     file_length: 1024,
     file_sha256: null,
     file_enc_sha256: null,
-    media_local_path: null,
     media_object_key: null,
     ...overrides,
   };

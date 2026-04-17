@@ -5,8 +5,9 @@
 # Merge policy:
 #   chats     — UPSERT, keep newest last_message_time, keep existing name
 #   contacts  — UPSERT, prefer existing non-null fields (target wins)
-#   messages  — INSERT OR IGNORE on (id, chat_jid); media_local_path set to NULL
-#               on import because external paths don't exist on this host
+#   messages  — INSERT OR IGNORE on (id, chat_jid). Media lives in MinIO now;
+#               imported messages have no media_object_key and require a fresh
+#               download_media call to populate it.
 #
 # Usage on host (with a one-shot container that has sqlite3):
 #   docker run --rm \
@@ -60,24 +61,17 @@ INSERT INTO contacts (jid, name, notify, phone_number)
     notify       = COALESCE(contacts.notify, excluded.notify),
     phone_number = COALESCE(contacts.phone_number, excluded.phone_number);
 
--- messages: immutable by (id, chat_jid). Translate absolute media_local_path
--- from the source host (anything/.../media/X/Y) into the local container
--- path (/data/data/media/X/Y). Assumes the caller rsync'd media files
--- alongside the DB. If the source path doesn't contain "/media/", null out.
+-- messages: immutable by (id, chat_jid). Media metadata is preserved (so the
+-- caller can re-fetch via download_media which uploads to MinIO and fills
+-- media_object_key on this side).
 INSERT OR IGNORE INTO messages (
   id, chat_jid, sender, content, timestamp, is_from_me,
   media_type, mimetype, media_key, direct_path, media_url,
-  file_length, file_sha256, file_enc_sha256, media_local_path
+  file_length, file_sha256, file_enc_sha256
 ) SELECT
   id, chat_jid, sender, content, timestamp, is_from_me,
   media_type, mimetype, media_key, direct_path, media_url,
-  file_length, file_sha256, file_enc_sha256,
-  CASE
-    WHEN media_local_path IS NULL THEN NULL
-    WHEN instr(media_local_path, '/media/') > 0
-      THEN '/data/data/media/' || substr(media_local_path, instr(media_local_path, '/media/') + 7)
-    ELSE NULL
-  END
+  file_length, file_sha256, file_enc_sha256
 FROM ext.messages;
 
 COMMIT;

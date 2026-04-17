@@ -15,7 +15,6 @@ import {
   searchDbForContacts,
   searchMessages,
   getMessageById,
-  updateMessageMediaLocalPath,
   updateMessageMediaObjectKey,
 } from "./database.ts";
 
@@ -45,7 +44,7 @@ function formatDbMessageForJson(msg: DbMessage) {
       type: msg.media_type,
       mimetype: msg.mimetype,
       file_size: msg.file_length,
-      downloaded: !!(msg.media_object_key || msg.media_local_path),
+      downloaded: !!msg.media_object_key,
       object_key: msg.media_object_key ?? null,
     };
   }

@@ -282,7 +282,8 @@ Policy:
 - `messages` — `INSERT OR IGNORE` on `(id, chat_jid)`. Target row wins on collision.
 - `chats` — UPSERT, keeps the newest `last_message_time`, preserves target's `name` if set.
 - `contacts` — UPSERT, target wins, source fills NULLs.
-- `media_local_path` — translated from any host path containing `/media/X` into the container-local `/data/data/media/X`, so you can rsync the source media tree under `/storage/<stack>/data/media/` and `download_media` resolves cleanly.
+
+> Older versions of this script propagated `media_local_path` from the source DB. That column has been dropped — media now lives in MinIO and is referenced by `media_object_key`. Imported messages will need a re-download via `download_media` to populate their object key.
 
 Full procedure (local bridge → VPS):
 
@@ -439,7 +440,6 @@ CREATE TABLE messages (
   file_length INTEGER,    -- file size in bytes
   file_sha256 TEXT,       -- base64 hash
   file_enc_sha256 TEXT,   -- base64 encrypted hash
-  media_local_path TEXT,  -- legacy local path (present only before backfill-media.sh drops it)
   media_object_key TEXT,  -- S3/R2 object key (t/{tenantId}/{sanitizedJid}/{msgId}.{ext})
   PRIMARY KEY (id, chat_jid),
   FOREIGN KEY (chat_jid) REFERENCES chats(jid)

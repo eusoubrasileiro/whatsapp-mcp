@@ -22,7 +22,6 @@ export const messages = sqliteTable("messages", {
   fileLength: integer("file_length"),  // file size in bytes
   fileSha256: text("file_sha256"),     // base64-encoded hash
   fileEncSha256: text("file_enc_sha256"), // base64-encoded encrypted hash
-  mediaLocalPath: text("media_local_path"), // local file path (kept for backfill; removed after migration)
   mediaObjectKey: text("media_object_key"), // S3/R2 object key after upload
 }, (table) => {
   return [
