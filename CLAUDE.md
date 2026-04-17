@@ -241,9 +241,9 @@ The DB and auth state live on the `/data` volume (bind mount on the VPS). Hourly
 
 Produces `backups/hourly/whatsapp.db` every run and promotes to `backups/daily/whatsapp-$(date).db` + `auth_info-$(date).tar.gz` once per day. Retention: 48h hourly, 14d daily — tune with `find` flags in `scripts/backup.sh` if needed.
 
-### Restore
+### Restore (overwrite)
 
-Container MUST be stopped (the live writer holds the WAL lock):
+Container MUST be stopped (the live writer holds the WAL lock). Use when you want the incoming DB to replace whatever is there:
 
 ```
 docker compose stop whatsapp-mcp
@@ -260,6 +260,43 @@ On the VPS, either set `WHATSAPP_MCP_DATA_DIR=/storage/whatsapp-mcp` before call
 docker run --rm -v /storage/whatsapp-mcp:/data \
   -v $(pwd)/scripts:/scripts alpine sh /scripts/restore.sh /data/incoming.db
 ```
+
+### Merge (import history into a live DB)
+
+Use when you want to fold an external DB's rows into the current one without losing what's already there — e.g. importing a long-lived local bridge's history onto a fresh VPS. Runs `scripts/merge-db.sh`.
+
+Policy:
+- `messages` — `INSERT OR IGNORE` on `(id, chat_jid)`. Target row wins on collision.
+- `chats` — UPSERT, keeps the newest `last_message_time`, preserves target's `name` if set.
+- `contacts` — UPSERT, target wins, source fills NULLs.
+- `media_local_path` — translated from any host path containing `/media/X` into the container-local `/data/data/media/X`, so you can rsync the source media tree under `/storage/<stack>/data/media/` and `download_media` resolves cleanly.
+
+Full procedure (local bridge → VPS):
+
+```
+# 1. on the local machine — bridge can stay running, .backup is WAL-safe
+sqlite3 /home/you/.../whatsapp-mcp/data/whatsapp.db ".backup /tmp/old-wa.db"
+tar czf /tmp/old-wa-media.tar.gz -C /home/you/.../whatsapp-mcp/data media
+scp /tmp/old-wa.db /tmp/old-wa-media.tar.gz <vps>:/tmp/
+
+# 2. on the VPS
+ssh <vps>
+cd /root/systems/vps/stacks/whatsapp-mcp
+# extract media first (tar -k keeps existing files on conflict):
+tar xzkf /tmp/old-wa-media.tar.gz -C /storage/whatsapp-mcp/data/
+docker compose stop
+docker run --rm \
+  -v /storage/whatsapp-mcp:/data \
+  -v /tmp:/src \
+  -v /root/whatsapp-mcp/scripts:/scripts \
+  --entrypoint sh \
+  ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
+  /scripts/merge-db.sh /src/old-wa.db
+docker compose start
+# verify with list_messages
+```
+
+`merge-db.sh` is idempotent — re-running it is safe (INSERT OR IGNORE + UPSERT). If the first run failed mid-transaction, just re-run.
 
 ### Offsite
 
