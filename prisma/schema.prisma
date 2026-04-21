@@ -1,0 +1,96 @@
+// Canonical multi-tenant schema for whatsapp-mcp.
+// Source of truth — whatsapp-admin consumes via @amiticia/whatsapp-mcp/db.
+//
+// Generated client lives in node_modules/@prisma/client (default location).
+// Migrations live in prisma/migrations/.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id                 String    @id
+  displayName        String
+  expectedWaNumber   String
+  ntfyTopicUrl       String?
+  writeToolsEnabled  Boolean   @default(false)
+  allowedWriteTools  String[]  @default([])
+  conversionKeywords String[]  @default([])
+  status             String    @default("disconnected")
+  lastSeenAt         DateTime?
+  createdAt          DateTime  @default(now())
+
+  chats    Chat[]
+  messages Message[]
+  contacts Contact[]
+
+  @@map("tenants")
+}
+
+model Chat {
+  tenantId        String
+  jid             String
+  name            String?
+  lastMessageTime DateTime?
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@id([tenantId, jid])
+  @@index([tenantId, lastMessageTime(sort: Desc)])
+  @@map("chats")
+}
+
+model Message {
+  tenantId       String
+  chatJid        String
+  id             String
+  timestamp      DateTime
+  sender         String?
+  content        String?
+  isFromMe       Boolean
+  mediaType      String?
+  mimetype       String?
+  mediaKey       String?
+  directPath     String?
+  mediaUrl       String?
+  fileLength     Int?
+  fileSha256     String?
+  fileEncSha256  String?
+  mediaObjectKey String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  chat   Chat   @relation(fields: [tenantId, chatJid], references: [tenantId, jid], onDelete: Cascade)
+
+  @@id([tenantId, chatJid, id])
+  @@index([tenantId, timestamp(sort: Desc)])
+  @@index([tenantId, chatJid, timestamp(sort: Desc)])
+  @@index([tenantId, mediaType])
+  @@map("messages")
+}
+
+model Contact {
+  tenantId    String
+  jid         String
+  name        String?
+  notify      String?
+  phoneNumber String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, jid])
+  @@map("contacts")
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("admin_users")
+}
