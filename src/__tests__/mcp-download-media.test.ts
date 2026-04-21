@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Module mocks (hoisted before imports) ────────────────────────────
 
-vi.mock("../database.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../database.ts")>();
+vi.mock("../db/queries.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db/queries.ts")>();
   return {
     ...actual,
     getMessageById: vi.fn(),
     updateMessageMediaObjectKey: vi.fn(),
-    getContactName: vi.fn().mockReturnValue(null),
+    getContactName: vi.fn().mockResolvedValue(null),
   };
 });
 
@@ -39,7 +39,7 @@ vi.mock("fastmcp", async (importOriginal) => {
 });
 
 import { executeDownloadMedia } from "../mcp.ts";
-import { getMessageById, updateMessageMediaObjectKey } from "../database.ts";
+import { getMessageById, updateMessageMediaObjectKey } from "../db/queries.ts";
 import { downloadMedia } from "../whatsapp.ts";
 import { putMedia, publicUrlFor } from "../storage.ts";
 import pino from "pino";
@@ -88,7 +88,7 @@ describe("executeDownloadMedia", () => {
   // Test 4: image <5MB returns imageContent block + resource_link + text
   it("image under inline limit returns image block + resource_link + text", async () => {
     const msg = makeMediaMessage({ mimetype: "image/jpeg", file_length: 1024 });
-    vi.mocked(getMessageById).mockReturnValue(msg as any);
+    vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
       message_id: "msg-001",
@@ -101,7 +101,7 @@ describe("executeDownloadMedia", () => {
     expect(result.content[2]).toMatchObject({ type: "text" });
     expect(downloadMedia).toHaveBeenCalledOnce();
     expect(putMedia).toHaveBeenCalledOnce();
-    expect(updateMessageMediaObjectKey).toHaveBeenCalledWith("msg-001", "5511@s.whatsapp.net", "t/default/5511@s.whatsapp.net/msg-001.jpg");
+    expect(updateMessageMediaObjectKey).toHaveBeenCalledWith("default", "msg-001", "5511@s.whatsapp.net", "t/default/5511@s.whatsapp.net/msg-001.jpg");
   });
 
   // Test 5: PDF returns resource_link only, no inline content
@@ -116,7 +116,7 @@ describe("executeDownloadMedia", () => {
       url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.pdf",
     });
     const msg = makeMediaMessage({ mimetype: "application/pdf", media_type: "document", file_length: 50_000 });
-    vi.mocked(getMessageById).mockReturnValue(msg as any);
+    vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
       message_id: "msg-001",
@@ -134,7 +134,7 @@ describe("executeDownloadMedia", () => {
     const msg = makeMediaMessage({
       media_object_key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
     });
-    vi.mocked(getMessageById).mockReturnValue(msg as any);
+    vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
       message_id: "msg-001",
@@ -161,7 +161,7 @@ describe("executeDownloadMedia", () => {
       url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.ogg",
     });
     const msg = makeMediaMessage({ mimetype: "audio/ogg", media_type: "audio", file_length: 512 });
-    vi.mocked(getMessageById).mockReturnValue(msg as any);
+    vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
       message_id: "msg-001",
@@ -174,7 +174,7 @@ describe("executeDownloadMedia", () => {
 
   // Edge: message not found
   it("throws when message is not found", async () => {
-    vi.mocked(getMessageById).mockReturnValue(null);
+    vi.mocked(getMessageById).mockResolvedValue(null);
 
     await expect(
       executeDownloadMedia(logger, { message_id: "ghost", chat_jid: "jid@s.whatsapp.net" }),
@@ -184,7 +184,7 @@ describe("executeDownloadMedia", () => {
   // Edge: message has no media metadata
   it("throws when message has no media_key", async () => {
     const msg = makeMediaMessage({ media_key: null });
-    vi.mocked(getMessageById).mockReturnValue(msg as any);
+    vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     await expect(
       executeDownloadMedia(logger, { message_id: "msg-001", chat_jid: "5511@s.whatsapp.net" }),
