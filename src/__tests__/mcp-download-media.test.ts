@@ -42,9 +42,12 @@ import { executeDownloadMedia } from "../mcp.ts";
 import { getMessageById, updateMessageMediaObjectKey } from "../db/queries.ts";
 import { downloadMedia } from "../whatsapp.ts";
 import { putMedia, publicUrlFor } from "../storage.ts";
+import type { TenantConnectionManager } from "../tenancy/manager.ts";
 import pino from "pino";
 
 const logger = pino({ level: "silent" });
+
+const fakeManager = {} as TenantConnectionManager;
 
 function makeMediaMessage(overrides: Record<string, unknown> = {}) {
   return {
@@ -85,14 +88,14 @@ describe("executeDownloadMedia", () => {
     vi.clearAllMocks();
   });
 
-  // Test 4: image <5MB returns imageContent block + resource_link + text
   it("image under inline limit returns image block + resource_link + text", async () => {
     const msg = makeMediaMessage({ mimetype: "image/jpeg", file_length: 1024 });
     vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
-    const result = await executeDownloadMedia(logger, {
+    const result = await executeDownloadMedia(logger, fakeManager, {
       message_id: "msg-001",
       chat_jid: "5511@s.whatsapp.net",
+      tenant_id: "default",
     });
 
     expect(result.content).toHaveLength(3);
@@ -104,7 +107,6 @@ describe("executeDownloadMedia", () => {
     expect(updateMessageMediaObjectKey).toHaveBeenCalledWith("default", "msg-001", "5511@s.whatsapp.net", "t/default/5511@s.whatsapp.net/msg-001.jpg");
   });
 
-  // Test 5: PDF returns resource_link only, no inline content
   it("PDF returns resource_link + text only (no inline block)", async () => {
     vi.mocked(downloadMedia).mockResolvedValue({
       buffer: Buffer.from("pdf-bytes"),
@@ -118,9 +120,10 @@ describe("executeDownloadMedia", () => {
     const msg = makeMediaMessage({ mimetype: "application/pdf", media_type: "document", file_length: 50_000 });
     vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
-    const result = await executeDownloadMedia(logger, {
+    const result = await executeDownloadMedia(logger, fakeManager, {
       message_id: "msg-001",
       chat_jid: "5511@s.whatsapp.net",
+      tenant_id: "default",
     });
 
     expect(result.content).toHaveLength(2);
@@ -129,16 +132,16 @@ describe("executeDownloadMedia", () => {
     expect(result.content.every((c: any) => c.type !== "image" && c.type !== "audio")).toBe(true);
   });
 
-  // Test 6: second call with media_object_key set skips Baileys, regenerates URL
   it("cache hit skips Baileys download and returns resource_link from stored key", async () => {
     const msg = makeMediaMessage({
       media_object_key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
     });
     vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
-    const result = await executeDownloadMedia(logger, {
+    const result = await executeDownloadMedia(logger, fakeManager, {
       message_id: "msg-001",
       chat_jid: "5511@s.whatsapp.net",
+      tenant_id: "default",
     });
 
     expect(downloadMedia).not.toHaveBeenCalled();
@@ -149,7 +152,6 @@ describe("executeDownloadMedia", () => {
     expect(publicUrlFor).toHaveBeenCalledWith("t/default/5511@s.whatsapp.net/msg-001.jpg");
   });
 
-  // Edge: audio under inline limit returns audio block
   it("audio under inline limit returns audio block + resource_link + text", async () => {
     vi.mocked(downloadMedia).mockResolvedValue({
       buffer: Buffer.from("ogg-bytes"),
@@ -163,31 +165,30 @@ describe("executeDownloadMedia", () => {
     const msg = makeMediaMessage({ mimetype: "audio/ogg", media_type: "audio", file_length: 512 });
     vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
-    const result = await executeDownloadMedia(logger, {
+    const result = await executeDownloadMedia(logger, fakeManager, {
       message_id: "msg-001",
       chat_jid: "5511@s.whatsapp.net",
+      tenant_id: "default",
     });
 
     expect(result.content[0]).toMatchObject({ type: "audio" });
     expect(result.content).toHaveLength(3);
   });
 
-  // Edge: message not found
   it("throws when message is not found", async () => {
     vi.mocked(getMessageById).mockResolvedValue(null);
 
     await expect(
-      executeDownloadMedia(logger, { message_id: "ghost", chat_jid: "jid@s.whatsapp.net" }),
+      executeDownloadMedia(logger, fakeManager, { message_id: "ghost", chat_jid: "jid@s.whatsapp.net", tenant_id: "default" }),
     ).rejects.toThrow("not found");
   });
 
-  // Edge: message has no media metadata
   it("throws when message has no media_key", async () => {
     const msg = makeMediaMessage({ media_key: null });
     vi.mocked(getMessageById).mockResolvedValue(msg as any);
 
     await expect(
-      executeDownloadMedia(logger, { message_id: "msg-001", chat_jid: "5511@s.whatsapp.net" }),
+      executeDownloadMedia(logger, fakeManager, { message_id: "msg-001", chat_jid: "5511@s.whatsapp.net", tenant_id: "default" }),
     ).rejects.toThrow("media metadata is missing");
   });
 });

@@ -36,15 +36,14 @@ export function publicUrlFor(key: string): string {
 }
 
 export async function putMedia(params: {
-  tenantId?: string;
+  tenantId: string;
   chatJid: string;
   messageId: string;
   ext: string;
   mimetype: string;
   buffer: Buffer;
 }): Promise<{ key: string; url: string }> {
-  const { chatJid, messageId, ext, mimetype, buffer } = params;
-  const tenantId = params.tenantId ?? (process.env.TENANT_ID ?? "default");
+  const { tenantId, chatJid, messageId, ext, mimetype, buffer } = params;
   const bucket = process.env.S3_BUCKET ?? "amiticia-media";
   const sanitizedJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
   const key = `t/${tenantId}/${sanitizedJid}/${messageId}.${ext}`;

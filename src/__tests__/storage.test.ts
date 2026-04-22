@@ -57,6 +57,7 @@ describe("storage", () => {
       setStorageClient(mock as MediaStorageClient);
 
       const { key } = await putMedia({
+        tenantId: "default",
         chatJid: "5511999999999@s.whatsapp.net",
         messageId: "msg123",
         ext: "jpg",
@@ -72,6 +73,7 @@ describe("storage", () => {
       setStorageClient(mock as MediaStorageClient);
 
       const { key } = await putMedia({
+        tenantId: "default",
         chatJid: "group+abc!@g.us",
         messageId: "msg999",
         ext: "mp4",
@@ -88,6 +90,7 @@ describe("storage", () => {
 
       const buffer = Buffer.from("hello");
       await putMedia({
+        tenantId: "default",
         chatJid: "123@s.whatsapp.net",
         messageId: "abc",
         ext: "jpg",
@@ -125,6 +128,7 @@ describe("storage", () => {
       setStorageClient(mock as MediaStorageClient);
 
       const { url } = await putMedia({
+        tenantId: "default",
         chatJid: "123@s.whatsapp.net",
         messageId: "abc",
         ext: "jpg",
