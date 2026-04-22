@@ -12,6 +12,12 @@
   "author": "AmiticIA-AutoSys",
   "license": "MIT",
   "description": "WhatsApp MCP server using Baileys for Claude/Cursor integration",
+  "exports": {
+    "./db": "./src/db/client.ts",
+    "./tenancy": "./src/tenancy/index.ts",
+    "./storage": "./src/storage.ts",
+    "./types": "./src/types.ts"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git"
@@ -25,6 +31,8 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
+    "db:migrate-sqlite": "node --experimental-strip-types scripts/migrate-sqlite-to-postgres.ts",
+    "db:seed-tenants": "node --experimental-strip-types scripts/seed-tenants.ts",
     "postinstall": "prisma generate || true"
   },
   "dependencies": {
@@ -32,9 +40,7 @@
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^12.9.0",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
     "fastmcp": "^4.0.0",
     "minio": "^8.0.2",
     "p-limit": "^7.3.0",
@@ -45,11 +51,11 @@
   },
   "devDependencies": {
     "@testcontainers/minio": "^10.0.0",
+    "better-sqlite3": "^12.9.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
     "@types/qrcode": "^1.5.6",
-    "drizzle-kit": "^0.31.10",
     "prisma": "^7.7.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
