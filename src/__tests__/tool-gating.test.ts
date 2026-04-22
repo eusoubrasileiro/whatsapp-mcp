@@ -71,4 +71,41 @@ describe("assertToolAllowed", () => {
     mockFindUniqueOrThrow.mockRejectedValue(new Error("No Tenant found"));
     await expect(assertToolAllowed("nonexistent", "send_message")).rejects.toThrow();
   });
+
+  describe("read tools are NOT in the write tools set", () => {
+    const READ_TOOLS = [
+      "get_connection_status",
+      "list_messages",
+      "get_messages_today",
+      "search_messages",
+      "list_chats",
+      "get_chat",
+      "get_message_context",
+      "search_contacts",
+      "list_contacts",
+      "get_group_info",
+      "download_media",
+      "logout",
+    ] as const;
+
+    for (const tool of READ_TOOLS) {
+      it(`${tool} is not a write tool`, () => {
+        expect(WRITE_TOOLS as readonly string[]).not.toContain(tool);
+      });
+    }
+  });
+
+  describe("writeToolsEnabled=true, allowedWriteTools has multiple tools", () => {
+    it("allows all listed tools and rejects unlisted ones", async () => {
+      const allowed = ["send_message", "react_to_message"];
+      mockFindUniqueOrThrow.mockResolvedValue(
+        makeTenant({ writeToolsEnabled: true, allowedWriteTools: allowed }),
+      );
+
+      await expect(assertToolAllowed("t-alice", "send_message")).resolves.toBeUndefined();
+      await expect(assertToolAllowed("t-alice", "react_to_message")).resolves.toBeUndefined();
+      await expect(assertToolAllowed("t-alice", "send_file")).rejects.toThrow("not in allowed list");
+      await expect(assertToolAllowed("t-alice", "delete_message")).rejects.toThrow("not in allowed list");
+    });
+  });
 });

@@ -215,4 +215,63 @@ describe("storage", () => {
       expect(mock.setBucketPolicy).not.toHaveBeenCalled();
     });
   });
+
+  // ── tenantId isolation ───────────────────────────────────────────────
+
+  describe("putMedia tenant isolation", () => {
+    it("different tenantIds produce different key prefixes", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const { key: key1 } = await putMedia({
+        tenantId: "alice",
+        chatJid: "c@s.whatsapp.net",
+        messageId: "m1",
+        ext: "jpg",
+        mimetype: "image/jpeg",
+        buffer: Buffer.from("a"),
+      });
+
+      const { key: key2 } = await putMedia({
+        tenantId: "bob",
+        chatJid: "c@s.whatsapp.net",
+        messageId: "m1",
+        ext: "jpg",
+        mimetype: "image/jpeg",
+        buffer: Buffer.from("b"),
+      });
+
+      expect(key1).toMatch(/^t\/alice\//);
+      expect(key2).toMatch(/^t\/bob\//);
+      expect(key1).not.toBe(key2);
+    });
+
+    it("key always starts with t/{tenantId}/", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const { key } = await putMedia({
+        tenantId: "my-tenant",
+        chatJid: "x@s.whatsapp.net",
+        messageId: "msg",
+        ext: "pdf",
+        mimetype: "application/pdf",
+        buffer: Buffer.from("doc"),
+      });
+
+      expect(key).toBe("t/my-tenant/x@s.whatsapp.net/msg.pdf");
+    });
+  });
+
+  // ── publicUrlFor with MEDIA_PUBLIC_BASE_URL ──────────────────────────
+
+  describe("publicUrlFor derives from MEDIA_PUBLIC_BASE_URL", () => {
+    it("falls back to http://localhost:9000/{bucket} when MEDIA_PUBLIC_BASE_URL is unset", () => {
+      delete process.env.MEDIA_PUBLIC_BASE_URL;
+      process.env.S3_BUCKET = "test-bucket";
+      expect(publicUrlFor("t/x/key.jpg")).toBe(
+        "http://localhost:9000/test-bucket/t/x/key.jpg",
+      );
+    });
+  });
 });

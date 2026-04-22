@@ -246,4 +246,148 @@ describe("TenantConnection", () => {
 
     expect(startConnection).toHaveBeenCalledOnce();
   });
+
+  it("skips start when already connected", async () => {
+    vi.mocked(startConnection).mockResolvedValue({
+      connectionState: {
+        status: "connected",
+        qrCode: null,
+        qrAscii: null,
+        user: "5531@s.whatsapp.net",
+        syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+      },
+      socketState: { socket: { end: vi.fn() } },
+    } as any);
+
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    await tc.start();
+    vi.mocked(startConnection).mockClear();
+    await tc.start();
+
+    expect(startConnection).not.toHaveBeenCalled();
+  });
+
+  it("getQrPng returns null when not in qr_pending state", async () => {
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    const png = await tc.getQrPng();
+    expect(png).toBeNull();
+  });
+
+  it("onHistorySync stores contacts, chats, and messages with correct tenantId", async () => {
+    let capturedHooks: any;
+    vi.mocked(startConnection).mockImplementation(async (config: any) => {
+      capturedHooks = config.hooks;
+      return {
+        connectionState: {
+          status: "connected",
+          qrCode: null,
+          qrAscii: null,
+          user: null,
+          syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+        },
+        socketState: { socket: {} },
+      } as any;
+    });
+
+    vi.mocked(parseMessage).mockReturnValue({
+      id: "hist-m1",
+      chat_jid: "c@s.whatsapp.net",
+      sender: "5531@s.whatsapp.net",
+      content: "History msg",
+      timestamp: new Date("2026-01-01T00:00:00Z"),
+      is_from_me: false,
+      media_type: null,
+      mimetype: null,
+      media_key: null,
+      direct_path: null,
+      media_url: null,
+      file_length: null,
+      file_sha256: null,
+      file_enc_sha256: null,
+    });
+
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    await tc.start();
+
+    await capturedHooks.onHistorySync({
+      contacts: [{ id: "5531@s.whatsapp.net", name: "Carlos" }],
+      chats: [{ id: "c@s.whatsapp.net", name: "Chat", conversationTimestamp: 1704067200 }],
+      messages: [{ key: { id: "hist-m1" } }],
+    });
+
+    expect(storeContact).toHaveBeenCalledWith("t-alice", expect.objectContaining({
+      jid: "5531@s.whatsapp.net",
+      name: "Carlos",
+    }));
+    expect(storeChat).toHaveBeenCalledWith("t-alice", expect.objectContaining({
+      jid: "c@s.whatsapp.net",
+    }));
+    expect(storeMessage).toHaveBeenCalledWith("t-alice", expect.objectContaining({
+      id: "hist-m1",
+    }));
+  });
+
+  it("onChatsUpdate stores chats with correct tenantId", async () => {
+    let capturedHooks: any;
+    vi.mocked(startConnection).mockImplementation(async (config: any) => {
+      capturedHooks = config.hooks;
+      return {
+        connectionState: {
+          status: "connected",
+          qrCode: null,
+          qrAscii: null,
+          user: null,
+          syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+        },
+        socketState: { socket: {} },
+      } as any;
+    });
+
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    await tc.start();
+
+    await capturedHooks.onChatsUpdate([
+      { id: "c@s.whatsapp.net", name: "Updated Chat" },
+    ]);
+
+    expect(storeChat).toHaveBeenCalledWith("t-alice", expect.objectContaining({
+      jid: "c@s.whatsapp.net",
+      name: "Updated Chat",
+    }));
+  });
+
+  it("onContactsUpdate stores contacts with correct tenantId", async () => {
+    let capturedHooks: any;
+    vi.mocked(startConnection).mockImplementation(async (config: any) => {
+      capturedHooks = config.hooks;
+      return {
+        connectionState: {
+          status: "connected",
+          qrCode: null,
+          qrAscii: null,
+          user: null,
+          syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+        },
+        socketState: { socket: {} },
+      } as any;
+    });
+
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    await tc.start();
+
+    await capturedHooks.onContactsUpdate([
+      { id: "5531@s.whatsapp.net", name: "Updated Carlos", notify: null },
+    ]);
+
+    expect(storeContact).toHaveBeenCalledWith("t-alice", expect.objectContaining({
+      jid: "5531@s.whatsapp.net",
+      name: "Updated Carlos",
+    }));
+  });
+
+  it("stop() is safe to call when not started", () => {
+    const tc = new TenantConnection(makeTenant(), tmpDir, logger);
+    expect(() => tc.stop()).not.toThrow();
+    expect(tc.getStatus().status).toBe("disconnected");
+  });
 });

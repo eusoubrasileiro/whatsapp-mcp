@@ -144,3 +144,100 @@ describe("createQrServer (multi-tenant)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("createQrServer internal API", () => {
+  let server: Server;
+  let baseUrl: string;
+  let mgr: ReturnType<typeof makeFakeManager>;
+  const savedToken = process.env.WHATSAPP_MCP_INTERNAL_TOKEN;
+
+  beforeEach(async () => {
+    const tc1 = makeFakeTc("t-alice", "Alice", baseState());
+    mgr = makeFakeManager([tc1]);
+  });
+
+  afterEach(async () => {
+    if (savedToken === undefined) delete process.env.WHATSAPP_MCP_INTERNAL_TOKEN;
+    else process.env.WHATSAPP_MCP_INTERNAL_TOKEN = savedToken;
+    if (server) {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  async function startServer() {
+    server = createQrServer(makeSilentLogger(), mgr);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+  }
+
+  it("POST /internal/tenants/:id/start returns 503 when WHATSAPP_MCP_INTERNAL_TOKEN not set", async () => {
+    delete process.env.WHATSAPP_MCP_INTERNAL_TOKEN;
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-alice/start`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer something" },
+    });
+    expect(res.status).toBe(503);
+  });
+
+  it("POST /internal/tenants/:id/start returns 401 without auth header", async () => {
+    process.env.WHATSAPP_MCP_INTERNAL_TOKEN = "secret123";
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-alice/start`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /internal/tenants/:id/start returns 401 with wrong token", async () => {
+    process.env.WHATSAPP_MCP_INTERNAL_TOKEN = "secret123";
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-alice/start`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer wrong-token" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /internal/tenants/:id/start succeeds with correct token", async () => {
+    process.env.WHATSAPP_MCP_INTERNAL_TOKEN = "secret123";
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-alice/start`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer secret123" },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, tenantId: "t-alice", action: "start" });
+    expect(mgr.start).toHaveBeenCalledWith("t-alice");
+  });
+
+  it("POST /internal/tenants/:id/stop succeeds with correct token", async () => {
+    process.env.WHATSAPP_MCP_INTERNAL_TOKEN = "secret123";
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-alice/stop`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer secret123" },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, tenantId: "t-alice", action: "stop" });
+    expect(mgr.stop).toHaveBeenCalledWith("t-alice");
+  });
+
+  it("POST /internal/tenants/:id/start returns 404 when manager.start throws", async () => {
+    process.env.WHATSAPP_MCP_INTERNAL_TOKEN = "secret123";
+    vi.mocked(mgr.start).mockRejectedValue(new Error("Tenant t-unknown not found"));
+    await startServer();
+    const res = await fetch(`${baseUrl}/internal/tenants/t-unknown/start`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer secret123" },
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toContain("not found");
+  });
+});
