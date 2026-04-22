@@ -136,4 +136,98 @@ describe("SQLite -> Postgres migration transforms", () => {
       expect(result.phoneNumber).toBeNull();
     });
   });
+
+  describe("tenantId propagation", () => {
+    it("all transform functions embed the provided tenantId", () => {
+      const tenantId = "acme-corp";
+
+      const chat = transformChat(tenantId, {
+        jid: "c@s.whatsapp.net",
+        name: null,
+        last_message_time: null,
+      });
+      expect(chat.tenantId).toBe(tenantId);
+
+      const msg = transformMessage(tenantId, {
+        id: "m",
+        chat_jid: "c",
+        sender: null,
+        content: null,
+        timestamp: "2026-01-01T00:00:00Z",
+        is_from_me: 0,
+        media_type: null,
+        mimetype: null,
+        media_key: null,
+        direct_path: null,
+        media_url: null,
+        file_length: null,
+        file_sha256: null,
+        file_enc_sha256: null,
+        media_object_key: null,
+      });
+      expect(msg.tenantId).toBe(tenantId);
+
+      const contact = transformContact(tenantId, {
+        jid: "x@s.whatsapp.net",
+        name: null,
+        notify: null,
+        phone_number: null,
+      });
+      expect(contact.tenantId).toBe(tenantId);
+    });
+  });
+
+  describe("transformMessage edge cases", () => {
+    it("preserves all media fields when present", () => {
+      const result = transformMessage(TENANT_ID, {
+        id: "m-media",
+        chat_jid: "c@s.whatsapp.net",
+        sender: "5531@s.whatsapp.net",
+        content: "Photo",
+        timestamp: "2026-04-01T12:00:00.000Z",
+        is_from_me: 0,
+        media_type: "image",
+        mimetype: "image/jpeg",
+        media_key: "abc123",
+        direct_path: "/media/enc",
+        media_url: "https://cdn.whatsapp.net/img",
+        file_length: 4096,
+        file_sha256: "sha256hash",
+        file_enc_sha256: "encsha256",
+        media_object_key: "t/default/c/m.jpg",
+      });
+
+      expect(result.mediaType).toBe("image");
+      expect(result.mimetype).toBe("image/jpeg");
+      expect(result.mediaKey).toBe("abc123");
+      expect(result.directPath).toBe("/media/enc");
+      expect(result.mediaUrl).toBe("https://cdn.whatsapp.net/img");
+      expect(result.fileLength).toBe(4096);
+      expect(result.fileSha256).toBe("sha256hash");
+      expect(result.fileEncSha256).toBe("encsha256");
+      expect(result.mediaObjectKey).toBe("t/default/c/m.jpg");
+    });
+
+    it("handles null content", () => {
+      const result = transformMessage(TENANT_ID, {
+        id: "m",
+        chat_jid: "c",
+        sender: null,
+        content: null,
+        timestamp: "2026-01-01T00:00:00Z",
+        is_from_me: 1,
+        media_type: null,
+        mimetype: null,
+        media_key: null,
+        direct_path: null,
+        media_url: null,
+        file_length: null,
+        file_sha256: null,
+        file_enc_sha256: null,
+        media_object_key: null,
+      });
+      expect(result.content).toBeNull();
+      expect(result.sender).toBeNull();
+    });
+  });
 });

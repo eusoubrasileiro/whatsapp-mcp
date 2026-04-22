@@ -175,4 +175,74 @@ describe("TenantConnectionManager", () => {
     const snapshot = mgr.statusSnapshot();
     expect(snapshot.every((s) => s.status === "disconnected")).toBe(true);
   });
+
+  it("loadFromDb with empty tenant list produces empty manager", async () => {
+    mockFindMany.mockResolvedValue([]);
+
+    const mgr = new TenantConnectionManager(tmpDir, logger);
+    await mgr.loadFromDb();
+
+    expect(mgr.list()).toHaveLength(0);
+    expect(mgr.statusSnapshot()).toEqual([]);
+  });
+
+  it("stop(id) is silent for nonexistent tenant", async () => {
+    mockFindMany.mockResolvedValue([]);
+
+    const mgr = new TenantConnectionManager(tmpDir, logger);
+    await mgr.loadFromDb();
+
+    expect(() => mgr.stop("nonexistent")).not.toThrow();
+  });
+
+  it("get returns undefined for unknown tenant", async () => {
+    mockFindMany.mockResolvedValue([
+      makeTenantRow("t-alice", "Alice"),
+    ]);
+
+    const mgr = new TenantConnectionManager(tmpDir, logger);
+    await mgr.loadFromDb();
+
+    expect(mgr.get("t-bob")).toBeUndefined();
+  });
+
+  it("startAll continues even when one tenant fails", async () => {
+    mockFindMany.mockResolvedValue([
+      makeTenantRow("t-1", "T1"),
+      makeTenantRow("t-2", "T2"),
+      makeTenantRow("t-3", "T3"),
+    ]);
+
+    let callCount = 0;
+    vi.mocked(startConnection).mockImplementation(async () => {
+      callCount++;
+      if (callCount === 2) throw new Error("connection failed");
+      return {
+        connectionState: {
+          status: "connected",
+          qrCode: null,
+          qrAscii: null,
+          user: null,
+          syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+        },
+        socketState: { socket: {} },
+      } as any;
+    });
+
+    const mgr = new TenantConnectionManager(tmpDir, logger);
+    await mgr.loadFromDb();
+
+    // Should not throw even though one tenant fails
+    await expect(mgr.startAll()).resolves.toBeUndefined();
+    expect(startConnection).toHaveBeenCalledTimes(3);
+  });
+
+  it("stopAll is safe when no tenants are loaded", async () => {
+    mockFindMany.mockResolvedValue([]);
+
+    const mgr = new TenantConnectionManager(tmpDir, logger);
+    await mgr.loadFromDb();
+
+    expect(() => mgr.stopAll()).not.toThrow();
+  });
 });
