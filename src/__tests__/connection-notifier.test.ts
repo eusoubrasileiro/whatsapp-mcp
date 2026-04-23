@@ -4,23 +4,27 @@ import { createConnectionNotifier } from "../connection-notifier.ts";
 import type { NtfyMessage, SendNtfy } from "../ntfy.ts";
 
 function makeFakeTimer() {
-  let callback: (() => void) | null = null;
-  let cancelled = false;
-  const timer = {
-    cancel: () => {
-      cancelled = true;
-      callback = null;
+  type Handle = { cb: () => void; ms: number; cancelled: boolean };
+  const handles: Handle[] = [];
+
+  const setTimer = vi.fn((cb: () => void, ms: number) => {
+    const h: Handle = { cb, ms, cancelled: false };
+    handles.push(h);
+    return { cancel: () => { h.cancelled = true; } };
+  });
+
+  return {
+    setTimer,
+    handles,
+    fire: (index?: number) => {
+      const h = index !== undefined ? handles[index] : handles[handles.length - 1];
+      if (h && !h.cancelled) h.cb();
+    },
+    isCancelled: (index?: number) => {
+      const h = index !== undefined ? handles[index] : handles[handles.length - 1];
+      return h?.cancelled ?? true;
     },
   };
-  const setTimer = vi.fn((cb: () => void, _ms: number) => {
-    callback = cb;
-    cancelled = false;
-    return timer;
-  });
-  const fire = () => {
-    if (!cancelled && callback) callback();
-  };
-  return { setTimer, fire, isCancelled: () => cancelled };
 }
 
 describe("createConnectionNotifier", () => {
@@ -106,13 +110,18 @@ describe("createConnectionNotifier", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("pushes reconnect notification after a prior disconnect", async () => {
+  it("pushes reconnect notification after grace expires and reconnect", async () => {
+    const t = makeFakeTimer();
     const n = createConnectionNotifier(pino({ level: "silent" }), {
       sendNtfy,
       publicQrUrl: "https://wa.example/",
       expectedWaNumber: null,
+      setTimer: t.setTimer,
     });
     await n.onDisconnected();
+    expect(sent).toHaveLength(0);
+    t.fire();
+    await new Promise((r) => setImmediate(r));
     expect(sent).toHaveLength(1);
     expect(sent[0].title).toContain("desconectado");
     await n.onConnected({ id: "5531@s", name: "Alice" });
@@ -148,7 +157,7 @@ describe("createConnectionNotifier", () => {
     expect(onBadPairing).not.toHaveBeenCalled();
   });
 
-  it("disconnected → QR → connected cycle pushes: down, scan, reconnect", async () => {
+  it("disconnected → QR within grace flushes disconnect, then QR, then reconnect", async () => {
     const t = makeFakeTimer();
     const n = createConnectionNotifier(pino({ level: "silent" }), {
       sendNtfy,
@@ -157,12 +166,102 @@ describe("createConnectionNotifier", () => {
       setTimer: t.setTimer,
     });
     await n.onDisconnected();
+    expect(sent).toHaveLength(0);
     await n.onQrCode("qr", "a");
-    await n.onConnected({ id: "5531@s", name: "Alice" });
     expect(sent.map((m) => m.title)).toEqual([
       expect.stringContaining("desconectado"),
       expect.stringContaining("Escaneie"),
-      expect.stringContaining("reconectado"),
     ]);
+    await n.onConnected({ id: "5531@s", name: "Alice" });
+    expect(sent[2].title).toContain("reconectado");
+  });
+
+  describe("disconnect grace period", () => {
+    it("suppresses both notifications on quick reconnect within grace", async () => {
+      const t = makeFakeTimer();
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: null,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      expect(sent).toHaveLength(0);
+      await n.onConnected({ id: "5531@s", name: "Alice" });
+      expect(sent).toHaveLength(0);
+    });
+
+    it("fires disconnect notification only after grace expires", async () => {
+      const t = makeFakeTimer();
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: null,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      expect(sent).toHaveLength(0);
+      t.fire();
+      await new Promise((r) => setImmediate(r));
+      expect(sent).toHaveLength(1);
+      expect(sent[0].title).toContain("desconectado");
+    });
+
+    it("uses default 120s grace period", async () => {
+      const t = makeFakeTimer();
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: null,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      expect(t.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 120_000);
+    });
+
+    it("respects custom disconnectGraceMs", async () => {
+      const t = makeFakeTimer();
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: null,
+        disconnectGraceMs: 30_000,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      expect(t.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 30_000);
+    });
+
+    it("resets grace timer on multiple disconnects", async () => {
+      const t = makeFakeTimer();
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: null,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      const firstGraceIdx = t.handles.length - 1;
+      await n.onDisconnected();
+      expect(t.isCancelled(firstGraceIdx)).toBe(true);
+      expect(t.isCancelled()).toBe(false);
+    });
+
+    it("still fires bad-pairing alert on quick reconnect with wrong number", async () => {
+      const t = makeFakeTimer();
+      const onBadPairing = vi.fn(async () => {});
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber: "5531",
+        onBadPairing,
+        setTimer: t.setTimer,
+      });
+      await n.onDisconnected();
+      await n.onConnected({ id: "5599@s", name: "Stranger" });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].title).toContain("indevido");
+      expect(onBadPairing).toHaveBeenCalledOnce();
+    });
   });
 });
