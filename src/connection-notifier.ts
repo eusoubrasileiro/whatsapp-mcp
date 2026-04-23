@@ -8,6 +8,9 @@ export type NotifierConfig = {
   expectedWaNumber: string | null;
   /** Milliseconds between QR reminders. Default 120_000 (2 min). */
   reminderIntervalMs?: number;
+  /** Milliseconds to wait before sending disconnect notification. Default 120_000 (2 min).
+   *  If reconnection happens within this window, both notifications are suppressed. */
+  disconnectGraceMs?: number;
   /** Called when number mismatch — should logout socket and purge auth_info. */
   onBadPairing?: () => void | Promise<void>;
   /** Injectable for tests — default setTimeout. */
@@ -33,10 +36,12 @@ export function createConnectionNotifier(
   config: NotifierConfig,
 ): NotifierHandlers {
   const interval = config.reminderIntervalMs ?? 120_000;
+  const graceMs = config.disconnectGraceMs ?? 120_000;
   const setTimer = config.setTimer ?? defaultTimer;
 
   let phase: Phase = "idle";
   let reminder: { cancel: () => void } | null = null;
+  let graceTimer: { cancel: () => void } | null = null;
   let wasDisconnected = false;
 
   function cancelReminder() {
@@ -44,6 +49,24 @@ export function createConnectionNotifier(
       reminder.cancel();
       reminder = null;
     }
+  }
+
+  function cancelGrace() {
+    if (graceTimer) {
+      graceTimer.cancel();
+      graceTimer = null;
+    }
+  }
+
+  async function flushDisconnect() {
+    cancelGrace();
+    await config.sendNtfy({
+      title: "WhatsApp - desconectado",
+      message: "Conexão caiu. Aguardando reconexão automática.",
+      priority: 4,
+      tags: ["warning"],
+      click: config.publicQrUrl,
+    });
   }
 
   function armReminder() {
@@ -67,6 +90,8 @@ export function createConnectionNotifier(
       phase = "qr_pending";
       if (wasPending) return;
 
+      if (graceTimer) await flushDisconnect();
+
       logger.info("onQrCode → first QR, pushing ntfy + arming reminder");
       await config.sendNtfy({
         title: "WhatsApp - Escaneie QR",
@@ -85,6 +110,9 @@ export function createConnectionNotifier(
 
     onConnected: async (user) => {
       cancelReminder();
+
+      const hadPendingGrace = graceTimer !== null;
+      cancelGrace();
 
       if (config.expectedWaNumber && !user.id.startsWith(config.expectedWaNumber)) {
         logger.error(
@@ -110,6 +138,12 @@ export function createConnectionNotifier(
         return;
       }
 
+      if (hadPendingGrace) {
+        phase = "connected";
+        wasDisconnected = false;
+        return;
+      }
+
       const wasReconnect = wasDisconnected;
       phase = "connected";
       wasDisconnected = false;
@@ -126,15 +160,13 @@ export function createConnectionNotifier(
 
     onDisconnected: async () => {
       cancelReminder();
+      cancelGrace();
       phase = "disconnected";
       wasDisconnected = true;
-      await config.sendNtfy({
-        title: "WhatsApp - desconectado",
-        message: "Conexão caiu. Aguardando reconexão automática.",
-        priority: 4,
-        tags: ["warning"],
-        click: config.publicQrUrl,
-      });
+      graceTimer = setTimer(() => {
+        graceTimer = null;
+        void flushDisconnect();
+      }, graceMs);
     },
   };
 }
