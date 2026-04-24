@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout baileys-client (sibling link: dependency)
+      - name: "Checkout baileys-client (sibling link: dependency)"
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: git clone "https://x-access-token:${GH_PAT}@github.com/AmiticIA-AutoSys/baileys-client.git" ../baileys-client
