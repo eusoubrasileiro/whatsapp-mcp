@@ -439,6 +439,7 @@ export function getChat(
 
 export function getMessagesAround(
   messageId: string,
+  chatJid: string,
   before: number = 5,
   after: number = 5,
 ): { before: Message[]; target: Message | null; after: Message[] } {
@@ -453,7 +454,7 @@ export function getMessagesAround(
     const targetRow = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(eq(schema.messages.id, messageId))
+    .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
     .get();
 
     if (!targetRow) {
@@ -462,7 +463,6 @@ export function getMessagesAround(
 
     result.target = rowToMessage(targetRow);
     const targetTimestamp = targetRow.timestamp!;
-    const chatJid = targetRow.chat_jid!;
 
     const beforeRows = db.select(messageColumns)
     .from(schema.messages)
@@ -572,6 +572,23 @@ export function getMessageById(messageId: string, chatJid: string): Message | nu
     return row ? rowToMessage(row) : null;
   } catch (error) {
     logError("Error getting message by id", error);
+    return null;
+  }
+}
+
+export function getLatestMessage(chatJid: string): Message | null {
+  const db = getDb();
+  try {
+    const row = db.select(messageColumns)
+      .from(schema.messages)
+      .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+      .where(eq(schema.messages.chatJid, chatJid))
+      .orderBy(desc(schema.messages.timestamp))
+      .limit(1)
+      .get();
+    return row ? rowToMessage(row) : null;
+  } catch (error) {
+    logError("Error getting latest message", error);
     return null;
   }
 }
