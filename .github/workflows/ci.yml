@@ -17,6 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout baileys-client (sibling link: dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: AmiticIA-AutoSys/baileys-client
+          token: ${{ secrets.GH_PAT }}
+          path: ../baileys-client
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
