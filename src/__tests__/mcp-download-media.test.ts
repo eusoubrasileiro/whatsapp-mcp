@@ -190,4 +190,69 @@ describe("executeDownloadMedia", () => {
       executeDownloadMedia(logger, { message_id: "msg-001", chat_jid: "5511@s.whatsapp.net" }),
     ).rejects.toThrow("media metadata is missing");
   });
+
+  // G1 — video under inline limit must NOT be inlined (only image/* and audio/* are inlineable)
+  it("video under inline limit returns resource_link + text only (no inline block)", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("mp4-bytes"),
+      mimetype: "video/mp4",
+      ext: "mp4",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.mp4",
+      url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.mp4",
+    });
+    const msg = makeMediaMessage({ mimetype: "video/mp4", media_type: "video", file_length: 1024 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+    });
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]).toMatchObject({ type: "resource_link" });
+    expect(result.content.every((c: any) => c.type !== "image" && c.type !== "audio")).toBe(true);
+  });
+
+  // G2 — image over MEDIA_INLINE_MAX_BYTES must skip inline image block
+  it("image over MEDIA_INLINE_MAX_BYTES skips the inline image block", async () => {
+    const big = 10 * 1024 * 1024; // 10 MB > default 5 MB limit
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.alloc(16),
+      mimetype: "image/jpeg",
+      ext: "jpg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
+      url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.jpg",
+    });
+    const msg = makeMediaMessage({ mimetype: "image/jpeg", file_length: big });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+    });
+    expect(result.content).toHaveLength(2);
+    expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
+  });
+
+  // G3 — file_length === MEDIA_INLINE_MAX_BYTES skips inline (source uses strict <)
+  it("file_length equal to MEDIA_INLINE_MAX_BYTES skips the inline block (strict <)", async () => {
+    const limit = Number(process.env.MEDIA_INLINE_MAX_BYTES ?? 5_242_880);
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.alloc(16),
+      mimetype: "image/jpeg",
+      ext: "jpg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
+      url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.jpg",
+    });
+    const msg = makeMediaMessage({ mimetype: "image/jpeg", file_length: limit });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+    });
+    expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
+  });
 });
