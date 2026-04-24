@@ -23,6 +23,7 @@ jobs:
         run: git clone "https://x-access-token:${GH_PAT}@github.com/AmiticIA-AutoSys/baileys-client.git" ../baileys-client
 
       - uses: pnpm/action-setup@v4
+        id: pnpm-setup
         with:
           version: 10
 
@@ -30,6 +31,9 @@ jobs:
         with:
           node-version: '23'
           cache: 'pnpm'
+
+      - name: Build baileys-client
+        run: cd ../baileys-client && pnpm install && pnpm run build
 
       - name: Install dependencies
         run: pnpm install
