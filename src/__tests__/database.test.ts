@@ -11,6 +11,7 @@ import {
   getChats,
   getChat,
   getMessagesAround,
+  getLatestMessage,
   getContactName,
   getContacts,
   getMessagesWithDateFilter,
@@ -164,7 +165,7 @@ describe("database", () => {
         }));
       }
 
-      const ctx = getMessagesAround("msg5", 2, 2);
+      const ctx = getMessagesAround("msg5", "chat@s.whatsapp.net", 2, 2);
       expect(ctx.target).not.toBeNull();
       expect(ctx.target!.content).toBe("Message 5");
       expect(ctx.before).toHaveLength(2);
@@ -172,7 +173,7 @@ describe("database", () => {
     });
 
     it("returns empty for nonexistent message", () => {
-      const ctx = getMessagesAround("nonexistent", 2, 2);
+      const ctx = getMessagesAround("nonexistent", "any@s.whatsapp.net", 2, 2);
       expect(ctx.target).toBeNull();
       expect(ctx.before).toEqual([]);
       expect(ctx.after).toEqual([]);
@@ -413,6 +414,146 @@ describe("database", () => {
 
       const msg = getMessageById("msg_in_chat_a", "chatB@s.whatsapp.net");
       expect(msg).toBeNull();
+    });
+  });
+
+  // ── getMessagesAround cross-chat disambiguation (Bug 2 regression) ─
+
+  describe("getMessagesAround across chats", () => {
+    it("returns the row from the requested chat when the same message id exists in two chats", () => {
+      storeMessage(makeMsg({
+        id: "shared_id",
+        chat_jid: "chatA@s.whatsapp.net",
+        content: "From A",
+        timestamp: new Date("2025-06-01T10:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "shared_id",
+        chat_jid: "chatB@s.whatsapp.net",
+        content: "From B",
+        timestamp: new Date("2025-06-01T11:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "ctx_a_before", chat_jid: "chatA@s.whatsapp.net", content: "ctx-A-before",
+        timestamp: new Date("2025-06-01T09:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "ctx_a_after", chat_jid: "chatA@s.whatsapp.net", content: "ctx-A-after",
+        timestamp: new Date("2025-06-01T10:30:00Z"),
+      }));
+
+      const ctxA = getMessagesAround("shared_id", "chatA@s.whatsapp.net", 5, 5);
+      expect(ctxA.target).not.toBeNull();
+      expect(ctxA.target!.content).toBe("From A");
+      expect(ctxA.target!.chat_jid).toBe("chatA@s.whatsapp.net");
+      expect(ctxA.before.map((m) => m.content)).toContain("ctx-A-before");
+      expect(ctxA.after.map((m) => m.content)).toContain("ctx-A-after");
+      expect(ctxA.before.every((m) => m.chat_jid === "chatA@s.whatsapp.net")).toBe(true);
+      expect(ctxA.after.every((m) => m.chat_jid === "chatA@s.whatsapp.net")).toBe(true);
+
+      const ctxB = getMessagesAround("shared_id", "chatB@s.whatsapp.net", 5, 5);
+      expect(ctxB.target!.content).toBe("From B");
+      expect(ctxB.target!.chat_jid).toBe("chatB@s.whatsapp.net");
+    });
+
+    it("returns null target when message id exists only in a different chat", () => {
+      storeMessage(makeMsg({
+        id: "only_in_a", chat_jid: "chatA@s.whatsapp.net", content: "x",
+      }));
+      const ctx = getMessagesAround("only_in_a", "chatB@s.whatsapp.net", 5, 5);
+      expect(ctx.target).toBeNull();
+    });
+  });
+
+  // ── getLatestMessage ─────────────────────────────────────────────
+
+  describe("getLatestMessage", () => {
+    it("returns the most recent message of a chat", () => {
+      storeMessage(makeMsg({
+        id: "old", chat_jid: "c@s.whatsapp.net", content: "old",
+        timestamp: new Date("2025-06-01T08:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "newest", chat_jid: "c@s.whatsapp.net", content: "newest",
+        timestamp: new Date("2025-06-01T12:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "mid", chat_jid: "c@s.whatsapp.net", content: "mid",
+        timestamp: new Date("2025-06-01T10:00:00Z"),
+      }));
+
+      const latest = getLatestMessage("c@s.whatsapp.net");
+      expect(latest).not.toBeNull();
+      expect(latest!.id).toBe("newest");
+    });
+
+    it("returns null when chat has no messages", () => {
+      expect(getLatestMessage("nobody@s.whatsapp.net")).toBeNull();
+    });
+  });
+
+  // ── searchDbForContacts fallbacks ────────────────────────────────
+
+  describe("searchDbForContacts fallbacks", () => {
+    it("matches against notify when name is null", () => {
+      storeContact({ jid: "x@s.whatsapp.net", notify: "Lalala" });
+      const r = searchDbForContacts("lalala", 10);
+      expect(r).toHaveLength(1);
+      expect(r[0].name).toBe("Lalala");
+    });
+
+    it("matches against phone_number when name and notify are null", () => {
+      storeContact({ jid: "x@s.whatsapp.net", phoneNumber: "+5531987654321" });
+      const r = searchDbForContacts("31987", 10);
+      expect(r).toHaveLength(1);
+    });
+  });
+
+  // ── getContactName fallback chain ────────────────────────────────
+
+  describe("getContactName fallback chain", () => {
+    it("falls back to phone_number when name and notify are null", () => {
+      storeContact({ jid: "x@s.whatsapp.net", phoneNumber: "+5531987" });
+      expect(getContactName("x@s.whatsapp.net")).toBe("+5531987");
+    });
+  });
+
+  // ── getChats last-message metadata ──────────────────────────────
+
+  describe("getChats last-message metadata", () => {
+    it("returns last_is_from_me for the most recent message", () => {
+      storeMessage(makeMsg({
+        id: "m1", chat_jid: "c@s.whatsapp.net", content: "older",
+        timestamp: new Date("2025-06-01T10:00:00Z"),
+        is_from_me: false, sender: "5511@s.whatsapp.net",
+      }));
+      storeMessage(makeMsg({
+        id: "m2", chat_jid: "c@s.whatsapp.net", content: "newest",
+        timestamp: new Date("2025-06-01T12:00:00Z"),
+        is_from_me: true, sender: undefined,
+      }));
+      const chats = getChats(10, 0, "last_active", null, true);
+      expect(chats).toHaveLength(1);
+      expect(chats[0].last_message).toBe("newest");
+      expect(chats[0].last_is_from_me).toBe(true);
+    });
+  });
+
+  // ── getMessagesWithDateFilter pagination ─────────────────────────
+
+  describe("getMessagesWithDateFilter pagination", () => {
+    it("paginates results across two pages", () => {
+      for (let i = 0; i < 5; i++) {
+        storeMessage(makeMsg({
+          id: `p${i}`, chat_jid: "c@s.whatsapp.net", content: `M${i}`,
+          timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
+        }));
+      }
+      const p0 = getMessagesWithDateFilter("c@s.whatsapp.net", null, null, 2, 0);
+      const p1 = getMessagesWithDateFilter("c@s.whatsapp.net", null, null, 2, 1);
+      expect(p0).toHaveLength(2);
+      expect(p1).toHaveLength(2);
+      expect(p0[0].id).not.toBe(p1[0].id);
     });
   });
 
