@@ -15,6 +15,7 @@ import {
   searchDbForContacts,
   searchMessages,
   getMessageById,
+  getLatestMessage,
   updateMessageMediaObjectKey,
 } from "./database.ts";
 
@@ -24,7 +25,7 @@ import { spawn } from "node:child_process";
 import QRCode from "qrcode";
 import type { Logger } from "pino";
 
-function formatDbMessageForJson(msg: DbMessage) {
+export function formatDbMessageForJson(msg: DbMessage) {
   const contactName = msg.sender ? getContactName(msg.sender) : null;
   const result: Record<string, unknown> = {
     id: msg.id,
@@ -52,7 +53,7 @@ function formatDbMessageForJson(msg: DbMessage) {
   return result;
 }
 
-function formatDbChatForJson(chat: DbChat) {
+export function formatDbChatForJson(chat: DbChat) {
   const lastSenderName = chat.last_sender ? getContactName(chat.last_sender) : null;
   return {
     jid: chat.jid,
@@ -130,6 +131,39 @@ export async function executeDownloadMedia(
   }
 
   return { content: [resLink, textBlock] };
+}
+
+export async function executeMarkChatRead(
+  waLogger: Logger,
+  { chat_jid }: { chat_jid: string },
+): Promise<string> {
+  waLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
+  if (!socketState.socket) {
+    throw new Error("WhatsApp connection is not active.");
+  }
+
+  const latest = getLatestMessage(chat_jid);
+  if (!latest) {
+    throw new Error(`Cannot mark chat ${chat_jid} as read: no messages stored.`);
+  }
+
+  const isGroup = chat_jid.endsWith("@g.us");
+  const minimalMessage = {
+    key: {
+      remoteJid: chat_jid,
+      id: latest.id,
+      fromMe: latest.is_from_me,
+      ...(isGroup && latest.sender ? { participant: latest.sender } : {}),
+    },
+    messageTimestamp: Math.floor(latest.timestamp.getTime() / 1000),
+  };
+
+  await socketState.socket.chatModify(
+    { markRead: true, lastMessages: [minimalMessage] as any },
+    chat_jid,
+  );
+
+  return `Chat ${chat_jid} marked as read.`;
 }
 
 export async function startMcpServer(
@@ -399,15 +433,16 @@ export async function startMcpServer(
     name: "get_message_context",
     description: "Retrieve messages around a specific message for context",
     parameters: z.object({
+      chat_jid: z.string().describe("The JID of the chat where the message lives"),
       message_id: z.string().describe("The ID of the target message"),
       before: z.number().int().nonnegative().optional().default(5).describe("Messages before (default 5)"),
       after: z.number().int().nonnegative().optional().default(5).describe("Messages after (default 5)"),
     }),
-    execute: async ({ message_id, before, after }) => {
-      mcpLogger.info(`[MCP Tool] Executing get_message_context for msg ${message_id}`);
-      const context = getMessagesAround(message_id, before, after);
+    execute: async ({ chat_jid, message_id, before, after }) => {
+      mcpLogger.info(`[MCP Tool] Executing get_message_context for msg ${message_id} in ${chat_jid}`);
+      const context = getMessagesAround(message_id, chat_jid, before, after);
       if (!context.target) {
-        throw new Error(`Message with ID ${message_id} not found.`);
+        throw new Error(`Message with ID ${message_id} not found in chat ${chat_jid}.`);
       }
       return JSON.stringify({
         target: formatDbMessageForJson(context.target),
@@ -574,16 +609,7 @@ export async function startMcpServer(
     parameters: z.object({
       chat_jid: z.string().describe("The chat JID to mark as read"),
     }),
-    execute: async ({ chat_jid }) => {
-      mcpLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
-
-      await socketState.socket.readMessages([{ remoteJid: chat_jid, id: undefined! }]);
-
-      return `Chat ${chat_jid} marked as read.`;
-    },
+    execute: executeMarkChatRead.bind(null, mcpLogger),
   });
 
   // ── Media Download ──────────────────────────────────────────────
@@ -607,8 +633,13 @@ export async function startMcpServer(
     async load() {
       return {
         text: `
-TABLE chats (jid TEXT PK, name TEXT, last_message_time TIMESTAMP)
-TABLE messages (id TEXT, chat_jid TEXT, sender TEXT, content TEXT, timestamp TIMESTAMP, is_from_me BOOLEAN, PK(id, chat_jid), FK(chat_jid) REFERENCES chats(jid))
+TABLE chats (jid TEXT PK, name TEXT, last_message_time TEXT)
+TABLE messages (
+  id TEXT, chat_jid TEXT, sender TEXT, content TEXT, timestamp TEXT, is_from_me INTEGER,
+  media_type TEXT, mimetype TEXT, media_key TEXT, direct_path TEXT, media_url TEXT,
+  file_length INTEGER, file_sha256 TEXT, file_enc_sha256 TEXT, media_object_key TEXT,
+  PK(id, chat_jid), FK(chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
+)
 TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
         `.trim()
       };
