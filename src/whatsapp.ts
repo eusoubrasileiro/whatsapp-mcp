@@ -8,7 +8,6 @@ import {
   type ConnectionState,
   type SocketState,
   type BaileysClientConfig,
-  type ParsedMessage,
   type DownloadMediaParams,
   type MediaType,
 } from "@amiticia/baileys-client";
@@ -21,19 +20,17 @@ import {
   storeMessage,
   storeChat,
   storeContact,
-  type Message as DbMessage,
 } from "./database.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
 
 /**
- * Base directory for auth_info, data, and logs.
+ * Base directory for auth_info.
  * If WHATSAPP_MCP_DATA_DIR is set (Docker), resolves paths under it.
- * Otherwise falls back to legacy relative layout (repo-root/auth_info, repo-root/data).
+ * Otherwise falls back to repo-root/auth_info for local dev.
  */
 const BASE_DIR = process.env.WHATSAPP_MCP_DATA_DIR ?? path.join(import.meta.dirname, "..");
 const AUTH_DIR = path.join(BASE_DIR, "auth_info");
-const DATA_DIR = path.join(BASE_DIR, "data");
 
 // Connection state for MCP tool access (reassigned after startConnection returns)
 export let connectionState: ConnectionState = {
@@ -58,25 +55,6 @@ let connectionPromise: Promise<void> | null = null;
 
 // Limits parallel media downloads to prevent overwhelming the WhatsApp socket
 const downloadLimit = pLimit(2);
-
-function parsedToDbMessage(parsed: ParsedMessage): DbMessage {
-  return {
-    id: parsed.id,
-    chat_jid: parsed.chat_jid,
-    sender: parsed.sender,
-    content: parsed.content,
-    timestamp: parsed.timestamp,
-    is_from_me: parsed.is_from_me,
-    media_type: parsed.media_type,
-    mimetype: parsed.mimetype,
-    media_key: parsed.media_key,
-    direct_path: parsed.direct_path,
-    media_url: parsed.media_url,
-    file_length: parsed.file_length,
-    file_sha256: parsed.file_sha256,
-    file_enc_sha256: parsed.file_enc_sha256,
-  };
-}
 
 export async function startWhatsAppConnection(
   logger: P.Logger,
@@ -176,7 +154,7 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
         messages.forEach((msg) => {
           const parsed = parseMessage(msg);
           if (parsed) {
-            storeMessage(parsedToDbMessage(parsed));
+            storeMessage(parsed);
             storedCount++;
           }
         });
@@ -218,7 +196,7 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
               },
               `Storing message: ${parsed.content.substring(0, 50)}...`,
             );
-            storeMessage(parsedToDbMessage(parsed));
+            storeMessage(parsed);
           } else {
             logger.warn(
               { msgId: msg.key?.id, chatId: msg.key?.remoteJid },
