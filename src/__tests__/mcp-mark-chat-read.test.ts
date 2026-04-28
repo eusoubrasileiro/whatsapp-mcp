@@ -16,7 +16,7 @@ vi.mock("../whatsapp.ts", async (importOriginal) => {
   };
 });
 
-import { executeMarkChatRead } from "../mcp.ts";
+import { executeMarkChatRead } from "../actions.ts";
 import { getLatestMessage } from "../database.ts";
 import { socketState } from "../whatsapp.ts";
 import pino from "pino";

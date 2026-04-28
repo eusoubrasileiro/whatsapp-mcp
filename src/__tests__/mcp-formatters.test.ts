@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { initializeDatabase, resetDatabase, storeContact } from "../database.ts";
-import { formatDbMessageForJson, formatDbChatForJson } from "../mcp.ts";
+import { formatDbMessageForJson, formatDbChatForJson } from "../formatters.ts";
 
 describe("formatDbMessageForJson", () => {
   beforeEach(() => initializeDatabase(":memory:"));
