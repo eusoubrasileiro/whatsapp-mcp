@@ -322,9 +322,6 @@ export function getChats(
   try {
     const offset = page * limit;
 
-    // In better-sqlite3 we can use a simpler approach for last message if needed,
-    // but Drizzle's subquery/with should work.
-
     const lastMessageSq = db.$with('last_messages').as(
         db.select({
             chatJid: schema.messages.chatJid,
