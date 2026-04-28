@@ -38,7 +38,7 @@ vi.mock("fastmcp", async (importOriginal) => {
   };
 });
 
-import { executeDownloadMedia } from "../mcp.ts";
+import { executeDownloadMedia } from "../actions.ts";
 import { getMessageById, updateMessageMediaObjectKey } from "../database.ts";
 import { downloadMedia } from "../whatsapp.ts";
 import { putMedia, publicUrlFor } from "../storage.ts";

@@ -1,175 +1,33 @@
-import { FastMCP, imageContent, audioContent } from "fastmcp";
+import { FastMCP } from "fastmcp";
 import { z } from "zod";
-import { normalizeJid, type MediaType } from "@amiticia/baileys-client";
+import { normalizeJid } from "@amiticia/baileys-client";
 
 import {
   type Message as DbMessage,
-  type Chat as DbChat,
   getMessages,
   getChats,
   getChat,
   getMessagesAround,
-  getContactName,
   getContacts,
   getMessagesWithDateFilter,
   searchDbForContacts,
   searchMessages,
-  getMessageById,
-  getLatestMessage,
-  updateMessageMediaObjectKey,
 } from "./database.ts";
 
-import { sendWhatsAppMessage, sendWhatsAppMedia, downloadMedia, startWhatsAppConnection, connectionState, socketState } from "./whatsapp.ts";
-import { putMedia, publicUrlFor } from "./storage.ts";
+import { sendWhatsAppMessage, sendWhatsAppMedia, startWhatsAppConnection, connectionState } from "./whatsapp.ts";
+import { formatDbMessageForJson, formatDbChatForJson } from "./formatters.ts";
+import {
+  executeDownloadMedia,
+  executeMarkChatRead,
+  executeLogout,
+  executeGetGroupInfo,
+  executeReactToMessage,
+  executeDeleteMessage,
+  assertSocketActive,
+} from "./actions.ts";
 import { spawn } from "node:child_process";
 import QRCode from "qrcode";
 import type { Logger } from "pino";
-
-/** Throws a consistent error when the WhatsApp socket is not yet connected. */
-function assertSocketActive(): void {
-  if (!socketState.socket) {
-    throw new Error("WhatsApp connection is not active.");
-  }
-}
-
-export function formatDbMessageForJson(msg: DbMessage) {
-  const contactName = msg.sender ? getContactName(msg.sender) : null;
-  const result: Record<string, unknown> = {
-    id: msg.id,
-    chat_jid: msg.chat_jid,
-    chat_name: msg.chat_name ?? "Unknown Chat",
-    sender_jid: msg.sender ?? null,
-    sender_display: contactName
-      ?? (msg.sender ? msg.sender.split("@")[0] : null)
-      ?? (msg.is_from_me ? "Me" : "Unknown"),
-    content: msg.content,
-    timestamp: msg.timestamp.toISOString(),
-    is_from_me: msg.is_from_me,
-  };
-
-  if (msg.media_type) {
-    result.media = {
-      type: msg.media_type,
-      mimetype: msg.mimetype,
-      file_size: msg.file_length,
-      downloaded: !!msg.media_object_key,
-      object_key: msg.media_object_key ?? null,
-    };
-  }
-
-  return result;
-}
-
-export function formatDbChatForJson(chat: DbChat) {
-  const lastSenderName = chat.last_sender ? getContactName(chat.last_sender) : null;
-  return {
-    jid: chat.jid,
-    name: chat.name ?? chat.jid.split("@")[0] ?? "Unknown Chat",
-    is_group: chat.jid.endsWith("@g.us"),
-    last_message_time: chat.last_message_time?.toISOString() ?? null,
-    last_message_preview: chat.last_message ?? null,
-    last_sender_jid: chat.last_sender ?? null,
-    last_sender_display: lastSenderName
-      ?? (chat.last_sender ? chat.last_sender.split("@")[0] : null)
-      ?? (chat.last_is_from_me ? "Me" : null),
-    last_is_from_me: chat.last_is_from_me ?? null,
-  };
-}
-
-const MEDIA_INLINE_MAX_BYTES = Number(process.env.MEDIA_INLINE_MAX_BYTES ?? 5_242_880);
-
-export async function executeDownloadMedia(
-  waLogger: Logger,
-  { message_id, chat_jid }: { message_id: string; chat_jid: string },
-) {
-  waLogger.info(`[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid}`);
-
-  const message = getMessageById(message_id, chat_jid);
-  if (!message) {
-    throw new Error(`Message ${message_id} not found in chat ${chat_jid}.`);
-  }
-  if (!message.media_type || !message.media_key || !message.direct_path) {
-    throw new Error(`Message ${message_id} does not contain downloadable media or media metadata is missing.`);
-  }
-
-  const mimetype = message.mimetype ?? "application/octet-stream";
-  const fileLength = message.file_length ?? 0;
-
-  // Cache hit: object already uploaded to S3
-  if (message.media_object_key) {
-    const url = publicUrlFor(message.media_object_key);
-    const ext = message.media_object_key.split(".").pop() ?? "bin";
-    waLogger.info(`[MCP Tool] Media already in S3: ${message.media_object_key}`);
-    return {
-      content: [
-        { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype },
-        { type: "text" as const, text: JSON.stringify({ status: "cached", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2) },
-      ],
-    };
-  }
-
-  const { buffer, ext } = await downloadMedia({
-    logger: waLogger,
-    mediaKey: message.media_key,
-    directPath: message.direct_path,
-    mediaUrl: message.media_url ?? null,
-    mediaType: message.media_type as MediaType,
-    mimetype: message.mimetype ?? null,
-    chatJid: chat_jid,
-    messageId: message_id,
-    fromMe: Boolean(message.is_from_me),
-  });
-
-  const { key, url } = await putMedia({ chatJid: chat_jid, messageId: message_id, ext, mimetype, buffer });
-  updateMessageMediaObjectKey(message_id, chat_jid, key);
-
-  const metaText = JSON.stringify({ status: "uploaded", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2);
-  const resLink = { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype };
-  const textBlock = { type: "text" as const, text: metaText };
-
-  if (mimetype.startsWith("image/") && fileLength < MEDIA_INLINE_MAX_BYTES) {
-    const img = await imageContent({ buffer });
-    return { content: [img, resLink, textBlock] };
-  }
-
-  if (mimetype.startsWith("audio/") && fileLength < MEDIA_INLINE_MAX_BYTES) {
-    const aud = await audioContent({ buffer });
-    return { content: [aud, resLink, textBlock] };
-  }
-
-  return { content: [resLink, textBlock] };
-}
-
-export async function executeMarkChatRead(
-  waLogger: Logger,
-  { chat_jid }: { chat_jid: string },
-): Promise<string> {
-  waLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
-  assertSocketActive();
-
-  const latest = getLatestMessage(chat_jid);
-  if (!latest) {
-    throw new Error(`Cannot mark chat ${chat_jid} as read: no messages stored.`);
-  }
-
-  const isGroup = chat_jid.endsWith("@g.us");
-  const minimalMessage = {
-    key: {
-      remoteJid: chat_jid,
-      id: latest.id,
-      fromMe: latest.is_from_me,
-      ...(isGroup && latest.sender ? { participant: latest.sender } : {}),
-    },
-    messageTimestamp: Math.floor(latest.timestamp.getTime() / 1000),
-  };
-
-  await socketState.socket.chatModify(
-    { markRead: true, lastMessages: [minimalMessage] as any },
-    chat_jid,
-  );
-
-  return `Chat ${chat_jid} marked as read.`;
-}
 
 export async function startMcpServer(
   mcpLogger: Logger,
@@ -275,11 +133,7 @@ export async function startMcpServer(
     parameters: z.object({}),
     execute: async () => {
       mcpLogger.info("[MCP Tool] Executing logout");
-      if (socketState.socket) {
-        await socketState.socket.logout();
-        return "Logged out. Reconnecting for new QR code — call get_connection_status in a few seconds to scan.";
-      }
-      return "Not currently connected.";
+      return executeLogout();
     }
   });
 
@@ -467,26 +321,7 @@ export async function startMcpServer(
     }),
     execute: async ({ group_jid }) => {
       mcpLogger.info(`[MCP Tool] Executing get_group_info for ${group_jid}`);
-      assertSocketActive();
-      if (!group_jid.endsWith("@g.us")) {
-        throw new Error(`Invalid group JID: "${group_jid}". Must end with "@g.us".`);
-      }
-
-      const metadata = await socketState.socket.groupMetadata(group_jid);
-
-      return JSON.stringify({
-        jid: metadata.id,
-        name: metadata.subject,
-        description: metadata.desc ?? null,
-        owner: metadata.owner ?? null,
-        creation_time: metadata.creation ? new Date(metadata.creation * 1000).toISOString() : null,
-        participant_count: metadata.participants.length,
-        participants: metadata.participants.map((p) => ({
-          jid: p.id,
-          name: getContactName(p.id) ?? p.id.split("@")[0],
-          admin: p.admin ?? null,
-        })),
-      }, null, 2);
+      return executeGetGroupInfo({ group_jid });
     },
   });
 
@@ -555,22 +390,7 @@ export async function startMcpServer(
     }),
     execute: async ({ chat_jid, message_id, emoji, from_me }) => {
       mcpLogger.info(`[MCP Tool] Executing react_to_message: ${emoji} on ${message_id} in ${chat_jid}`);
-      assertSocketActive();
-
-      await socketState.socket.sendMessage(chat_jid, {
-        react: {
-          text: emoji,
-          key: {
-            remoteJid: chat_jid,
-            id: message_id,
-            fromMe: from_me,
-          },
-        },
-      });
-
-      return emoji
-        ? `Reacted with ${emoji} to message ${message_id}.`
-        : `Removed reaction from message ${message_id}.`;
+      return executeReactToMessage({ chat_jid, message_id, emoji, from_me });
     },
   });
 
@@ -584,17 +404,7 @@ export async function startMcpServer(
     }),
     execute: async ({ chat_jid, message_id, from_me }) => {
       mcpLogger.info(`[MCP Tool] Executing delete_message: ${message_id} in ${chat_jid}`);
-      assertSocketActive();
-
-      await socketState.socket.sendMessage(chat_jid, {
-        delete: {
-          remoteJid: chat_jid,
-          id: message_id,
-          fromMe: from_me,
-        },
-      });
-
-      return `Message ${message_id} deleted successfully.`;
+      return executeDeleteMessage({ chat_jid, message_id, from_me });
     },
   });
 
