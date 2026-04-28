@@ -25,6 +25,13 @@ import { spawn } from "node:child_process";
 import QRCode from "qrcode";
 import type { Logger } from "pino";
 
+/** Throws a consistent error when the WhatsApp socket is not yet connected. */
+function assertSocketActive(): void {
+  if (!socketState.socket) {
+    throw new Error("WhatsApp connection is not active.");
+  }
+}
+
 export function formatDbMessageForJson(msg: DbMessage) {
   const contactName = msg.sender ? getContactName(msg.sender) : null;
   const result: Record<string, unknown> = {
@@ -138,9 +145,7 @@ export async function executeMarkChatRead(
   { chat_jid }: { chat_jid: string },
 ): Promise<string> {
   waLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
-  if (!socketState.socket) {
-    throw new Error("WhatsApp connection is not active.");
-  }
+  assertSocketActive();
 
   const latest = getLatestMessage(chat_jid);
   if (!latest) {
@@ -462,9 +467,7 @@ export async function startMcpServer(
     }),
     execute: async ({ group_jid }) => {
       mcpLogger.info(`[MCP Tool] Executing get_group_info for ${group_jid}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
+      assertSocketActive();
       if (!group_jid.endsWith("@g.us")) {
         throw new Error(`Invalid group JID: "${group_jid}". Must end with "@g.us".`);
       }
@@ -498,9 +501,7 @@ export async function startMcpServer(
     }),
     execute: async ({ recipient, message }) => {
       mcpLogger.info(`[MCP Tool] Executing send_message to ${recipient}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
+      assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
       if (!normalizedRecipient.includes("@")) {
@@ -528,9 +529,7 @@ export async function startMcpServer(
     }),
     execute: async ({ recipient, file_path, caption, type }) => {
       mcpLogger.info(`[MCP Tool] Executing send_file to ${recipient}: ${file_path}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
+      assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
       const result = await sendWhatsAppMedia(waLogger, normalizedRecipient, file_path, caption, type);
@@ -556,9 +555,7 @@ export async function startMcpServer(
     }),
     execute: async ({ chat_jid, message_id, emoji, from_me }) => {
       mcpLogger.info(`[MCP Tool] Executing react_to_message: ${emoji} on ${message_id} in ${chat_jid}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
+      assertSocketActive();
 
       await socketState.socket.sendMessage(chat_jid, {
         react: {
@@ -587,9 +584,7 @@ export async function startMcpServer(
     }),
     execute: async ({ chat_jid, message_id, from_me }) => {
       mcpLogger.info(`[MCP Tool] Executing delete_message: ${message_id} in ${chat_jid}`);
-      if (!socketState.socket) {
-        throw new Error("WhatsApp connection is not active.");
-      }
+      assertSocketActive();
 
       await socketState.socket.sendMessage(chat_jid, {
         delete: {

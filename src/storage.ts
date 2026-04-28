@@ -7,6 +7,12 @@ export interface MediaStorageClient {
   setBucketPolicy(bucket: string, policy: string): Promise<void>;
 }
 
+/** Returns true when the env var is set to the string "true" (case-insensitive). */
+function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() === "true";
+}
+
 let _client: MediaStorageClient | null = null;
 
 export function setStorageClient(client: MediaStorageClient): void {
@@ -17,12 +23,16 @@ export function resetStorageClient(): void {
   _client = null;
 }
 
+function getBucket(): string {
+  return process.env.S3_BUCKET ?? "amiticia-media";
+}
+
 function getClient(): MediaStorageClient {
   if (_client) return _client;
   _client = new Minio.Client({
     endPoint: process.env.S3_ENDPOINT ?? "localhost",
     port: Number(process.env.S3_PORT ?? 9000),
-    useSSL: (process.env.S3_USE_SSL ?? "false").toLowerCase() === "true",
+    useSSL: parseBoolEnv(process.env.S3_USE_SSL, false),
     accessKey: process.env.S3_ACCESS_KEY ?? "minioadmin",
     secretKey: process.env.S3_SECRET_KEY ?? "minioadmin",
   });
@@ -30,7 +40,7 @@ function getClient(): MediaStorageClient {
 }
 
 export function publicUrlFor(key: string): string {
-  const bucket = process.env.S3_BUCKET ?? "amiticia-media";
+  const bucket = getBucket();
   const base = (process.env.MEDIA_PUBLIC_BASE_URL ?? `http://localhost:9000/${bucket}`).replace(/\/$/, "");
   return `${base}/${key}`;
 }
@@ -45,7 +55,7 @@ export async function putMedia(params: {
 }): Promise<{ key: string; url: string }> {
   const { chatJid, messageId, ext, mimetype, buffer } = params;
   const tenantId = params.tenantId ?? (process.env.TENANT_ID ?? "default");
-  const bucket = process.env.S3_BUCKET ?? "amiticia-media";
+  const bucket = getBucket();
   const sanitizedJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
   const key = `t/${tenantId}/${sanitizedJid}/${messageId}.${ext}`;
 
@@ -56,9 +66,9 @@ export async function putMedia(params: {
 
 export async function ensureBucketReady(): Promise<void> {
   const client = getClient();
-  const bucket = process.env.S3_BUCKET ?? "amiticia-media";
+  const bucket = getBucket();
   const region = process.env.S3_REGION ?? "us-east-1";
-  const skipPolicy = (process.env.S3_SKIP_POLICY ?? "false").toLowerCase() === "true";
+  const skipPolicy = parseBoolEnv(process.env.S3_SKIP_POLICY, false);
 
   const exists = await client.bucketExists(bucket);
   if (!exists) {

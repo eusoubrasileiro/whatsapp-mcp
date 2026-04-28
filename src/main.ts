@@ -8,21 +8,19 @@ import fs from "node:fs";
 
 const dataDir = process.env.WHATSAPP_MCP_DATA_DIR || '.';
 fs.mkdirSync(dataDir, { recursive: true });
-const waLogger = pino(
-  {
-    level: process.env.LOG_LEVEL || "info",
-    timestamp: pino.stdTimeFunctions.isoTime,
-  },
-  pino.destination(`${dataDir}/wa-logs.txt`)
-);
 
-const mcpLogger = pino(
-  {
-    level: process.env.LOG_LEVEL || "info",
-    timestamp: pino.stdTimeFunctions.isoTime,
-  },
-  pino.destination(`${dataDir}/mcp-logs.txt`)
-);
+function createAppLogger(filename: string) {
+  return pino(
+    {
+      level: process.env.LOG_LEVEL || "info",
+      timestamp: pino.stdTimeFunctions.isoTime,
+    },
+    pino.destination(`${dataDir}/${filename}`)
+  );
+}
+
+const waLogger = createAppLogger("wa-logs.txt");
+const mcpLogger = createAppLogger("mcp-logs.txt");
 
 async function main() {
   mcpLogger.info("Starting WhatsApp MCP Server...");
