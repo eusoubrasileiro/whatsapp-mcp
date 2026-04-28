@@ -3,8 +3,6 @@ import { z } from "zod";
 import { normalizeJid } from "@amiticia/baileys-client";
 
 import {
-  type Message as DbMessage,
-  getMessages,
   getChats,
   getChat,
   getMessagesAround,
@@ -187,12 +185,7 @@ export async function startMcpServer(
     execute: async ({ chat_jid, limit, page, from_date, to_date }) => {
       mcpLogger.info(`[MCP Tool] Executing list_messages for chat ${chat_jid}, limit=${limit}, page=${page}, from=${from_date}, to=${to_date}`);
 
-      let messages: DbMessage[];
-      if (from_date || to_date) {
-        messages = getMessagesWithDateFilter(chat_jid, from_date, to_date, limit, page);
-      } else {
-        messages = getMessages(chat_jid, limit, page);
-      }
+      const messages = getMessagesWithDateFilter(chat_jid, from_date, to_date, limit, page);
 
       if (!messages.length) {
         return page === 0 ? `No messages found for chat ${chat_jid}.` : `No more messages found on page ${page} for chat ${chat_jid}.`;
