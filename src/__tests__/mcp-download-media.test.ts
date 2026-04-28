@@ -12,13 +12,28 @@ vi.mock("../database.ts", async (importOriginal) => {
   };
 });
 
-vi.mock("../whatsapp.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../whatsapp.ts")>();
-  return {
-    ...actual,
-    downloadMedia: vi.fn(),
-  };
-});
+// Inline stub avoids importOriginal resolving @amiticia/baileys-client (not present in CI).
+vi.mock("../whatsapp.ts", () => ({
+  socketState: { socket: null as any },
+  connectionState: {
+    status: "disconnected",
+    qrCode: null,
+    qrAscii: null,
+    user: null,
+    syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+  },
+  getConnectionState: () => ({
+    status: "disconnected",
+    qrCode: null,
+    qrAscii: null,
+    user: null,
+    syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
+  }),
+  startWhatsAppConnection: vi.fn(),
+  sendWhatsAppMessage: vi.fn(),
+  sendWhatsAppMedia: vi.fn(),
+  downloadMedia: vi.fn(),
+}));
 
 vi.mock("../storage.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../storage.ts")>();

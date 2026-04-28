@@ -39,6 +39,7 @@ vi.mock("../database.ts", async (importOriginal) => {
 });
 
 import {
+  assertSocketActive,
   executeLogout,
   executeGetGroupInfo,
   executeReactToMessage,
@@ -49,6 +50,24 @@ import { getContactName } from "../database.ts";
 import pino from "pino";
 
 const logger = pino({ level: "silent" });
+
+// ── assertSocketActive ─────────────────────────────────────────────
+
+describe("assertSocketActive", () => {
+  afterEach(() => {
+    socketState.socket = null;
+  });
+
+  it("throws when socket is null", () => {
+    socketState.socket = null;
+    expect(() => assertSocketActive()).toThrow(/not active/i);
+  });
+
+  it("does not throw when socket is set", () => {
+    socketState.socket = {} as any;
+    expect(() => assertSocketActive()).not.toThrow();
+  });
+});
 
 // ── executeLogout ──────────────────────────────────────────────────
 
@@ -147,6 +166,33 @@ describe("executeGetGroupInfo", () => {
     const parsed = JSON.parse(result);
     const p = parsed.participants.find((p: any) => p.jid === "5522@s.whatsapp.net");
     expect(p.name).toBe("5522");
+  });
+
+  it("returns null description when metadata.desc is absent", async () => {
+    const noDesc = { ...fakeMetadata, desc: undefined };
+    groupMetadata.mockResolvedValue(noDesc);
+    const parsed = JSON.parse(await executeGetGroupInfo({ group_jid: "abc@g.us" }));
+    expect(parsed.description).toBeNull();
+  });
+
+  it("returns null owner when metadata.owner is absent", async () => {
+    const noOwner = { ...fakeMetadata, owner: undefined };
+    groupMetadata.mockResolvedValue(noOwner);
+    const parsed = JSON.parse(await executeGetGroupInfo({ group_jid: "abc@g.us" }));
+    expect(parsed.owner).toBeNull();
+  });
+
+  it("returns null creation_time when metadata.creation is absent", async () => {
+    const noCreation = { ...fakeMetadata, creation: undefined };
+    groupMetadata.mockResolvedValue(noCreation);
+    const parsed = JSON.parse(await executeGetGroupInfo({ group_jid: "abc@g.us" }));
+    expect(parsed.creation_time).toBeNull();
+  });
+
+  it("converts creation unix timestamp to ISO string", async () => {
+    // metadata.creation = 1700000000 → 2023-11-14T22:13:20.000Z
+    const parsed = JSON.parse(await executeGetGroupInfo({ group_jid: "abc@g.us" }));
+    expect(parsed.creation_time).toBe(new Date(1700000000 * 1000).toISOString());
   });
 });
 
