@@ -164,6 +164,71 @@ describe("storage", () => {
     });
   });
 
+  // ── getBucket default (S3_BUCKET unset) ───────────────────────────
+
+  describe("getBucket default", () => {
+    it("uses 'amiticia-media' as default bucket name when S3_BUCKET is unset", async () => {
+      delete process.env.S3_BUCKET;
+      // Verify via publicUrlFor — it embeds the bucket in the URL default
+      delete process.env.MEDIA_PUBLIC_BASE_URL;
+      const url = publicUrlFor("t/default/jid/msg.jpg");
+      expect(url).toBe("http://localhost:9000/amiticia-media/t/default/jid/msg.jpg");
+    });
+
+    it("uses S3_BUCKET env var over the default", async () => {
+      process.env.S3_BUCKET = "custom-bucket";
+      delete process.env.MEDIA_PUBLIC_BASE_URL;
+      const url = publicUrlFor("t/default/jid/msg.jpg");
+      expect(url).toBe("http://localhost:9000/custom-bucket/t/default/jid/msg.jpg");
+    });
+  });
+
+  // ── parseBoolEnv edge cases (exercised via ensureBucketReady / getClient) ─
+
+  describe("parseBoolEnv edge cases", () => {
+    it("treats 'TRUE' (uppercase) as true (case-insensitive)", async () => {
+      process.env.S3_SKIP_POLICY = "TRUE";
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      await ensureBucketReady();
+
+      expect(mock.setBucketPolicy).not.toHaveBeenCalled();
+    });
+
+    it("treats 'True' (mixed case) as true", async () => {
+      process.env.S3_SKIP_POLICY = "True";
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      await ensureBucketReady();
+
+      expect(mock.setBucketPolicy).not.toHaveBeenCalled();
+    });
+
+    it("treats any value other than 'true' (case variants) as false", async () => {
+      process.env.S3_SKIP_POLICY = "yes";
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      await ensureBucketReady();
+
+      // "yes" is not "true" — policy should be applied
+      expect(mock.setBucketPolicy).toHaveBeenCalledOnce();
+    });
+
+    it("uses default false when S3_SKIP_POLICY is unset", async () => {
+      delete process.env.S3_SKIP_POLICY;
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      await ensureBucketReady();
+
+      // defaultValue is false → policy applied
+      expect(mock.setBucketPolicy).toHaveBeenCalledOnce();
+    });
+  });
+
   // ── ensureBucketReady ──────────────────────────────────────────────
 
   describe("ensureBucketReady", () => {
