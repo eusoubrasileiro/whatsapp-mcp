@@ -10,7 +10,7 @@
 
 import { imageContent, audioContent } from "fastmcp";
 import type { Logger } from "pino";
-import type { MediaType } from "@amiticia/baileys-client";
+import type { MediaType, WhatsAppSocket } from "@amiticia/baileys-client";
 
 import {
   getMessageById,
@@ -23,11 +23,12 @@ import { putMedia, publicUrlFor } from "./storage.ts";
 
 export const MEDIA_INLINE_MAX_BYTES = Number(process.env.MEDIA_INLINE_MAX_BYTES ?? 5_242_880);
 
-/** Throws a consistent error when the WhatsApp socket is not yet connected. */
-export function assertSocketActive(): void {
+/** Throws if the WhatsApp socket is not connected; returns the narrowed socket. */
+export function assertSocketActive(): WhatsAppSocket {
   if (!socketState.socket) {
     throw new Error("WhatsApp connection is not active.");
   }
+  return socketState.socket;
 }
 
 export async function executeDownloadMedia(
@@ -97,7 +98,7 @@ export async function executeMarkChatRead(
   { chat_jid }: { chat_jid: string },
 ): Promise<string> {
   waLogger.info(`[MCP Tool] Executing mark_chat_read for ${chat_jid}`);
-  assertSocketActive();
+  const socket = assertSocketActive();
 
   const latest = getLatestMessage(chat_jid);
   if (!latest) {
@@ -115,7 +116,7 @@ export async function executeMarkChatRead(
     messageTimestamp: Math.floor(latest.timestamp.getTime() / 1000),
   };
 
-  await socketState.socket.chatModify(
+  await socket.chatModify(
     { markRead: true, lastMessages: [minimalMessage] as any },
     chat_jid,
   );
@@ -138,12 +139,12 @@ export async function executeLogout(): Promise<string> {
 export async function executeGetGroupInfo(
   { group_jid }: { group_jid: string },
 ): Promise<string> {
-  assertSocketActive();
+  const socket = assertSocketActive();
   if (!group_jid.endsWith("@g.us")) {
     throw new Error(`Invalid group JID: "${group_jid}". Must end with "@g.us".`);
   }
 
-  const metadata = await socketState.socket.groupMetadata(group_jid);
+  const metadata = await socket.groupMetadata(group_jid);
 
   return JSON.stringify({
     jid: metadata.id,
@@ -165,9 +166,9 @@ export async function executeGetGroupInfo(
 export async function executeReactToMessage(
   { chat_jid, message_id, emoji, from_me }: { chat_jid: string; message_id: string; emoji: string; from_me: boolean },
 ): Promise<string> {
-  assertSocketActive();
+  const socket = assertSocketActive();
 
-  await socketState.socket.sendMessage(chat_jid, {
+  await socket.sendMessage(chat_jid, {
     react: {
       text: emoji,
       key: {
@@ -186,9 +187,9 @@ export async function executeReactToMessage(
 export async function executeDeleteMessage(
   { chat_jid, message_id, from_me }: { chat_jid: string; message_id: string; from_me: boolean },
 ): Promise<string> {
-  assertSocketActive();
+  const socket = assertSocketActive();
 
-  await socketState.socket.sendMessage(chat_jid, {
+  await socket.sendMessage(chat_jid, {
     delete: {
       remoteJid: chat_jid,
       id: message_id,
