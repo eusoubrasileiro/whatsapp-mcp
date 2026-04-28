@@ -171,7 +171,7 @@ export function storeChat(chat: Partial<Chat> & { jid: string }): void {
         name: chat.name ?? null,
         lastMessageTime: chat.last_message_time instanceof Date
           ? chat.last_message_time.toISOString()
-          : chat.last_message_time === null ? null : String(chat.last_message_time),
+          : null,
       })
       .onConflictDoUpdate({
         target: schema.chats.jid,
@@ -242,12 +242,8 @@ export function storeMessage(message: Message): void {
 
 function parseDateSafe(dateString: string | null | undefined): Date | null {
   if (!dateString) return null;
-  try {
-    const date = new Date(dateString);
-    return isNaN(date.getTime()) ? null : date;
-  } catch (e) {
-    return null;
-  }
+  const date = new Date(dateString);
+  return isNaN(date.getTime()) ? null : date;
 }
 
 function rowToMessage(row: any): Message {

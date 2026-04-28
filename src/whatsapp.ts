@@ -64,7 +64,8 @@ export async function startWhatsAppConnection(
     return connectionPromise;
   }
 
-  if (connectionState.status === "connected" || connectionState.status === "syncing" || connectionState.status === "connecting" || connectionState.status === "qr_pending" || socketState.socket !== null) {
+  const ACTIVE_STATUSES = new Set(["connected", "syncing", "connecting", "qr_pending"]);
+  if (ACTIVE_STATUSES.has(connectionState.status) || socketState.socket !== null) {
     logger.info(`Skipping startWhatsAppConnection: already ${connectionState.status}`);
     return;
   }
