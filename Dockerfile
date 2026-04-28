@@ -6,12 +6,12 @@
 # `link:../baileys-client` in package.json resolves to /app/baileys-client
 # inside the image after the COPY steps below.
 #
-# We use node:22-slim (Debian) instead of alpine because better-sqlite3 ships
+# We use node:24-slim (Debian) instead of alpine because better-sqlite3 ships
 # prebuilt binaries for glibc but not musl — alpine would force a full native
 # compile (+3-5min + python3/make/g++ in the build-deps stage).
 
 # ── Stage 1: build @amiticia/baileys-client (needs dev deps for tsup) ──
-FROM node:22-slim AS baileys-builder
+FROM node:24-slim AS baileys-builder
 WORKDIR /app/baileys-client
 RUN corepack enable
 COPY --from=baileys package.json pnpm-lock.yaml ./
@@ -20,7 +20,7 @@ COPY --from=baileys . ./
 RUN pnpm build
 
 # ── Stage 2: install whatsapp-mcp prod deps (better-sqlite3 uses prebuilt binary) ──
-FROM node:22-slim AS whatsapp-deps
+FROM node:24-slim AS whatsapp-deps
 WORKDIR /app
 RUN corepack enable
 COPY --from=baileys-builder /app/baileys-client /app/baileys-client
@@ -29,7 +29,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
 # ── Stage 3: runtime ──
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini wget ca-certificates sqlite3 \
     && rm -rf /var/lib/apt/lists/*
