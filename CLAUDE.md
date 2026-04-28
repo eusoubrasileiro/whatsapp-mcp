@@ -124,16 +124,34 @@ If a change has no observable behavior and genuinely cannot be tested (pure form
 | `pnpm typecheck` | Type check with tsc |
 | `pnpm test` | Run tests with vitest |
 
+### Known pre-existing test / typecheck failures
+
+`@amiticia/baileys-client` is a **private package** that lives in the sibling `baileys-client/` repo and is **not installed in CI or fresh checkouts** where that sibling is absent. This causes:
+
+- `pnpm test` — 2 test suites fail (`message-parsing.test.ts`, `whatsapp-concurrency.test.ts`); 4 tests are skipped.
+- `pnpm typecheck` — several `error TS2307: Cannot find module '@amiticia/baileys-client'` errors, plus downstream implicit-`any` errors in `whatsapp.ts`.
+
+These failures are **not regressions** — they exist on `main` and every branch. Fix by running `pnpm install` inside the monorepo root that includes the sibling `baileys-client/` package (or by symlinking `../baileys-client` so workspace resolution finds it).
+
 ## Architecture
 
 ```
 src/
-├── main.ts        # Entry point, logging setup, graceful shutdown
-├── mcp.ts         # MCP server, tool definitions (17 tools)
-├── whatsapp.ts    # Adapter layer over @amiticia/baileys-client + media download
-├── database.ts    # Drizzle ORM + better-sqlite3 (chats, messages, contacts)
+├── main.ts                # Entry point, createAppLogger(), graceful shutdown, startup order
+├── mcp.ts                 # MCP server, tool registration (17 tools); delegates to actions.ts
+├── actions.ts             # Application-layer use cases (executeLogout, executeGetGroupInfo,
+│                          #   executeReactToMessage, executeDeleteMessage, executeDownloadMedia,
+│                          #   executeMarkChatRead, assertSocketActive). Testable without FastMCP.
+├── whatsapp.ts            # Adapter over @amiticia/baileys-client: events → DB, media download
+├── database.ts            # Drizzle ORM + better-sqlite3 (chats, messages, contacts)
+├── storage.ts             # S3/MinIO media plane: parseBoolEnv, getBucket, putMedia,
+│                          #   ensureBucketReady, publicUrlFor
+├── formatters.ts          # DB-row → plain-JSON converters for MCP tool responses
+├── connection-notifier.ts # Fires ntfy pushes on QR / connect / disconnect events
+├── ntfy.ts                # Low-level ntfy.sh HTTP sender
+├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
 └── db/
-    └── schema.ts  # Drizzle table schemas
+    └── schema.ts          # Drizzle table schemas
 ```
 
 **Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
