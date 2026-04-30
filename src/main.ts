@@ -1,6 +1,6 @@
 import pino from "pino";
 import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
-import { startWhatsAppConnection, getConnectionState } from "./whatsapp.ts";
+import { startWhatsAppConnection, getConnectionState, triggerResync } from "./whatsapp.ts";
 import { startMcpServer } from "./mcp.ts";
 import { ensureBucketReady } from "./storage.ts";
 import { createQrServer } from "./qr-server.ts";
@@ -55,7 +55,7 @@ async function main() {
   // Start QR web server (non-blocking) — port 39002 by default.
   const qrServerPort = Number(process.env.QR_SERVER_PORT ?? 39002);
   const qrServerHost = process.env.QR_SERVER_HOST ?? "127.0.0.1";
-  const qrServer = createQrServer(waLogger, getConnectionState);
+  const qrServer = createQrServer(waLogger, getConnectionState, () => triggerResync(waLogger));
   qrServer.listen(qrServerPort, qrServerHost, () => {
     mcpLogger.info({ host: qrServerHost, port: qrServerPort }, "QR web server listening");
   });
