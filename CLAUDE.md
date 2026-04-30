@@ -96,23 +96,41 @@ Not needed for the HTTP path — the container pins its own Node.
 
 ## Development Practices
 
-### Extreme TDD — non-negotiable
+### Test-Driven Development (TDD) — MANDATORY
 
-Every change ships only after a failing test was written first. **No exceptions.** Follow the strict Red → Green → Refactor cycle:
+Red-Green-Refactor is mandatory. Write a failing test FIRST, then implement, then refactor.
 
-1. **Red** — Write a failing test that describes the expected behavior.
-2. **Green** — Write the minimal code that makes the test pass.
-3. **Refactor** — Clean up while tests stay green.
+| Change type | Required test (written FIRST) |
+|---|---|
+| New MCP tool or endpoint | Unit test + integration test before implementation |
+| New pure helper/util | Unit test before implementation |
+| Bug fix | Regression test that reproduces the bug before fix |
+| Refactoring | Verify existing tests pass first (green → refactor) |
+| Dependency update | Contract test pinning consumed API surface before bump |
+| Config change with observable behavior | Test covering the behavior before change |
 
-This rule applies to **all** of the following — not just new features:
+### Test layer taxonomy
 
-- New features and tool additions
-- Bug fixes and regressions (reproduce the bug as a failing test first)
-- Refactors (the existing tests become the safety net; if coverage is thin, add tests *before* refactoring)
-- Configuration changes with observable behavior (tsconfig flags, vitest options, MCP registration, pino transports)
-- **Dependency updates — both minor and major.** Before bumping any package version, a contract test must pin the consumed API surface (e.g. zod schema parsing, fastmcp tool registration, pino log-line shape, p-retry option shape). The test must pass on the current version and catch breakage on the new one.
+| Layer | Location | When to use |
+|---|---|---|
+| Unit | `src/__tests__/*.test.ts` | Pure helpers, formatters, validators, action functions |
+| Integration | `src/__tests__/*.test.ts` | HTTP endpoints (qr-server), MCP tool registration, database operations |
+| Contract | `src/__tests__/*.test.ts` | Dependency API surface (p-retry options, fastmcp registration, pino shape) |
 
-If a change has no observable behavior and genuinely cannot be tested (pure formatting or comment edits), document the reason in the commit message. This escape hatch is for cosmetics only — never for code, config, or dependency changes.
+### Test conventions
+
+- Test names: behavior-driven — `it("returns fallback when socket is null")`, NOT `it("tests fallback")`
+- **Never mock the module under test.**
+- Priority: happy path → edge cases → guard clauses → error paths
+
+### Pre-commit checklist (MANDATORY)
+
+```bash
+pnpm test          # Must pass
+pnpm typecheck     # Must pass
+```
+
+**DO NOT COMMIT if any gate fails.** Fix the root cause, never skip hooks.
 
 ---
 

@@ -9,7 +9,9 @@ function renderHtml(state: ConnectionState): string {
   let body: string;
   if (status === "connected") {
     body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>
-      <form method="post" action="/resync"><button type="submit">Resync history</button></form>`;
+      <form method="post" action="/repair" onsubmit="return confirm('This will unlink WhatsApp and require a new QR scan. Continue?')">
+        <button type="submit">Re-pair device</button>
+      </form>`;
   } else if (status === "qr_pending" && qrCode) {
     body = `<h1>Scan QR with WhatsApp</h1>
       <img src="/qr.png" width="320" height="320" alt="WhatsApp QR" />
@@ -57,7 +59,7 @@ function escapeHtml(s: string): string {
 export function createQrServer(
   logger: Logger,
   getState: () => ConnectionState,
-  onResync?: () => Promise<void>,
+  onRepair?: () => Promise<void>,
 ): Server {
   return http.createServer(async (req, res) => {
     const url = req.url ?? "/";
@@ -65,13 +67,13 @@ export function createQrServer(
     const state = getState();
 
     try {
-      if (method === "POST" && url === "/resync") {
-        if (!onResync) {
+      if (method === "POST" && url === "/repair") {
+        if (!onRepair) {
           res.writeHead(204);
           res.end();
           return;
         }
-        await onResync();
+        await onRepair();
         res.writeHead(302, { location: "/" });
         res.end();
         return;

@@ -88,31 +88,32 @@ describe("createQrServer", () => {
     expect(res.status).toBe(404);
   });
 
-  it("POST /resync calls onResync and redirects to /", async () => {
-    let resynced = false;
+  it("POST /repair calls onRepair and redirects to /", async () => {
+    let repaired = false;
     await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     server = createQrServer(makeSilentLogger(), () => state, async () => {
-      resynced = true;
+      repaired = true;
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-    const res = await fetch(`${baseUrl}/resync`, { method: "POST", redirect: "manual" });
+    const res = await fetch(`${baseUrl}/repair`, { method: "POST", redirect: "manual" });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/");
-    expect(resynced).toBe(true);
+    expect(repaired).toBe(true);
   });
 
-  it("POST /resync without onResync callback returns 204", async () => {
-    const res = await fetch(`${baseUrl}/resync`, { method: "POST", redirect: "manual" });
+  it("POST /repair without onRepair callback returns 204", async () => {
+    const res = await fetch(`${baseUrl}/repair`, { method: "POST", redirect: "manual" });
     expect(res.status).toBe(204);
   });
 
-  it("GET / shows Resync button when connected", async () => {
+  it("GET / shows Re-pair button when connected", async () => {
     state.status = "connected";
     state.user = "5531999999999@s.whatsapp.net";
     const res = await fetch(`${baseUrl}/`);
     const body = await res.text();
-    expect(body).toContain('action="/resync"');
+    expect(body).toContain('action="/repair"');
+    expect(body).toContain("Re-pair device");
   });
 });
