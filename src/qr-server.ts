@@ -8,7 +8,8 @@ function renderHtml(state: ConnectionState): string {
 
   let body: string;
   if (status === "connected") {
-    body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>`;
+    body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>
+      <form method="post" action="/resync"><button type="submit">Resync history</button></form>`;
   } else if (status === "qr_pending" && qrCode) {
     body = `<h1>Scan QR with WhatsApp</h1>
       <img src="/qr.png" width="320" height="320" alt="WhatsApp QR" />
@@ -56,12 +57,26 @@ function escapeHtml(s: string): string {
 export function createQrServer(
   logger: Logger,
   getState: () => ConnectionState,
+  onResync?: () => Promise<void>,
 ): Server {
   return http.createServer(async (req, res) => {
     const url = req.url ?? "/";
+    const method = req.method ?? "GET";
     const state = getState();
 
     try {
+      if (method === "POST" && url === "/resync") {
+        if (!onResync) {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+        await onResync();
+        res.writeHead(302, { location: "/" });
+        res.end();
+        return;
+      }
+
       if (url === "/health") {
         const body = JSON.stringify({
           status: state.status,

@@ -50,6 +50,21 @@ export function getConnectionState(): ConnectionState {
   return connectionState;
 }
 
+/**
+ * Force a history resync by closing the active socket. The connection-handler
+ * reconnects automatically (since the disconnect reason is not `loggedOut`),
+ * and Baileys emits fresh `messaging-history.set` events on the new socket.
+ */
+export async function triggerResync(logger: P.Logger): Promise<void> {
+  const sock = socketState.socket;
+  if (!sock) {
+    logger.warn("triggerResync: no active socket — nothing to do");
+    return;
+  }
+  logger.info("triggerResync: closing socket to force history resync");
+  sock.end(new Error("manual resync requested"));
+}
+
 // Prevents concurrent startWhatsAppConnection() calls from racing
 let connectionPromise: Promise<void> | null = null;
 
