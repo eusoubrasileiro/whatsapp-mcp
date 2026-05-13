@@ -53,5 +53,6 @@
       "better-sqlite3",
       "esbuild"
     ]
-  }
+  },
+  "packageManager": "pnpm@10.33.2"
 }
