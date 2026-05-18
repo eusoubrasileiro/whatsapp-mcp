@@ -10,6 +10,7 @@ import {
   type BaileysClientConfig,
   type DownloadMediaParams,
   type MediaType,
+  type ParsedMessage,
 } from "@amiticia/baileys-client";
 import pLimit from "p-limit";
 import type P from "pino";
@@ -20,6 +21,8 @@ import {
   storeMessage,
   storeChat,
   storeContact,
+  recordJidMapping,
+  recordJidPair,
 } from "./database.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
@@ -64,6 +67,16 @@ export async function triggerRepair(logger: P.Logger): Promise<void> {
   }
   logger.info("triggerRepair: logging out to force re-pair with fresh history sync");
   await sock.logout();
+}
+
+/**
+ * Feed a parsed message's LID/phone-number twin identifiers into the alias
+ * table so the chat resolves to a single canonical identity. Runs before
+ * `storeMessage`, which then writes under the canonical JID.
+ */
+function reconcileMessageJids(parsed: ParsedMessage): void {
+  recordJidPair(parsed.chat_jid, parsed.chat_jid_alt);
+  recordJidPair(parsed.sender, parsed.sender_alt);
 }
 
 // Prevents concurrent startWhatsAppConnection() calls from racing
@@ -171,6 +184,7 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
         messages.forEach((msg) => {
           const parsed = parseMessage(msg);
           if (parsed) {
+            reconcileMessageJids(parsed);
             storeMessage(parsed);
             storedCount++;
           }
@@ -204,6 +218,7 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
         for (const msg of messages) {
           const parsed = parseMessage(msg);
           if (parsed) {
+            reconcileMessageJids(parsed);
             logger.info(
               {
                 msgId: parsed.id,
@@ -221,6 +236,11 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
             );
           }
         }
+      },
+
+      onLidMapping: async ({ lid, pn }) => {
+        logger.info({ lid, pn }, "Recording LID↔phone-number mapping");
+        recordJidMapping(pn, lid);
       },
 
       onChatsUpdate: async (chats) => {

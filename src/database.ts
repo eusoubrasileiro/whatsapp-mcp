@@ -4,7 +4,8 @@ import path from "node:path";
 import fs from "node:fs";
 import type { Logger } from "pino";
 import * as schema from './db/schema.ts';
-import { eq, and, or, like, gte, lt, desc, asc, sql, type SQL } from 'drizzle-orm';
+import { eq, and, or, like, gte, lt, desc, asc, inArray, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import { isGroupJid, isLidJid } from "@amiticia/baileys-client";
 
 /**
  * Resolves the SQLite DB path with the same precedence as src/whatsapp.ts:34
@@ -133,6 +134,24 @@ export function initializeDatabase(dbPath?: string): Database.Database {
       );
     `);
 
+  sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS jid_aliases (
+        jid TEXT PRIMARY KEY,
+        canonical_jid TEXT NOT NULL,
+        pn_jid TEXT,
+        lid_jid TEXT,
+        updated_at TEXT
+      );
+    `);
+
+  sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_jid_aliases_canonical ON jid_aliases (canonical_jid);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages (chat_jid);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender);`);
@@ -162,12 +181,118 @@ export function initializeDatabase(dbPath?: string): Database.Database {
   return sqlite;
 }
 
+// --- LID/phone-number canonicalization (BUG-lid-contact-fragmentation.md) ---
+
+/**
+ * Resolve any JID to its canonical form. Returns the alias-table
+ * `canonical_jid` if a mapping exists, otherwise the JID unchanged. Groups
+ * (`@g.us`) always pass through — LID does not apply to group chat JIDs.
+ */
+export function resolveCanonicalJid(jid: string): string {
+  if (!jid || isGroupJid(jid)) return jid;
+  try {
+    const row = getDb()
+      .select({ canonical: schema.jidAliases.canonicalJid })
+      .from(schema.jidAliases)
+      .where(eq(schema.jidAliases.jid, jid))
+      .get();
+    return row?.canonical ?? jid;
+  } catch (error) {
+    logError("Error resolving canonical jid", error);
+    return jid;
+  }
+}
+
+/**
+ * All JIDs that share `jid`'s canonical identity (the canonical JID plus every
+ * known alias). Used to union a stale JID's chat with its twin on reads.
+ */
+export function getAliasGroup(jid: string): string[] {
+  const canonical = resolveCanonicalJid(jid);
+  const group = new Set<string>([jid, canonical]);
+  try {
+    const rows = getDb()
+      .select({ jid: schema.jidAliases.jid })
+      .from(schema.jidAliases)
+      .where(eq(schema.jidAliases.canonicalJid, canonical))
+      .all();
+    for (const r of rows) group.add(r.jid);
+  } catch (error) {
+    logError("Error getting alias group", error);
+  }
+  return [...group];
+}
+
+/**
+ * Record a phone-number ↔ LID identity pair. Canonical direction is LID
+ * (Baileys v7 guidance: PNs are less reliable). Writes both the PN row and the
+ * LID row pointing at the LID, so a lookup by either resolves to canonical.
+ */
+export function recordJidMapping(pnJid: string, lidJid: string): void {
+  if (!pnJid || !lidJid || pnJid === lidJid) return;
+  const now = new Date().toISOString();
+  try {
+    const db = getDb();
+    for (const jid of [pnJid, lidJid]) {
+      db.insert(schema.jidAliases)
+        .values({ jid, canonicalJid: lidJid, pnJid, lidJid, updatedAt: now })
+        .onConflictDoUpdate({
+          target: schema.jidAliases.jid,
+          set: { canonicalJid: lidJid, pnJid, lidJid, updatedAt: now },
+        })
+        .run();
+    }
+    // Ensure the canonical (LID) chat/contact rows exist and carry the
+    // metadata, copying from the PN row when present. Read-side dedup hides
+    // the stale PN row, so without this a name recorded only against the PN —
+    // or a chat with no post-migration message yet — would vanish from
+    // list_chats / search_contacts. Non-destructive: copies metadata only,
+    // never rewrites messages. The physical row merge is Phase 2.
+    db.run(
+      sql`INSERT INTO chats (jid, name, last_message_time)
+            SELECT ${lidJid}, name, last_message_time FROM chats WHERE jid = ${pnJid}
+          ON CONFLICT(jid) DO UPDATE SET
+            name = COALESCE(chats.name, excluded.name),
+            last_message_time = COALESCE(chats.last_message_time, excluded.last_message_time)`,
+    );
+    db.run(
+      sql`INSERT INTO contacts (jid, name, notify, phone_number)
+            SELECT ${lidJid}, name, notify, phone_number FROM contacts WHERE jid = ${pnJid}
+          ON CONFLICT(jid) DO UPDATE SET
+            name = COALESCE(contacts.name, excluded.name),
+            notify = COALESCE(contacts.notify, excluded.notify),
+            phone_number = COALESCE(contacts.phone_number, excluded.phone_number)`,
+    );
+  } catch (error) {
+    logError("Error recording jid mapping", error);
+  }
+}
+
+/**
+ * Record a mapping from a JID and its twin (e.g. `chat_jid` + `chat_jid_alt`).
+ * No-op unless exactly one side is a LID and the other a phone-number JID.
+ */
+export function recordJidPair(a?: string | null, b?: string | null): void {
+  if (!a || !b || a === b) return;
+  if (isGroupJid(a) || isGroupJid(b)) return;
+  const aLid = isLidJid(a);
+  const bLid = isLidJid(b);
+  if (aLid === bLid) return;
+  recordJidMapping(aLid ? b : a, aLid ? a : b);
+}
+
+/** SQL predicate excluding chat/contact rows that are stale (non-canonical) aliases. */
+function notStaleAlias(jidColumn: SQLWrapper): SQL {
+  return sql`${jidColumn} NOT IN (SELECT jid FROM jid_aliases WHERE jid != canonical_jid)`;
+}
+
 export function storeChat(chat: Partial<Chat> & { jid: string }): void {
   const db = getDb();
   try {
+    const jid = resolveCanonicalJid(chat.jid);
     db.insert(schema.chats)
       .values({
-        jid: chat.jid,
+        jid,
         name: chat.name ?? null,
         lastMessageTime: chat.last_message_time instanceof Date
           ? chat.last_message_time.toISOString()
@@ -189,13 +314,15 @@ export function storeChat(chat: Partial<Chat> & { jid: string }): void {
 export function storeMessage(message: Message): void {
   const db = getDb();
   try {
-    storeChat({ jid: message.chat_jid, last_message_time: message.timestamp });
+    const chatJid = resolveCanonicalJid(message.chat_jid);
+    const sender = message.sender ? resolveCanonicalJid(message.sender) : null;
+    storeChat({ jid: chatJid, last_message_time: message.timestamp });
 
     db.insert(schema.messages)
       .values({
         id: message.id,
-        chatJid: message.chat_jid,
-        sender: message.sender ?? null,
+        chatJid,
+        sender,
         content: message.content,
         timestamp: message.timestamp.toISOString(),
         isFromMe: message.is_from_me,
@@ -211,7 +338,7 @@ export function storeMessage(message: Message): void {
       .onConflictDoUpdate({
         target: [schema.messages.id, schema.messages.chatJid],
         set: {
-            sender: message.sender ?? null,
+            sender,
             content: message.content,
             timestamp: message.timestamp.toISOString(),
             isFromMe: message.is_from_me,
@@ -232,7 +359,7 @@ export function storeMessage(message: Message): void {
       .set({
         lastMessageTime: sql`MAX(COALESCE(last_message_time, '1970-01-01T00:00:00.000Z'), ${message.timestamp.toISOString()})`
       })
-      .where(eq(schema.chats.jid, message.chat_jid))
+      .where(eq(schema.chats.jid, chatJid))
       .run();
 
   } catch (error) {
@@ -298,7 +425,7 @@ export function getMessages(
     const rows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(eq(schema.messages.chatJid, chatJid))
+    .where(inArray(schema.messages.chatJid, getAliasGroup(chatJid)))
     .orderBy(desc(schema.messages.timestamp))
     .limit(limit)
     .offset(offset)
@@ -347,12 +474,18 @@ export function getChats(
         baseQuery = baseQuery.leftJoin(lastMessageSq, and(eq(schema.chats.jid, lastMessageSq.chatJid), eq(lastMessageSq.row_num, 1)));
     }
 
+    // Always exclude stale (non-canonical) alias rows so a LID/PN-merged
+    // contact shows once, not twice.
+    const chatFilters: SQL[] = [notStaleAlias(schema.chats.jid)];
     if (query) {
-        baseQuery = baseQuery.where(or(
-            like(sql`LOWER(${schema.chats.name})`, `%${query.toLowerCase()}%`),
-            like(schema.chats.jid, `%${query}%`)
-        ));
+        chatFilters.push(
+            or(
+                like(sql`LOWER(${schema.chats.name})`, `%${query.toLowerCase()}%`),
+                like(schema.chats.jid, `%${query}%`),
+            ) as SQL,
+        );
     }
+    baseQuery = baseQuery.where(and(...chatFilters));
 
     const orderBy = sortBy === "last_active"
         ? [desc(schema.chats.lastMessageTime), asc(schema.chats.jid)]
@@ -384,6 +517,11 @@ export function getChat(
 ): Chat | null {
   const db = getDb();
   try {
+    // Resolve to the canonical identity and union messages across all twin
+    // JIDs, so querying a stale @s.whatsapp.net JID still returns the chat.
+    const canonicalJid = resolveCanonicalJid(jid);
+    const group = getAliasGroup(jid);
+
     const lastMessageSq = db.$with('last_message').as(
         db.select({
             chatJid: schema.messages.chatJid,
@@ -392,7 +530,7 @@ export function getChat(
             isFromMe: schema.messages.isFromMe,
         })
         .from(schema.messages)
-        .where(eq(schema.messages.chatJid, jid))
+        .where(inArray(schema.messages.chatJid, group))
         .orderBy(desc(schema.messages.timestamp))
         .limit(1)
     );
@@ -406,10 +544,12 @@ export function getChat(
         last_is_from_me: includeLastMessage ? lastMessageSq.isFromMe : sql`NULL`,
     })
     .from(schema.chats)
-    .where(eq(schema.chats.jid, jid));
+    .where(eq(schema.chats.jid, canonicalJid));
 
     if (includeLastMessage) {
-        baseQuery = baseQuery.leftJoin(lastMessageSq, eq(schema.chats.jid, lastMessageSq.chatJid));
+        // The subquery yields at most one row — join unconditionally so a
+        // latest message stored under a twin JID is still picked up.
+        baseQuery = baseQuery.leftJoin(lastMessageSq, sql`1 = 1`);
     }
 
     const row: any = baseQuery.get();
@@ -444,10 +584,11 @@ export function getMessagesAround(
   } = { before: [], target: null, after: [] };
 
   try {
+    const group = getAliasGroup(chatJid);
     const targetRow = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+    .where(and(eq(schema.messages.id, messageId), inArray(schema.messages.chatJid, group)))
     .get();
 
     if (!targetRow) {
@@ -460,7 +601,7 @@ export function getMessagesAround(
     const beforeRows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(and(eq(schema.messages.chatJid, chatJid), lt(schema.messages.timestamp, targetTimestamp)))
+    .where(and(inArray(schema.messages.chatJid, group), lt(schema.messages.timestamp, targetTimestamp)))
     .orderBy(desc(schema.messages.timestamp))
     .limit(before)
     .all();
@@ -470,7 +611,7 @@ export function getMessagesAround(
     const afterRows = db.select(messageColumns)
     .from(schema.messages)
     .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-    .where(and(eq(schema.messages.chatJid, chatJid), sql`${schema.messages.timestamp} > ${targetTimestamp}`))
+    .where(and(inArray(schema.messages.chatJid, group), sql`${schema.messages.timestamp} > ${targetTimestamp}`))
     .orderBy(asc(schema.messages.timestamp))
     .limit(after)
     .all();
@@ -497,7 +638,10 @@ export function searchDbForContacts(
         display_name: sql`COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid})`
     })
     .from(schema.contacts)
-    .where(like(sql`LOWER(COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid}))`, pattern.toLowerCase()))
+    .where(and(
+      like(sql`LOWER(COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid}))`, pattern.toLowerCase()),
+      notStaleAlias(schema.contacts.jid),
+    ))
     .limit(limit)
     .all();
 
@@ -528,7 +672,7 @@ export function searchMessages(
     ];
 
     if (chatJid) {
-      filters.push(eq(schema.messages.chatJid, chatJid));
+      filters.push(inArray(schema.messages.chatJid, getAliasGroup(chatJid)));
     }
     if (fromDate) {
       filters.push(gte(schema.messages.timestamp, fromDate));
@@ -559,7 +703,7 @@ export function getMessageById(messageId: string, chatJid: string): Message | nu
     const row = db.select(messageColumns)
       .from(schema.messages)
       .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+      .where(and(eq(schema.messages.id, messageId), inArray(schema.messages.chatJid, getAliasGroup(chatJid))))
       .get();
 
     return row ? rowToMessage(row) : null;
@@ -575,7 +719,7 @@ export function getLatestMessage(chatJid: string): Message | null {
     const row = db.select(messageColumns)
       .from(schema.messages)
       .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
-      .where(eq(schema.messages.chatJid, chatJid))
+      .where(inArray(schema.messages.chatJid, getAliasGroup(chatJid)))
       .orderBy(desc(schema.messages.timestamp))
       .limit(1)
       .get();
@@ -591,7 +735,7 @@ export function updateMessageMediaObjectKey(messageId: string, chatJid: string, 
   try {
     db.update(schema.messages)
       .set({ mediaObjectKey: objectKey })
-      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.chatJid, chatJid)))
+      .where(and(eq(schema.messages.id, messageId), inArray(schema.messages.chatJid, getAliasGroup(chatJid))))
       .run();
   } catch (error) {
     logError("Error updating media object key", error);
@@ -621,7 +765,7 @@ export function storeContact(contact: {
   try {
     db.insert(schema.contacts)
       .values({
-        jid: contact.jid,
+        jid: resolveCanonicalJid(contact.jid),
         name: contact.name ?? null,
         notify: contact.notify ?? null,
         phoneNumber: contact.phoneNumber ?? null,
@@ -647,7 +791,7 @@ export function getContactName(jid: string): string | null {
       display_name: sql`COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber})`,
     })
     .from(schema.contacts)
-    .where(eq(schema.contacts.jid, jid))
+    .where(eq(schema.contacts.jid, resolveCanonicalJid(jid)))
     .get();
     return row?.display_name ?? null;
   } catch (error) {
@@ -666,14 +810,16 @@ export function getContacts(query?: string, limit: number = 50): { jid: string; 
     .from(schema.contacts)
     .$dynamic();
 
+    const filters: SQL[] = [notStaleAlias(schema.contacts.jid)];
     if (query) {
-      q = q.where(
+      filters.push(
         like(
           sql`LOWER(COALESCE(${schema.contacts.name}, ${schema.contacts.notify}, ${schema.contacts.phoneNumber}, ${schema.contacts.jid}))`,
-          `%${query.toLowerCase()}%`
-        )
+          `%${query.toLowerCase()}%`,
+        ),
       );
     }
+    q = q.where(and(...filters));
 
     return q.orderBy(sql`name`).limit(limit).all() as { jid: string; name: string }[];
   } catch (error) {
@@ -695,7 +841,7 @@ export function getMessagesWithDateFilter(
     const filters: SQL[] = [];
 
     if (chatJid) {
-      filters.push(eq(schema.messages.chatJid, chatJid));
+      filters.push(inArray(schema.messages.chatJid, getAliasGroup(chatJid)));
     }
     if (fromDate) {
       filters.push(gte(schema.messages.timestamp, fromDate));
