@@ -5,6 +5,8 @@ import {
   sendMediaMessage,
   downloadMedia as baileysDownloadMedia,
   mimetypeToExtension,
+  makeLidResolver,
+  normalizeJid,
   type ConnectionState,
   type SocketState,
   type BaileysClientConfig,
@@ -23,6 +25,9 @@ import {
   storeContact,
   recordJidMapping,
   recordJidPair,
+  getMetaValue,
+  setMetaValue,
+  listPnChatJids,
 } from "./database.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
@@ -77,6 +82,41 @@ export async function triggerRepair(logger: P.Logger): Promise<void> {
 function reconcileMessageJids(parsed: ParsedMessage): void {
   recordJidPair(parsed.chat_jid, parsed.chat_jid_alt);
   recordJidPair(parsed.sender, parsed.sender_alt);
+}
+
+const LID_BACKLOG_MERGED_KEY = "lid_backlog_merged";
+
+/**
+ * One-time pass that merges chats fragmented *before* LID-awareness shipped.
+ * For every chat still stored under a phone-number JID, ask WhatsApp's LID
+ * store for the contact's LID (the protocol-reliable PN→LID direction) and,
+ * when found, record the mapping — which physically merges the pair into the
+ * canonical identity. Gated by a `schema_meta` sentinel so it runs once.
+ */
+async function reconcileLidBacklog(logger: P.Logger): Promise<void> {
+  if (getMetaValue(LID_BACKLOG_MERGED_KEY) === "1") return;
+  const sock = socketState.socket;
+  if (!sock) return;
+
+  const resolver = makeLidResolver(sock);
+  const pnJids = listPnChatJids();
+  logger.info(`LID backlog: resolving ${pnJids.length} phone-number chats…`);
+
+  let merged = 0;
+  for (const pnJid of pnJids) {
+    try {
+      const lid = await resolver.getLIDForPN(pnJid);
+      if (lid) {
+        recordJidMapping(pnJid, normalizeJid(lid));
+        merged++;
+      }
+    } catch (err) {
+      logger.warn({ err, pnJid }, "LID backlog: failed to resolve a chat");
+    }
+  }
+
+  setMetaValue(LID_BACKLOG_MERGED_KEY, "1");
+  logger.info(`LID backlog: merged ${merged} fragmented chat(s) into their LID twin.`);
 }
 
 // Prevents concurrent startWhatsAppConnection() calls from racing
@@ -241,6 +281,12 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
       onLidMapping: async ({ lid, pn }) => {
         logger.info({ lid, pn }, "Recording LID↔phone-number mapping");
         recordJidMapping(pn, lid);
+      },
+
+      onReady: async () => {
+        // History sync is complete and the LID store is populated — safe to
+        // run the one-time backlog merge.
+        await reconcileLidBacklog(logger);
       },
 
       onChatsUpdate: async (chats) => {
