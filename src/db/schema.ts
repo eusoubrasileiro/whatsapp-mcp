@@ -35,3 +35,24 @@ export const contacts = sqliteTable("contacts", {
   notify: text("notify"),
   phoneNumber: text("phone_number"),
 });
+
+/**
+ * Maps every WhatsApp JID (phone-number or LID) to a single canonical JID, so
+ * a contact who migrated PN→LID resolves to one identity. Canonical direction
+ * is LID-preferred (see BUG-lid-contact-fragmentation.md). Both the PN row and
+ * the LID row of a pair point at the same `canonicalJid`, so one lookup
+ * resolves either direction.
+ */
+export const jidAliases = sqliteTable("jid_aliases", {
+  jid: text("jid").primaryKey(),
+  canonicalJid: text("canonical_jid").notNull(),
+  pnJid: text("pn_jid"),
+  lidJid: text("lid_jid"),
+  updatedAt: text("updated_at"),
+});
+
+/** Key/value table for schema versioning and one-time migration sentinels. */
+export const schemaMeta = sqliteTable("schema_meta", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+});
