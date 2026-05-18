@@ -242,29 +242,122 @@ export function recordJidMapping(pnJid: string, lidJid: string): void {
         })
         .run();
     }
-    // Ensure the canonical (LID) chat/contact rows exist and carry the
-    // metadata, copying from the PN row when present. Read-side dedup hides
-    // the stale PN row, so without this a name recorded only against the PN —
-    // or a chat with no post-migration message yet — would vanish from
-    // list_chats / search_contacts. Non-destructive: copies metadata only,
-    // never rewrites messages. The physical row merge is Phase 2.
-    db.run(
-      sql`INSERT INTO chats (jid, name, last_message_time)
-            SELECT ${lidJid}, name, last_message_time FROM chats WHERE jid = ${pnJid}
-          ON CONFLICT(jid) DO UPDATE SET
-            name = COALESCE(chats.name, excluded.name),
-            last_message_time = COALESCE(chats.last_message_time, excluded.last_message_time)`,
-    );
-    db.run(
-      sql`INSERT INTO contacts (jid, name, notify, phone_number)
-            SELECT ${lidJid}, name, notify, phone_number FROM contacts WHERE jid = ${pnJid}
-          ON CONFLICT(jid) DO UPDATE SET
-            name = COALESCE(contacts.name, excluded.name),
-            notify = COALESCE(contacts.notify, excluded.notify),
-            phone_number = COALESCE(contacts.phone_number, excluded.phone_number)`,
-    );
   } catch (error) {
     logError("Error recording jid mapping", error);
+    return;
+  }
+  // Physically merge the two chats into the canonical identity.
+  mergeChatPair(pnJid, lidJid);
+}
+
+/**
+ * Physically merge a stale chat/contact (`staleJid`) into its canonical twin
+ * (`canonicalJid`): re-point every message, fold chat/contact metadata, and
+ * drop the now-empty stale rows. Messages are relocated, never deleted (except
+ * exact duplicates that exist under both JIDs — the canonical copy is kept).
+ *
+ * Idempotent: a no-op once the stale rows are gone, so it is safe to call on
+ * every message during ingest and to re-run.
+ */
+export function mergeChatPair(staleJid: string, canonicalJid: string): void {
+  if (!staleJid || !canonicalJid || staleJid === canonicalJid) return;
+  const sqlite = sqliteInstance;
+  if (!sqlite) return;
+  try {
+    const hasStaleChat = sqlite.prepare("SELECT 1 FROM chats WHERE jid = ?").get(staleJid);
+    const hasStaleContact = sqlite.prepare("SELECT 1 FROM contacts WHERE jid = ?").get(staleJid);
+    if (!hasStaleChat && !hasStaleContact) return; // nothing to merge
+
+    const merge = sqlite.transaction(() => {
+      // Canonical chat row must exist before messages are re-pointed onto it.
+      sqlite.prepare("INSERT INTO chats (jid) VALUES (?) ON CONFLICT(jid) DO NOTHING").run(canonicalJid);
+
+      // Drop messages whose (id) already exists under the canonical JID —
+      // the canonical copy wins. PK is (id, chat_jid), so this clears the way
+      // for the re-point UPDATE below.
+      sqlite
+        .prepare(
+          "DELETE FROM messages WHERE chat_jid = ? AND id IN (SELECT id FROM messages WHERE chat_jid = ?)",
+        )
+        .run(staleJid, canonicalJid);
+
+      // Relocate the surviving messages and canonicalize the sender column.
+      sqlite.prepare("UPDATE messages SET chat_jid = ? WHERE chat_jid = ?").run(canonicalJid, staleJid);
+      sqlite.prepare("UPDATE messages SET sender = ? WHERE sender = ?").run(canonicalJid, staleJid);
+
+      // Fold chat metadata onto the canonical row, then drop the empty stale row.
+      sqlite
+        .prepare(
+          `UPDATE chats SET
+             name = COALESCE(name, (SELECT name FROM chats WHERE jid = :stale)),
+             last_message_time = NULLIF(
+               MAX(COALESCE(last_message_time, ''),
+                   COALESCE((SELECT last_message_time FROM chats WHERE jid = :stale), '')),
+               '')
+           WHERE jid = :canon`,
+        )
+        .run({ stale: staleJid, canon: canonicalJid });
+      sqlite.prepare("DELETE FROM chats WHERE jid = ?").run(staleJid);
+
+      // Fold contact metadata onto the canonical row, then drop the stale row.
+      sqlite
+        .prepare(
+          `INSERT INTO contacts (jid, name, notify, phone_number)
+             SELECT ?, name, notify, phone_number FROM contacts WHERE jid = ?
+           ON CONFLICT(jid) DO UPDATE SET
+             name = COALESCE(contacts.name, excluded.name),
+             notify = COALESCE(contacts.notify, excluded.notify),
+             phone_number = COALESCE(contacts.phone_number, excluded.phone_number)`,
+        )
+        .run(canonicalJid, staleJid);
+      sqlite.prepare("DELETE FROM contacts WHERE jid = ?").run(staleJid);
+    });
+    merge();
+  } catch (error) {
+    logError("Error merging chat pair", error);
+  }
+}
+
+/** Read a value from the schema_meta key/value table. */
+export function getMetaValue(key: string): string | null {
+  try {
+    const row = getDb()
+      .select({ value: schema.schemaMeta.value })
+      .from(schema.schemaMeta)
+      .where(eq(schema.schemaMeta.key, key))
+      .get();
+    return row?.value ?? null;
+  } catch (error) {
+    logError("Error reading schema_meta", error);
+    return null;
+  }
+}
+
+/** Write a value into the schema_meta key/value table. */
+export function setMetaValue(key: string, value: string): void {
+  try {
+    getDb()
+      .insert(schema.schemaMeta)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: schema.schemaMeta.key, set: { value } })
+      .run();
+  } catch (error) {
+    logError("Error writing schema_meta", error);
+  }
+}
+
+/** Every chat JID still stored in phone-number (`@s.whatsapp.net`) form. */
+export function listPnChatJids(): string[] {
+  try {
+    const rows = getDb()
+      .select({ jid: schema.chats.jid })
+      .from(schema.chats)
+      .where(like(schema.chats.jid, "%@s.whatsapp.net"))
+      .all();
+    return rows.map((r) => r.jid);
+  } catch (error) {
+    logError("Error listing PN chat jids", error);
+    return [];
   }
 }
 
