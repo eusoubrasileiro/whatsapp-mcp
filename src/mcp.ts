@@ -348,12 +348,12 @@ export async function startMcpServer(
 
   server.addTool({
     name: "send_file",
-    description: "Send a file (image, video, document, audio) to a contact or group. Accepts an absolute filesystem path on the server, an http(s) URL, or a base64 data: URL. Max 16 MB.",
+    description: "Send a file (image, video, document, audio) to a contact or group. Accepts an absolute filesystem path on the server, an http(s) URL, or a base64 data: URL. Max 16 MB. For type=image the bytes must be JPEG or PNG (WebP screenshots are rejected — convert to PNG first).",
     parameters: z.object({
       recipient: z.string().describe("Recipient JID"),
       file_path: z.string().describe("Absolute filesystem path on the server, http(s) URL, or base64 data: URL. Max 16 MB."),
       caption: z.string().optional().describe("Optional caption for images/videos/documents"),
-      type: z.enum(['image', 'video', 'document', 'audio']).optional().default('image').describe("Type of the media (default: image)"),
+      type: z.enum(['image', 'video', 'document', 'audio']).optional().default('image').describe("Type of the media. For 'image': only JPEG/PNG bytes are accepted (WebP rejected — convert to PNG first). For 'video': MP4/3GPP only. For 'audio': AAC/AMR/MP3/M4A/OGG. (default: image)"),
     }),
     execute: async ({ recipient, file_path, caption, type }) => {
       mcpLogger.info(`[MCP Tool] Executing send_file to ${recipient}: ${file_path}`);
