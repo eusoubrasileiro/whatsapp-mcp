@@ -31,7 +31,7 @@ import {
 } from "./database.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
-import { resolveMediaInput } from "./media-input.ts";
+import { resolveMediaInput, assertMimeForType } from "./media-input.ts";
 
 /**
  * Base directory for auth_info.
@@ -341,7 +341,8 @@ export async function sendWhatsAppMedia(
     return;
   }
 
-  const { buffer, fileName } = await resolveMediaInput(filePathOrUrl);
+  const { buffer, fileName, mimetype } = await resolveMediaInput(filePathOrUrl);
+  assertMimeForType(type, mimetype);
 
   const result = await sendMediaMessage(
     sock,
@@ -351,6 +352,7 @@ export async function sendWhatsAppMedia(
       type,
       caption,
       fileName: type === "document" ? fileName : undefined,
+      mimetype,
     },
     logger,
   );
