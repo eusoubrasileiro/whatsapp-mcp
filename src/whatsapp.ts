@@ -31,6 +31,7 @@ import {
 } from "./database.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
+import { resolveMediaInput } from "./media-input.ts";
 
 /**
  * Base directory for auth_info.
@@ -330,7 +331,7 @@ export async function sendWhatsAppMessage(
 export async function sendWhatsAppMedia(
   logger: P.Logger,
   recipientJid: string,
-  filePath: string,
+  filePathOrUrl: string,
   caption?: string,
   type: "image" | "video" | "document" | "audio" = "image",
 ): Promise<{ key: { id: string } } | void> {
@@ -340,20 +341,16 @@ export async function sendWhatsAppMedia(
     return;
   }
 
-  if (!fs.existsSync(filePath)) {
-    logger.error(`Cannot send media: File not found at ${filePath}`);
-    return;
-  }
+  const { buffer, fileName } = await resolveMediaInput(filePathOrUrl);
 
-  const fileBuffer = fs.readFileSync(filePath);
   const result = await sendMediaMessage(
     sock,
     recipientJid,
     {
-      buffer: Buffer.from(fileBuffer),
+      buffer,
       type,
       caption,
-      fileName: type === "document" ? path.basename(filePath) : undefined,
+      fileName: type === "document" ? fileName : undefined,
     },
     logger,
   );

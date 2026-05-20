@@ -348,10 +348,10 @@ export async function startMcpServer(
 
   server.addTool({
     name: "send_file",
-    description: "Send a file (image, video, document, audio) to a contact or group",
+    description: "Send a file (image, video, document, audio) to a contact or group. Accepts an absolute filesystem path on the server, an http(s) URL, or a base64 data: URL. Max 16 MB.",
     parameters: z.object({
       recipient: z.string().describe("Recipient JID"),
-      file_path: z.string().describe("Local path to the file"),
+      file_path: z.string().describe("Absolute filesystem path on the server, http(s) URL, or base64 data: URL. Max 16 MB."),
       caption: z.string().optional().describe("Optional caption for images/videos/documents"),
       type: z.enum(['image', 'video', 'document', 'audio']).optional().default('image').describe("Type of the media (default: image)"),
     }),
@@ -360,12 +360,18 @@ export async function startMcpServer(
       assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
-      const result = await sendWhatsAppMedia(waLogger, normalizedRecipient, file_path, caption, type);
+      let result: Awaited<ReturnType<typeof sendWhatsAppMedia>>;
+      try {
+        result = await sendWhatsAppMedia(waLogger, normalizedRecipient, file_path, caption, type);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to send ${type} to ${normalizedRecipient}: ${reason}`);
+      }
 
       if (result && result.key && result.key.id) {
         return `${type.charAt(0).toUpperCase() + type.slice(1)} sent successfully to ${normalizedRecipient} (ID: ${result.key.id}).`;
       } else {
-        throw new Error(`Failed to send ${type} to ${normalizedRecipient}. Check if the file path is correct and accessible.`);
+        throw new Error(`Failed to send ${type} to ${normalizedRecipient} (no message ID returned — socket may be disconnected)`);
       }
     },
   });
