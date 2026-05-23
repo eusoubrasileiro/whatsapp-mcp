@@ -172,7 +172,7 @@ const MIME_TO_EXT: Record<string, string> = {
   "text/plain": "txt",
 };
 
-function extFromMime(mime: string): string {
+export function extFromMime(mime: string): string {
   return MIME_TO_EXT[mime.toLowerCase()] ?? "bin";
 }
 

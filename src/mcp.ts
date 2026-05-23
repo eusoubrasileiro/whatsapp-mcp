@@ -348,10 +348,10 @@ export async function startMcpServer(
 
   server.addTool({
     name: "send_file",
-    description: "Send a file (image, video, document, audio) to a contact or group. Accepts an absolute filesystem path on the server, an http(s) URL, or a base64 data: URL. Max 16 MB. For type=image the bytes must be JPEG or PNG (WebP screenshots are rejected — convert to PNG first).",
+    description: "Send a file (image, video, document, audio) to a contact or group. file_path accepts: (a) http(s) URL, (b) base64 data: URL — context-heavy, only viable for tiny payloads, (c) absolute path that exists ON THE MCP SERVER (NOT your local disk — the server runs in a remote Docker container and cannot read host files). To send a host-disk file: POST raw bytes to `<MCP host>/upload` (Bearer auth = MCP_AUTH_TOKEN), receive `{url}`, then pass that URL here. Max 16 MB. For type=image the bytes must be JPEG or PNG (WebP screenshots are rejected — convert to PNG first).",
     parameters: z.object({
       recipient: z.string().describe("Recipient JID"),
-      file_path: z.string().describe("Absolute filesystem path on the server, http(s) URL, or base64 data: URL. Max 16 MB."),
+      file_path: z.string().describe("http(s) URL, base64 data: URL, or server-side absolute path. To send a local host file with a remote MCP, upload it to <MCP host>/upload first and pass the returned URL. Max 16 MB."),
       caption: z.string().optional().describe("Optional caption for images/videos/documents"),
       type: z.enum(['image', 'video', 'document', 'audio']).optional().default('image').describe("Type of the media. For 'image': only JPEG/PNG bytes are accepted (WebP rejected — convert to PNG first). For 'video': MP4/3GPP only. For 'audio': AAC/AMR/MP3/M4A/OGG. (default: image)"),
     }),

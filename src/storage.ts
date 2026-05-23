@@ -1,4 +1,5 @@
 import * as Minio from "minio";
+import { randomUUID } from "node:crypto";
 
 export interface MediaStorageClient {
   putObject(bucket: string, key: string, data: Buffer, size?: number, metadata?: Record<string, string>): Promise<unknown>;
@@ -58,6 +59,29 @@ export async function putMedia(params: {
   const bucket = getBucket();
   const sanitizedJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
   const key = `t/${tenantId}/${sanitizedJid}/${messageId}.${ext}`;
+
+  await getClient().putObject(bucket, key, buffer, buffer.length, { "Content-Type": mimetype });
+
+  return { key, url: publicUrlFor(key) };
+}
+
+/**
+ * Stores agent-supplied bytes under `t/{tenantId}/uploads/{uuid}.{ext}` so they
+ * can be referenced by `send_file` as a public URL. Used by the upload HTTP
+ * endpoint to bridge the host-disk → remote-MCP gap: the MCP container can't
+ * read the agent's filesystem, and base64 data URLs blow up the context window
+ * for any non-tiny file.
+ */
+export async function putUpload(params: {
+  tenantId?: string;
+  buffer: Buffer;
+  mimetype: string;
+  ext: string;
+}): Promise<{ key: string; url: string }> {
+  const { buffer, mimetype, ext } = params;
+  const tenantId = params.tenantId ?? (process.env.TENANT_ID ?? "default");
+  const bucket = getBucket();
+  const key = `t/${tenantId}/uploads/${randomUUID()}.${ext}`;
 
   await getClient().putObject(bucket, key, buffer, buffer.length, { "Content-Type": mimetype });
 
