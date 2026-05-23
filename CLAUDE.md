@@ -70,6 +70,10 @@ Remember to swap back to the HTTP entry afterwards.
 | `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
 | ntfy silent | `NTFY_TOPIC_URL` unset on VPS, or topic not subscribed in the ntfy app. Check `docker exec whatsapp-mcp grep ntfy /data/wa-logs.txt`. |
 | Container `unhealthy` | Healthcheck hits `http://127.0.0.1:39002/health`. If the QR web server failed to bind (port clash), container flaps. `docker logs whatsapp-mcp`. |
+| `send_file` fails with "cannot read local file …" or "ENOENT" | The MCP server runs in a remote container — it can't see your host disk. Use `POST /upload` to publish the file first, then pass the returned URL to `send_file`. See "Sending host-disk files" above. |
+| `POST /upload` returns 401 | `MCP_AUTH_TOKEN` mismatch — same secret as the MCP endpoint. |
+| `POST /upload` returns 415 | Bytes didn't match any known magic header. Re-encode the file or check it's not truncated; `sniffMimetype` only recognises JPEG/PNG/GIF/WebP/PDF/MP4/3GP/MOV/M4A/OGG/WAV/MP3. |
+| `POST /upload` returns 413 | Body over 16 MB. WABA's hard limit — compress first. |
 
 ### Troubleshooting (stdio fallback only)
 
@@ -168,6 +172,8 @@ src/
 ├── connection-notifier.ts # Fires ntfy pushes on QR / connect / disconnect events
 ├── ntfy.ts                # Low-level ntfy.sh HTTP sender
 ├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
+├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
+│                          #   the gap when send_file's file_path can't reach the agent's filesystem
 └── db/
     └── schema.ts          # Drizzle table schemas
 ```
@@ -211,7 +217,7 @@ src/
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send text message to contact or group |
-| `send_file` | Send image/video/document/audio file |
+| `send_file` | Send image/video/document/audio file. Accepts http(s) URL, base64 data: URL, or a server-side absolute path. To send a file from the host disk when the MCP runs remotely, upload it to `/upload` first (see "Sending host-disk files" below) and pass the returned URL. |
 
 ### Message Actions
 | Tool | Description |
@@ -224,6 +230,36 @@ src/
 | Tool | Description |
 |------|-------------|
 | `download_media` | Download media (image/video/audio/document/sticker) from a message to local disk |
+
+## Sending host-disk files (the `/upload` endpoint)
+
+`send_file`'s `file_path` is resolved **on the server**. When the MCP runs in the canonical remote container, `/tmp/video.mp4` on your machine isn't reachable — the agent has three options, with very different cost:
+
+1. **`http(s)` URL** — works if the file is already hosted somewhere reachable.
+2. **`data:` base64 URL** — works for tiny payloads; **blows up the agent's context window** for any real video.
+3. **Upload via `POST /upload`** — the right path for arbitrary host-disk files.
+
+Flow from an agent on the user's machine:
+
+```bash
+# raw body, MIME sniffed from magic bytes server-side
+curl -sS -X POST --data-binary @/tmp/video.mp4 \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  https://mcp.amiticia.cc/upload
+# → { "url": "https://mcp.amiticia.cc/media/t/default/uploads/<uuid>.mp4",
+#     "key": "t/default/uploads/<uuid>.mp4",
+#     "mimetype": "video/mp4", "size": 4321567 }
+```
+
+Then call `send_file({ recipient, file_path: "<url from above>", type: "video", caption })`.
+
+Guarantees:
+- Bearer-authenticated with the same `MCP_AUTH_TOKEN` as the MCP endpoint.
+- 16 MB hard cap (same as Baileys / WABA limit).
+- MIME sniffed from bytes — bodies that match no known format are rejected with HTTP 415 (junk / executables won't land in the bucket).
+- Object key: `t/{tenantId}/uploads/{uuid}.{ext}`. The public-read bucket policy makes the returned URL fetchable by the MCP container without any extra credential exchange.
+
+The endpoint is exposed by `src/upload-server.ts` on `UPLOAD_SERVER_PORT` (default `39003`), only started when `S3_ENABLED=true`. Traefik route required at the infra repo: `mcp.amiticia.cc/upload` → `whatsapp-mcp:39003`.
 
 ## Authentication
 
@@ -243,6 +279,8 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `MCP_AUTH_TOKEN` | _(unset)_ | If set, HTTP MCP requires `Authorization: Bearer <token>`. If unset, endpoint accepts unauthenticated requests (stdio/local dev only — never run like this in prod). |
 | `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the public QR web page |
 | `QR_SERVER_PORT` | `39002` | Bind port for the QR web page |
+| `UPLOAD_SERVER_HOST` | `127.0.0.1` | Bind host for the host-disk upload endpoint (only started when `S3_ENABLED=true`) |
+| `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `mcp.amiticia.cc/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
 | `PUBLIC_QR_URL` | `https://wa.amiticia.cc/` | URL sent in ntfy `Click` header so tapping the push opens the QR page |
 | `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
 | `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |
@@ -354,7 +392,7 @@ Backups are on the host side of the bind mount (`/storage/whatsapp-mcp/backups/`
 
 ## Deploy (Docker + Traefik on VPS)
 
-Full deploy / update / rotate-secrets / troubleshoot runbook: [`systems/vps/stacks/whatsapp-mcp/README.md`](../systems/vps/stacks/whatsapp-mcp/README.md) (branch `non-swarm`).
+Full deploy / update / rotate-secrets / troubleshoot runbook: [`systems/vps/stacks/whatsapp-mcp/README.md`](../../infra/systems/vps/stacks/whatsapp-mcp/README.md) (branch `non-swarm`).
 
 Production stack lives in the sibling `systems` repo at:
 `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`

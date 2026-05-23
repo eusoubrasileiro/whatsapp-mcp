@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   putMedia,
+  putUpload,
   publicUrlFor,
   ensureBucketReady,
   setStorageClient,
@@ -135,6 +136,72 @@ describe("storage", () => {
       expect(url).toBe(
         "http://localhost:9000/test-bucket/t/default/123@s.whatsapp.net/abc.jpg",
       );
+    });
+  });
+
+  // ── putUpload ──────────────────────────────────────────────────────
+
+  describe("putUpload", () => {
+    it("writes to t/{tenantId}/uploads/{uuid}.{ext}", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const { key } = await putUpload({
+        buffer: Buffer.from("fake"),
+        mimetype: "video/mp4",
+        ext: "mp4",
+      });
+
+      expect(key).toMatch(
+        /^t\/default\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp4$/,
+      );
+    });
+
+    it("calls putObject with bucket, key, buffer, size, content-type", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const buffer = Buffer.from("payload-bytes");
+      const { key } = await putUpload({
+        buffer,
+        mimetype: "image/jpeg",
+        ext: "jpg",
+      });
+
+      expect(mock.putObject).toHaveBeenCalledWith(
+        "test-bucket",
+        key,
+        buffer,
+        buffer.length,
+        { "Content-Type": "image/jpeg" },
+      );
+    });
+
+    it("uses provided tenantId override", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const { key } = await putUpload({
+        tenantId: "acme",
+        buffer: Buffer.from("x"),
+        mimetype: "application/pdf",
+        ext: "pdf",
+      });
+
+      expect(key).toMatch(/^t\/acme\/uploads\//);
+    });
+
+    it("returns url via publicUrlFor", async () => {
+      const mock = makeMockClient();
+      setStorageClient(mock as MediaStorageClient);
+
+      const { key, url } = await putUpload({
+        buffer: Buffer.from("x"),
+        mimetype: "image/png",
+        ext: "png",
+      });
+
+      expect(url).toBe(`http://localhost:9000/test-bucket/${key}`);
     });
   });
 
