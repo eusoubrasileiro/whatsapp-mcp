@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# Vitest coverage output
+coverage/
+
 # Logs
 *.log
 wa-logs.txt
