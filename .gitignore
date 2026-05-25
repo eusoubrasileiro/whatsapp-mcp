@@ -15,8 +15,10 @@ auth_info/
 # SQLite Database (keep data local)
 data/
 
-# Environment variables
+# Environment variables (any variant: .env, .env.dev, .env.local, etc.)
 .env
+.env.*
+!.env.example
 
 # OS generated files
 .DS_Store
