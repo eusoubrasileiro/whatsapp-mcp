@@ -31,7 +31,7 @@ RUN pnpm install --frozen-lockfile --prod
 # ── Stage 3: runtime ──
 FROM node:24-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini wget ca-certificates sqlite3 \
+    && apt-get install -y --no-install-recommends tini wget ca-certificates sqlite3 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/whatsapp-mcp
 

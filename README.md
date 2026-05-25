@@ -107,7 +107,7 @@ The server exposes 17 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 | Groups | `get_group_info` |
 | Sending | `send_message`, `send_file` |
 | Actions | `react_to_message`, `delete_message`, `mark_chat_read` |
-| Media | `download_media` |
+| Media | `download_media` (audio → transcription by default; image → opt-in description) |
 
 ## Deployment
 
@@ -155,12 +155,16 @@ See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highligh
 | `NTFY_TOPIC_URL` | Unset = no push notifications; set to enable |
 | `EXPECTED_WA_NUMBER` | Prefix allowed to pair; wrong scan → auto-logout + purge (strongly recommended when `wa.amiticia.cc` is public) |
 | `WHATSAPP_MCP_DATA_DIR` | Base dir for `auth_info/`, `data/`, and logs (defaults to `.`, Docker uses `/data`) |
+| `GROQ_API_KEY` / `OPENAI_API_KEY` | Whisper provider for `download_media` audio transcription (Groq preferred) |
+| `GEMINI_API_KEY` | Required for `download_media({ describe: true })` image captioning via Gemini 2.5 Flash |
 
 ## Data storage & privacy
 
 - **Credentials**: `WHATSAPP_MCP_DATA_DIR/auth_info/` (Baileys multi-file auth state)
 - **Messages / chats / contacts**: `WHATSAPP_MCP_DATA_DIR/data/whatsapp.db` (SQLite via Drizzle + `better-sqlite3`)
 - **Media**: served from a RustFS sidecar on the same VPS, behind Traefik at `https://mcp.amiticia.cc/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
+- **Audio → text**: by default, `download_media` on an audio/ptt message transcribes via Groq Whisper (`whisper-large-v3-turbo`, OpenAI `whisper-1` as fallback) after preprocessing to 16 kHz mono FLAC. The response is wrapped in an `<transcription>` XML block. Pass `transcribe: false` to get raw audio bytes instead. Requires `GROQ_API_KEY` or `OPENAI_API_KEY`.
+- **Image → text**: opt-in via `download_media({ ..., describe: true })`. Sends bytes to Gemini 2.5 Flash; response wrapped in an `<image_description>` XML block. Requires `GEMINI_API_KEY`.
 - **Logs**: `WHATSAPP_MCP_DATA_DIR/{wa,mcp}-logs.txt` (pino JSON lines)
 
 Everything stays on the VPS (Docker bind mount in production, filesystem in dev). Data leaves the VPS only when an MCP client explicitly invokes a tool.

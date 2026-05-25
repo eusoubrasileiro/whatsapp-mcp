@@ -41,8 +41,21 @@ vi.mock("../storage.ts", async (importOriginal) => {
     ...actual,
     putMedia: vi.fn(),
     publicUrlFor: vi.fn((key: string) => `https://media.example.com/${key}`),
+    getMediaBytes: vi.fn(),
   };
 });
+
+vi.mock("../transcribe/preprocess.ts", () => ({
+  toFlacMono16k: vi.fn(),
+}));
+
+vi.mock("../transcribe/whisper.ts", () => ({
+  transcribeAudio: vi.fn(),
+}));
+
+vi.mock("../describe/vision.ts", () => ({
+  describeImage: vi.fn(),
+}));
 
 vi.mock("fastmcp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fastmcp")>();
@@ -56,7 +69,10 @@ vi.mock("fastmcp", async (importOriginal) => {
 import { executeDownloadMedia } from "../actions.ts";
 import { getMessageById, updateMessageMediaObjectKey } from "../database.ts";
 import { downloadMedia } from "../whatsapp.ts";
-import { putMedia, publicUrlFor } from "../storage.ts";
+import { putMedia, publicUrlFor, getMediaBytes } from "../storage.ts";
+import { toFlacMono16k } from "../transcribe/preprocess.ts";
+import { transcribeAudio } from "../transcribe/whisper.ts";
+import { describeImage } from "../describe/vision.ts";
 import pino from "pino";
 
 const logger = pino({ level: "silent" });
@@ -164,8 +180,8 @@ describe("executeDownloadMedia", () => {
     expect(publicUrlFor).toHaveBeenCalledWith("t/default/5511@s.whatsapp.net/msg-001.jpg");
   });
 
-  // Edge: audio under inline limit returns audio block
-  it("audio under inline limit returns audio block + resource_link + text", async () => {
+  // Edge: audio with transcribe:false returns audio block (regression — pre-feature behavior)
+  it("audio + transcribe=false returns audio block + resource_link + text", async () => {
     vi.mocked(downloadMedia).mockResolvedValue({
       buffer: Buffer.from("ogg-bytes"),
       mimetype: "audio/ogg",
@@ -181,10 +197,12 @@ describe("executeDownloadMedia", () => {
     const result = await executeDownloadMedia(logger, {
       message_id: "msg-001",
       chat_jid: "5511@s.whatsapp.net",
+      transcribe: false,
     });
 
     expect(result.content[0]).toMatchObject({ type: "audio" });
     expect(result.content).toHaveLength(3);
+    expect(transcribeAudio).not.toHaveBeenCalled();
   });
 
   // Edge: message not found
@@ -248,6 +266,174 @@ describe("executeDownloadMedia", () => {
     });
     expect(result.content).toHaveLength(2);
     expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
+  });
+
+  // ── New: transcribe / describe behavior on download_media ─────────────────
+
+  it("audio + transcribe default (true) returns <transcription> XML, no audioContent", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("ogg-bytes"),
+      mimetype: "audio/ogg",
+      ext: "ogg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.ogg",
+      url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.ogg",
+    });
+    vi.mocked(toFlacMono16k).mockResolvedValue(Buffer.from("flac-bytes"));
+    vi.mocked(transcribeAudio).mockResolvedValue({
+      text: "Olá tudo bem?",
+      model: "whisper-large-v3-turbo",
+      provider: "groq",
+      duration_s: 4.2,
+    });
+    const msg = makeMediaMessage({ mimetype: "audio/ogg", media_type: "audio", file_length: 512 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+    });
+
+    expect(toFlacMono16k).toHaveBeenCalledOnce();
+    expect(transcribeAudio).toHaveBeenCalledOnce();
+    expect(result.content).toHaveLength(3);
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect((result.content[0] as any).text).toContain('<transcription message_id="msg-001"');
+    expect((result.content[0] as any).text).toContain("Olá tudo bem?");
+    expect((result.content[0] as any).text).toContain('model="whisper-large-v3-turbo"');
+    expect(result.content.every((c: any) => c.type !== "audio")).toBe(true);
+  });
+
+  it("ptt + transcribe default (true) is treated as audio", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("opus-bytes"),
+      mimetype: "audio/ogg; codecs=opus",
+      ext: "ogg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.ogg",
+      url: "https://media.example.com/k.ogg",
+    });
+    vi.mocked(toFlacMono16k).mockResolvedValue(Buffer.from("flac"));
+    vi.mocked(transcribeAudio).mockResolvedValue({
+      text: "voice note",
+      model: "whisper-large-v3-turbo",
+      provider: "groq",
+    });
+    const msg = makeMediaMessage({ mimetype: "audio/ogg; codecs=opus", media_type: "ptt", file_length: 200 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+    });
+    expect((result.content[0] as any).text).toContain("<transcription");
+  });
+
+  it("image + describe=true returns <image_description> XML, no imageContent", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("jpg-bytes"),
+      mimetype: "image/jpeg",
+      ext: "jpg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
+      url: "https://media.example.com/x.jpg",
+    });
+    vi.mocked(describeImage).mockResolvedValue({
+      text: "Cardápio de pizzaria com 12 sabores.",
+      model: "gemini-2.5-flash",
+    });
+    const msg = makeMediaMessage({ mimetype: "image/jpeg", media_type: "image", file_length: 1024 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+      describe: true,
+    });
+
+    expect(describeImage).toHaveBeenCalledOnce();
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect((result.content[0] as any).text).toContain('<image_description message_id="msg-001"');
+    expect((result.content[0] as any).text).toContain("Cardápio de pizzaria");
+    expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
+  });
+
+  it("image + describe omitted (default false) returns the standard imageContent block", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("jpg-bytes"),
+      mimetype: "image/jpeg",
+      ext: "jpg",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
+      url: "https://media.example.com/x.jpg",
+    });
+    const msg = makeMediaMessage({ mimetype: "image/jpeg", media_type: "image", file_length: 1024 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+    });
+
+    expect(describeImage).not.toHaveBeenCalled();
+    expect(result.content[0]).toMatchObject({ type: "image" });
+  });
+
+  it("document + transcribe=true is a no-op (returns resource_link, no LLM call)", async () => {
+    vi.mocked(downloadMedia).mockResolvedValue({
+      buffer: Buffer.from("pdf-bytes"),
+      mimetype: "application/pdf",
+      ext: "pdf",
+    });
+    vi.mocked(putMedia).mockResolvedValue({
+      key: "t/default/5511@s.whatsapp.net/msg-001.pdf",
+      url: "https://media.example.com/x.pdf",
+    });
+    const msg = makeMediaMessage({ mimetype: "application/pdf", media_type: "document", file_length: 50_000 });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+      transcribe: true,
+      describe: true,
+    });
+
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    expect(describeImage).not.toHaveBeenCalled();
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]).toMatchObject({ type: "resource_link" });
+  });
+
+  it("cache hit + transcribe=true fetches bytes from storage and transcribes", async () => {
+    vi.mocked(getMediaBytes).mockResolvedValue(Buffer.from("cached-audio"));
+    vi.mocked(toFlacMono16k).mockResolvedValue(Buffer.from("flac"));
+    vi.mocked(transcribeAudio).mockResolvedValue({
+      text: "cached transcript",
+      model: "whisper-large-v3-turbo",
+      provider: "groq",
+    });
+    const msg = makeMediaMessage({
+      mimetype: "audio/ogg",
+      media_type: "audio",
+      file_length: 1024,
+      media_object_key: "t/default/5511@s.whatsapp.net/msg-001.ogg",
+    });
+    vi.mocked(getMessageById).mockReturnValue(msg as any);
+
+    const result = await executeDownloadMedia(logger, {
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
+    });
+
+    expect(downloadMedia).not.toHaveBeenCalled();
+    expect(getMediaBytes).toHaveBeenCalledWith("t/default/5511@s.whatsapp.net/msg-001.ogg");
+    expect(transcribeAudio).toHaveBeenCalledOnce();
+    expect((result.content[0] as any).text).toContain("<transcription");
   });
 
   // G3 — file_length === MEDIA_INLINE_MAX_BYTES skips inline (source uses strict <)

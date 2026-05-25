@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Readable } from "node:stream";
 import {
   putMedia,
   putUpload,
   publicUrlFor,
   ensureBucketReady,
+  getMediaBytes,
   setStorageClient,
   resetStorageClient,
   type MediaStorageClient,
@@ -14,12 +16,14 @@ function makeMockClient(overrides: {
   bucketExists?: ReturnType<typeof vi.fn>;
   makeBucket?: ReturnType<typeof vi.fn>;
   setBucketPolicy?: ReturnType<typeof vi.fn>;
+  getObject?: ReturnType<typeof vi.fn>;
 } = {}) {
   return {
     putObject: overrides.putObject ?? vi.fn().mockResolvedValue({}),
     bucketExists: overrides.bucketExists ?? vi.fn().mockResolvedValue(false),
     makeBucket: overrides.makeBucket ?? vi.fn().mockResolvedValue(undefined),
     setBucketPolicy: overrides.setBucketPolicy ?? vi.fn().mockResolvedValue(undefined),
+    getObject: overrides.getObject ?? vi.fn().mockResolvedValue(Readable.from([Buffer.from("default")])),
   };
 }
 
@@ -341,6 +345,24 @@ describe("storage", () => {
       await ensureBucketReady();
 
       expect(mock.setBucketPolicy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── getMediaBytes ───────────────────────────────────────────────────
+
+  describe("getMediaBytes", () => {
+    it("concatenates the stream returned by getObject into a single Buffer", async () => {
+      const getObject = vi.fn().mockResolvedValue(Readable.from([
+        Buffer.from("hello "),
+        Buffer.from("world"),
+      ]));
+      const mock = makeMockClient({ getObject });
+      setStorageClient(mock as MediaStorageClient);
+
+      const out = await getMediaBytes("t/default/x/y.ogg");
+
+      expect(getObject).toHaveBeenCalledWith("test-bucket", "t/default/x/y.ogg");
+      expect(out.toString()).toBe("hello world");
     });
   });
 });

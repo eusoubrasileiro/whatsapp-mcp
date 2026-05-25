@@ -6,6 +6,7 @@ export interface MediaStorageClient {
   bucketExists(bucket: string): Promise<boolean>;
   makeBucket(bucket: string, region?: string): Promise<void>;
   setBucketPolicy(bucket: string, policy: string): Promise<void>;
+  getObject(bucket: string, key: string): Promise<NodeJS.ReadableStream>;
 }
 
 /** Returns true when the env var is set to the string "true" (case-insensitive). */
@@ -86,6 +87,21 @@ export async function putUpload(params: {
   await getClient().putObject(bucket, key, buffer, buffer.length, { "Content-Type": mimetype });
 
   return { key, url: publicUrlFor(key) };
+}
+
+/**
+ * Fetch raw bytes for an existing media object. Used by transcribe/describe
+ * paths that need to feed the bytes to an external API; we already uploaded
+ * the file when first downloading from WhatsApp.
+ */
+export async function getMediaBytes(key: string): Promise<Buffer> {
+  const bucket = getBucket();
+  const stream = await getClient().getObject(bucket, key);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 export async function ensureBucketReady(): Promise<void> {

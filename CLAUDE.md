@@ -229,7 +229,34 @@ src/
 ### Media
 | Tool | Description |
 |------|-------------|
-| `download_media` | Download media (image/video/audio/document/sticker) from a message to local disk |
+| `download_media` | Download media (image/video/audio/document/sticker). For audio messages `transcribe` defaults to `true` and returns an `<transcription>` XML block; pass `transcribe: false` for raw audio. For images, opt-in `describe: true` returns an `<image_description>` XML block via Gemini. See "Audio transcription & image description" below. |
+
+## Audio transcription & image description
+
+`download_media` doubles as a transcription / vision endpoint via two optional parameters:
+
+| Param | Default | Behavior |
+|---|---|---|
+| `transcribe` | `true` for `audio`/`ptt` messages, ignored otherwise | Preprocess bytes with ffmpeg (16 kHz mono FLAC, ~10× smaller), call Groq Whisper `whisper-large-v3-turbo` (or OpenAI `whisper-1` fallback), return an `<transcription>` XML block instead of `audioContent`. |
+| `describe` | `false` always, ignored on non-image media | Send image bytes to Google Gemini `gemini-2.5-flash`, return an `<image_description>` XML block instead of `imageContent`. |
+
+Output shape (single `text` content block alongside the usual `resource_link` + JSON metadata):
+
+```xml
+<transcription message_id="…" chat_jid="…" model="whisper-large-v3-turbo" duration_s="138">
+Olá, queria saber se vocês fazem entrega no meu bairro…
+</transcription>
+```
+
+```xml
+<image_description message_id="…" chat_jid="…" model="gemini-2.5-flash">
+Captura de um cardápio com 12 sabores de pizza, preços R$ 35–58, promoção de terça em destaque.
+</image_description>
+```
+
+Required env vars: `GROQ_API_KEY` (preferred) or `OPENAI_API_KEY` (fallback) for transcription; `GEMINI_API_KEY` for image description. Optional `WHISPER_MODEL` / `VISION_MODEL` overrides. `ffmpeg` must be present on the host (already installed in the runtime image).
+
+Long-audio note: a 24 MB FLAC ceiling guards the Groq request; typical WhatsApp voice notes up to ~25 min fit comfortably after preprocessing. Anything past that fails with a clear error — chunking + stitching is deferred to a follow-up PR per the Groq cookbook (600 s windows, 10 s overlap).
 
 ## Sending host-disk files (the `/upload` endpoint)
 
@@ -297,6 +324,12 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`). |
 | `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. Hardcoded until 2nd customer. |
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
+| `GROQ_API_KEY` | _(unset)_ | Preferred provider for audio transcription via `download_media`'s `transcribe` flag. Uses `whisper-large-v3-turbo`. |
+| `OPENAI_API_KEY` | _(unset)_ | Fallback for audio transcription (`whisper-1`) when `GROQ_API_KEY` is unset. |
+| `WHISPER_MODEL` | `whisper-large-v3-turbo` | Override the Groq Whisper model. Ignored when falling back to OpenAI. |
+| `GEMINI_API_KEY` | _(unset)_ | Required for image description (`download_media`'s `describe` flag). Uses `gemini-2.5-flash`. |
+| `VISION_MODEL` | `gemini-2.5-flash` | Override the Gemini vision model. |
+| `FFMPEG_BIN` | `ffmpeg` | Path to the ffmpeg binary used for audio preprocessing before Whisper. |
 
 ## Data Storage
 
