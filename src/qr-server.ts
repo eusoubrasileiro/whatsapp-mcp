@@ -2,6 +2,7 @@ import http, { type Server } from "node:http";
 import type { Logger } from "pino";
 import QRCode from "qrcode";
 import type { ConnectionState } from "@amiticia/baileys-client";
+import { createRouter, type Route } from "./http-router.ts";
 
 function renderHtml(state: ConnectionState): string {
   const { status, user, qrCode } = state;
@@ -61,25 +62,12 @@ export function createQrServer(
   getState: () => ConnectionState,
   onRepair?: () => Promise<void>,
 ): Server {
-  return http.createServer(async (req, res) => {
-    const url = req.url ?? "/";
-    const method = req.method ?? "GET";
-    const state = getState();
-
-    try {
-      if (method === "POST" && url === "/repair") {
-        if (!onRepair) {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
-        await onRepair();
-        res.writeHead(302, { location: "/" });
-        res.end();
-        return;
-      }
-
-      if (url === "/health") {
+  const routes: Route[] = [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async (_req, res) => {
+        const state = getState();
         const body = JSON.stringify({
           status: state.status,
           user: state.user,
@@ -87,10 +75,13 @@ export function createQrServer(
         });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(body);
-        return;
-      }
-
-      if (url === "/qr.png") {
+      },
+    },
+    {
+      method: "GET",
+      path: "/qr.png",
+      handler: async (_req, res) => {
+        const state = getState();
         if (state.status !== "qr_pending" || !state.qrCode) {
           res.writeHead(404, { "content-type": "text/plain" });
           res.end("no QR pending");
@@ -106,25 +97,39 @@ export function createQrServer(
           "cache-control": "no-store",
         });
         res.end(png);
-        return;
-      }
-
-      if (url === "/" || url === "/index.html") {
+      },
+    },
+    {
+      method: "GET",
+      path: "/",
+      handler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderHtml(state));
-        return;
-      }
-
-      res.writeHead(404, { "content-type": "text/plain" });
-      res.end("not found");
-    } catch (err) {
-      logger.error({ err, url }, "qr-server request failed");
-      if (!res.headersSent) {
-        res.writeHead(500, { "content-type": "text/plain" });
-        res.end("internal error");
-      } else {
+        res.end(renderHtml(getState()));
+      },
+    },
+    {
+      method: "GET",
+      path: "/index.html",
+      handler: async (_req, res) => {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderHtml(getState()));
+      },
+    },
+    {
+      method: "POST",
+      path: "/repair",
+      handler: async (_req, res) => {
+        if (!onRepair) {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+        await onRepair();
+        res.writeHead(302, { location: "/" });
         res.end();
-      }
-    }
-  });
+      },
+    },
+  ];
+
+  return http.createServer(createRouter(routes, { logger }));
 }
