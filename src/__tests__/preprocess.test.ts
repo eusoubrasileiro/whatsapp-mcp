@@ -51,6 +51,7 @@ async function ffprobe(buf: Buffer): Promise<{ codec: string; sampleRate: number
       resolve({ codec, sampleRate: sr, channels: ch });
     });
     proc.on("error", reject);
+    proc.stdin.on("error", () => { /* ffprobe may close stdin early once it has the header */ });
     proc.stdin.end(buf);
   });
 }
@@ -98,14 +99,60 @@ describe("toFlacMono16k", () => {
     await expect(toFlacMono16k(garbage)).rejects.toThrow(FfmpegError);
   });
 
+  it("transcribes M4A with moov-at-end (WhatsApp/mobile encoder layout)", async () => {
+    // Default `ffmpeg -f mp4 file.m4a` writes moov atom at the END of the file —
+    // the very layout that broke when piped via stdin (non-seekable → demux fails
+    // partway, exits 0, returns ~empty FLAC). The fixture must be generated to a
+    // real file (mp4 mux refuses non-seekable output for moov-at-end), then read
+    // back as a Buffer to mimic how baileys delivers media bytes.
+    const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+
+    const dir = mkdtempSync(path.join(tmpdir(), "wa-m4a-fixture-"));
+    const m4aPath = path.join(dir, "in.m4a");
+    try {
+      // Fixture must be ≥ ~1 MB so the buffered stdin pipe overflows and ffmpeg
+      // actually starts demuxing before all bytes arrive — that's what trips the
+      // seek-on-moov-at-end failure. A tiny <100 KB fixture is buffered whole and
+      // hides the bug.
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn("ffmpeg", [
+          "-hide_banner", "-loglevel", "error",
+          "-f", "lavfi",
+          "-i", "sine=frequency=440:duration=90:sample_rate=44100",
+          "-c:a", "aac",
+          "-b:a", "128k",
+          // No -movflags +faststart → moov atom stays at end of file (default)
+          "-f", "mp4",
+          "-y",
+          m4aPath,
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        proc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`m4a fixture exited ${code}`)));
+        proc.on("error", reject);
+      });
+
+      const m4a = readFileSync(m4aPath);
+      const flac = await toFlacMono16k(m4a);
+
+      // 90s of mono FLAC at 16 kHz is ~700 KB–1.8 MB; broken silent stub is ~8 KB.
+      expect(flac.length).toBeGreaterThan(200_000);
+      expect(flac.subarray(0, 4).toString()).toBe("fLaC");
+
+      const meta = await ffprobe(flac);
+      expect(meta.codec).toBe("flac");
+      expect(meta.sampleRate).toBe(16000);
+      expect(meta.channels).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("throws clear FfmpegError when ffmpeg binary missing", async () => {
     const prev = process.env.FFMPEG_BIN;
     process.env.FFMPEG_BIN = "/nonexistent/ffmpeg-binary-zzz";
     try {
-      // Re-import to pick up env change — preprocess reads FFMPEG_BIN at import time.
-      // Instead we test via dynamic spawn: assert the underlying spawn surfaces ENOENT.
-      const { toFlacMono16k: localToFlac, FfmpegError: LocalErr } = await import("../transcribe/preprocess.ts?missing=1" + Date.now());
-      await expect(localToFlac(Buffer.from([1, 2, 3]))).rejects.toThrow(LocalErr);
+      await expect(toFlacMono16k(Buffer.from([1, 2, 3]))).rejects.toThrow(FfmpegError);
     } finally {
       if (prev === undefined) delete process.env.FFMPEG_BIN;
       else process.env.FFMPEG_BIN = prev;
