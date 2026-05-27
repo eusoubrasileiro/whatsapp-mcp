@@ -1,5 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  extensionFor,
+  mimeFromExtension,
+  sniffMedia,
+  sniffMimetype as sniffMimetypeImpl,
+} from "./sniffed-media.ts";
 
 export const MAX_MEDIA_BYTES = 16 * 1024 * 1024; // WhatsApp / WABA hard cap
 export const FETCH_TIMEOUT_MS = 15_000;
@@ -56,124 +62,18 @@ export function assertMimeForType(type: MediaSendType, mimetype: string): void {
 }
 
 /**
- * Magic-byte sniffer for the formats WhatsApp/WABA accepts. Returns null
- * when bytes match nothing — caller falls back to declared type.
+ * Re-exported from `sniffed-media.ts` for back-compat with callers that
+ * import directly from `media-input.ts` (notably `upload-server.ts`).
+ * New code should import from `sniffed-media.ts` directly.
  */
-export function sniffMimetype(buffer: Buffer): string | null {
-  if (buffer.length < 4) return null;
+export const sniffMimetype = sniffMimetypeImpl;
 
-  // PNG: 89 50 4E 47 0D 0A 1A 0A
-  if (
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47
-  ) {
-    return "image/png";
-  }
-
-  // JPEG: FF D8 FF
-  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-    return "image/jpeg";
-  }
-
-  // GIF: "GIF87a" or "GIF89a"
-  if (
-    buffer[0] === 0x47 &&
-    buffer[1] === 0x49 &&
-    buffer[2] === 0x46 &&
-    buffer[3] === 0x38
-  ) {
-    return "image/gif";
-  }
-
-  // WebP: "RIFF" .... "WEBP"
-  if (
-    buffer.length >= 12 &&
-    buffer[0] === 0x52 &&
-    buffer[1] === 0x49 &&
-    buffer[2] === 0x46 &&
-    buffer[3] === 0x46 &&
-    buffer[8] === 0x57 &&
-    buffer[9] === 0x45 &&
-    buffer[10] === 0x42 &&
-    buffer[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-
-  // PDF: "%PDF"
-  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
-    return "application/pdf";
-  }
-
-  // ISO Base Media (MP4, M4A, MOV) — bytes 4..8 = "ftyp"
-  if (
-    buffer.length >= 12 &&
-    buffer[4] === 0x66 &&
-    buffer[5] === 0x74 &&
-    buffer[6] === 0x79 &&
-    buffer[7] === 0x70
-  ) {
-    const brand = buffer.slice(8, 12).toString("ascii");
-    if (brand === "M4A ") return "audio/mp4";
-    if (brand === "qt  ") return "video/quicktime";
-    if (brand.startsWith("3gp")) return "video/3gpp";
-    return "video/mp4";
-  }
-
-  // OGG: "OggS"
-  if (buffer[0] === 0x4f && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) {
-    return "audio/ogg";
-  }
-
-  // WAV: "RIFF" .... "WAVE"
-  if (
-    buffer.length >= 12 &&
-    buffer[0] === 0x52 &&
-    buffer[1] === 0x49 &&
-    buffer[2] === 0x46 &&
-    buffer[3] === 0x46 &&
-    buffer[8] === 0x57 &&
-    buffer[9] === 0x41 &&
-    buffer[10] === 0x56 &&
-    buffer[11] === 0x45
-  ) {
-    return "audio/wav";
-  }
-
-  // MP3 frame header (FF Ex/Fx) or ID3v2 tag ("ID3")
-  if (
-    (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) ||
-    (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33)
-  ) {
-    return "audio/mpeg";
-  }
-
-  return null;
-}
-
-const MIME_TO_EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/png": "png",
-  "image/gif": "gif",
-  "image/webp": "webp",
-  "video/mp4": "mp4",
-  "video/3gpp": "3gp",
-  "video/quicktime": "mov",
-  "audio/mpeg": "mp3",
-  "audio/mp4": "m4a",
-  "audio/ogg": "ogg",
-  "audio/wav": "wav",
-  "audio/webm": "weba",
-  "application/pdf": "pdf",
-  "application/zip": "zip",
-  "text/plain": "txt",
-};
-
+/**
+ * Re-exported from `sniffed-media.ts` — same back-compat rationale as
+ * `sniffMimetype`. New code should use `extensionFor` directly.
+ */
 export function extFromMime(mime: string): string {
-  return MIME_TO_EXT[mime.toLowerCase()] ?? "bin";
+  return extensionFor(mime);
 }
 
 /**
@@ -229,18 +129,15 @@ async function resolveLocalPath(absPath: string): Promise<ResolvedMedia> {
       );
     }
     const ext = path.extname(absPath).slice(1).toLowerCase();
-    const mimetype = sniffMimetype(buffer) ?? mimeFromExt(ext) ?? "application/octet-stream";
+    const sniffed = sniffMedia(buffer);
+    const mimetype =
+      sniffed?.mimetype ?? mimeFromExtension(ext) ?? "application/octet-stream";
     return { buffer, fileName: path.basename(absPath), mimetype };
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("send_file:")) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`send_file: cannot read local file ${absPath}: ${reason}`);
   }
-}
-
-function mimeFromExt(ext: string): string | null {
-  const entry = Object.entries(MIME_TO_EXT).find(([, e]) => e === ext);
-  return entry ? entry[0] : null;
 }
 
 async function resolveHttpUrl(url: string): Promise<ResolvedMedia> {
@@ -280,7 +177,7 @@ async function resolveHttpUrl(url: string): Promise<ResolvedMedia> {
   const contentTypeHeader = res.headers.get("content-type");
   const declaredMime = contentTypeHeader?.split(";")[0].trim() || null;
   const mimetype =
-    sniffMimetype(buffer) ?? declaredMime ?? "application/octet-stream";
+    sniffMimetypeImpl(buffer) ?? declaredMime ?? "application/octet-stream";
 
   return {
     buffer,
@@ -329,13 +226,13 @@ function fileNameFromUrl(url: string, contentType: string | null): string {
     const last = u.pathname.split("/").filter(Boolean).pop();
     if (last && /\.[a-z0-9]{1,8}$/i.test(last)) return decodeURIComponent(last);
     if (last) {
-      const ext = contentType ? extFromMime(contentType.split(";")[0].trim()) : "bin";
+      const ext = contentType ? extensionFor(contentType.split(";")[0].trim()) : "bin";
       return `${decodeURIComponent(last)}.${ext}`;
     }
   } catch {
     // fall through
   }
-  const ext = contentType ? extFromMime(contentType.split(";")[0].trim()) : "bin";
+  const ext = contentType ? extensionFor(contentType.split(";")[0].trim()) : "bin";
   return `media.${ext}`;
 }
 
@@ -361,6 +258,6 @@ function resolveDataUrl(input: string): ResolvedMedia {
   const declared = (mediatype ?? "application/octet-stream").trim();
   // Sniffer wins over the caller's declared mediatype — that's the
   // whole point of the resolver: produce a mimetype that matches the bytes.
-  const mimetype = sniffMimetype(buffer) ?? declared;
-  return { buffer, fileName: `media.${extFromMime(mimetype)}`, mimetype };
+  const mimetype = sniffMimetypeImpl(buffer) ?? declared;
+  return { buffer, fileName: `media.${extensionFor(mimetype)}`, mimetype };
 }
