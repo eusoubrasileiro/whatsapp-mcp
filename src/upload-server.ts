@@ -1,6 +1,7 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Logger } from "pino";
 import { MAX_MEDIA_BYTES, extFromMime, sniffMimetype } from "./media-input.ts";
+import { createRouter, type Route } from "./http-router.ts";
 
 export interface UploadServerOptions {
   /**
@@ -40,29 +41,19 @@ export function createUploadServer(
 ): Server {
   const maxBytes = options.maxBytes ?? MAX_MEDIA_BYTES;
 
-  return http.createServer(async (req, res) => {
-    const url = req.url ?? "/";
-    const method = req.method ?? "GET";
-
-    try {
-      if (method === "GET" && url === "/health") {
+  const routes: Route[] = [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async (_req, res) => {
         sendJson(res, 200, { status: "ok" });
-        return;
-      }
-
-      if (url === "/upload") {
-        if (method !== "POST") {
-          res.writeHead(405, { allow: "POST", "content-type": "text/plain" });
-          res.end("method not allowed");
-          return;
-        }
-
-        if (!authorize(req, options.authToken)) {
-          res.writeHead(401, { "content-type": "text/plain" });
-          res.end("unauthorized");
-          return;
-        }
-
+      },
+    },
+    {
+      method: "POST",
+      path: "/upload",
+      auth: "bearer",
+      handler: async (req, res) => {
         const body = await readBodyCapped(req, maxBytes);
         if (body === "too-large") {
           res.writeHead(413, { "content-type": "text/plain" });
@@ -98,29 +89,13 @@ export function createUploadServer(
           mimetype,
           size: body.length,
         });
-        return;
-      }
+      },
+    },
+  ];
 
-      res.writeHead(404, { "content-type": "text/plain" });
-      res.end("not found");
-    } catch (err) {
-      logger.error({ err, url, method }, "upload-server request failed");
-      if (!res.headersSent) {
-        res.writeHead(500, { "content-type": "text/plain" });
-        res.end("internal error");
-      } else {
-        res.end();
-      }
-    }
-  });
-}
-
-function authorize(req: IncomingMessage, authToken: string | undefined): boolean {
-  if (!authToken) return true;
-  const header = req.headers.authorization;
-  const raw = Array.isArray(header) ? header[0] : header;
-  if (!raw || !raw.startsWith("Bearer ")) return false;
-  return raw.slice(7) === authToken;
+  return http.createServer(
+    createRouter(routes, { logger, bearerToken: options.authToken }),
+  );
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
