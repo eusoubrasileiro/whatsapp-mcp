@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { createConnectionNotifier } from "../connection-notifier.ts";
+import { ConnectionFSM } from "../connection-fsm.ts";
 import type { NtfyMessage, SendNtfy } from "../ntfy.ts";
 
 function makeFakeTimer() {
@@ -263,5 +264,200 @@ describe("createConnectionNotifier", () => {
       expect(sent[0].title).toContain("indevido");
       expect(onBadPairing).toHaveBeenCalledOnce();
     });
+  });
+});
+
+describe("ConnectionFSM (explicit state machine)", () => {
+  let sent: NtfyMessage[];
+  let sendNtfy: SendNtfy;
+
+  beforeEach(() => {
+    sent = [];
+    sendNtfy = async (msg) => {
+      sent.push(msg);
+    };
+  });
+
+  it("starts in idle phase", () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    expect(fsm.phase).toBe("idle");
+  });
+
+  it("transitions idle → qr_pending on qrCode event", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "qrCode" });
+    expect(fsm.phase).toBe("qr_pending");
+  });
+
+  it("transitions qr_pending → connecting on connecting event", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "qrCode" });
+    await fsm.handle({ type: "connecting" });
+    expect(fsm.phase).toBe("connecting");
+  });
+
+  it("transitions to connected on connected event", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "connected", user: { id: "5531@s", name: "Alice" } });
+    expect(fsm.phase).toBe("connected");
+  });
+
+  it("transitions to disconnected on disconnected event", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "disconnected" });
+    expect(fsm.phase).toBe("disconnected");
+  });
+
+  it("idle → connected fires no notification (first-ever connect)", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "connected", user: { id: "5531@s", name: "Alice" } });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("qr_pending → connected fires no reconnect notification (initial pairing)", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "qrCode" });
+    expect(sent).toHaveLength(1); // QR push
+    await fsm.handle({ type: "connected", user: { id: "5531@s", name: "Alice" } });
+    expect(sent).toHaveLength(1); // no reconnect, just QR
+  });
+
+  it("disconnected (grace fires) → connected fires reconnected notification", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "disconnected" });
+    t.fire();
+    await new Promise((r) => setImmediate(r));
+    expect(sent).toHaveLength(1);
+    await fsm.handle({ type: "connected", user: { id: "5531@s", name: "Alice" } });
+    expect(sent).toHaveLength(2);
+    expect(sent[1].title).toContain("reconectado");
+    expect(fsm.phase).toBe("connected");
+  });
+
+  it("disconnected → connected within grace stays silent (both suppressed)", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "disconnected" });
+    await fsm.handle({ type: "connected", user: { id: "5531@s", name: "Alice" } });
+    expect(sent).toHaveLength(0);
+    expect(fsm.phase).toBe("connected");
+  });
+
+  it("re-fires qrCode in qr_pending phase is idempotent (no extra ntfy, no new timer)", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "qrCode" });
+    await fsm.handle({ type: "qrCode" });
+    await fsm.handle({ type: "qrCode" });
+    expect(sent).toHaveLength(1);
+    expect(t.setTimer).toHaveBeenCalledTimes(1);
+    expect(fsm.phase).toBe("qr_pending");
+  });
+
+  it("bad pairing transitions to disconnected and fires alert", async () => {
+    const t = makeFakeTimer();
+    const onBadPairing = vi.fn(async () => {});
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: "5531",
+      onBadPairing,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "connected", user: { id: "5599@s", name: "Stranger" } });
+    expect(fsm.phase).toBe("disconnected");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].title).toContain("indevido");
+    expect(onBadPairing).toHaveBeenCalledOnce();
+  });
+
+  it("connecting event in qr_pending phase cancels reminder", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "qrCode" });
+    expect(t.isCancelled()).toBe(false);
+    await fsm.handle({ type: "connecting" });
+    expect(t.isCancelled()).toBe(true);
+    expect(fsm.phase).toBe("connecting");
+  });
+
+  it("qrCode arriving in disconnected phase (within grace) flushes disconnect first", async () => {
+    const t = makeFakeTimer();
+    const fsm = new ConnectionFSM(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://wa.example/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await fsm.handle({ type: "disconnected" });
+    await fsm.handle({ type: "qrCode" });
+    expect(sent.map((m) => m.title)).toEqual([
+      expect.stringContaining("desconectado"),
+      expect.stringContaining("Escaneie"),
+    ]);
+    expect(fsm.phase).toBe("qr_pending");
   });
 });
