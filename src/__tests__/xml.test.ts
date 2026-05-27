@@ -1,5 +1,83 @@
 import { describe, it, expect } from "vitest";
-import { renderTranscription, renderImageDescription } from "../xml.ts";
+import { renderTranscription, renderImageDescription, renderEnvelope } from "../xml.ts";
+
+describe("renderEnvelope", () => {
+  it("renders tag, attributes (in declared order), and body", () => {
+    const out = renderEnvelope({
+      tag: "thing",
+      attrs: [
+        ["a", "1"],
+        ["b", "2"],
+        ["c", 3],
+      ],
+      body: "hello",
+    });
+    expect(out).toBe(`<thing a="1" b="2" c="3">\nhello\n</thing>`);
+  });
+
+  it("omits attributes whose value is undefined while preserving order of the rest", () => {
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [
+        ["a", "1"],
+        ["skipme", undefined],
+        ["b", "2"],
+      ],
+      body: "x",
+    });
+    expect(out).toBe(`<t a="1" b="2">\nx\n</t>`);
+  });
+
+  it("escapes XML-unsafe characters in attribute values", () => {
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [
+        ["q", `a"b&c<d>e`],
+      ],
+      body: "x",
+    });
+    expect(out).toContain(`q="a&quot;b&amp;c&lt;d&gt;e"`);
+  });
+
+  it("escapes XML-unsafe characters in body (no quote escaping)", () => {
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [],
+      body: `<script>alert('x' & "y")</script>`,
+    });
+    // body escapes <, >, & but not " or '
+    expect(out).toContain(`&lt;script&gt;alert('x' &amp; "y")&lt;/script&gt;`);
+  });
+
+  it("renders empty body with surrounding newlines", () => {
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [["a", "1"]],
+      body: "",
+    });
+    expect(out).toBe(`<t a="1">\n\n</t>`);
+  });
+
+  it("coerces numeric attribute values via String()", () => {
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [["n", 42]],
+      body: "x",
+    });
+    expect(out).toBe(`<t n="42">\nx\n</t>`);
+  });
+
+  it("renders no leading space before > when there are no attributes", () => {
+    // Note: existing transcription/image_description tests assert a space
+    // between tag and attrs; with zero attrs we should not emit a stray space.
+    const out = renderEnvelope({
+      tag: "t",
+      attrs: [],
+      body: "x",
+    });
+    expect(out).toBe(`<t>\nx\n</t>`);
+  });
+});
 
 describe("renderTranscription", () => {
   it("wraps content in <transcription> with declared attributes in deterministic order", () => {
