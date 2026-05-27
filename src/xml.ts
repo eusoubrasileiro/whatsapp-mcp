@@ -5,6 +5,10 @@
  * Claude-based stack (cf. wahub ADR-007 / prompt loader). Downstream agents
  * parse the wrapper tag (`<transcription>` / `<image_description>`) to
  * reliably separate model output from surrounding metadata.
+ *
+ * Envelopes are described declaratively as `{ tag, attrs, body }` and rendered
+ * by a single `renderEnvelope` function. New envelope shapes only need a new
+ * data builder (or an inline literal) — no new escape / formatting code.
  */
 
 function escapeAttr(value: string): string {
@@ -22,11 +26,21 @@ function escapeText(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function renderAttrs(attrs: Array<[string, string | number | undefined]>): string {
-  return attrs
+export type EnvelopeAttr = readonly [string, string | number | undefined];
+
+export interface Envelope {
+  tag: string;
+  attrs: ReadonlyArray<EnvelopeAttr>;
+  body: string;
+}
+
+export function renderEnvelope(env: Envelope): string {
+  const rendered = env.attrs
     .filter(([, v]) => v !== undefined && v !== null)
     .map(([k, v]) => `${k}="${escapeAttr(String(v))}"`)
     .join(" ");
+  const openTag = rendered.length > 0 ? `<${env.tag} ${rendered}>` : `<${env.tag}>`;
+  return `${openTag}\n${escapeText(env.body)}\n</${env.tag}>`;
 }
 
 export interface TranscriptionEnvelope {
@@ -38,13 +52,16 @@ export interface TranscriptionEnvelope {
 }
 
 export function renderTranscription(env: TranscriptionEnvelope): string {
-  const attrs = renderAttrs([
-    ["message_id", env.message_id],
-    ["chat_jid", env.chat_jid],
-    ["model", env.model],
-    ["duration_s", env.duration_s],
-  ]);
-  return `<transcription ${attrs}>\n${escapeText(env.text)}\n</transcription>`;
+  return renderEnvelope({
+    tag: "transcription",
+    attrs: [
+      ["message_id", env.message_id],
+      ["chat_jid", env.chat_jid],
+      ["model", env.model],
+      ["duration_s", env.duration_s],
+    ],
+    body: env.text,
+  });
 }
 
 export interface ImageDescriptionEnvelope {
@@ -55,10 +72,13 @@ export interface ImageDescriptionEnvelope {
 }
 
 export function renderImageDescription(env: ImageDescriptionEnvelope): string {
-  const attrs = renderAttrs([
-    ["message_id", env.message_id],
-    ["chat_jid", env.chat_jid],
-    ["model", env.model],
-  ]);
-  return `<image_description ${attrs}>\n${escapeText(env.text)}\n</image_description>`;
+  return renderEnvelope({
+    tag: "image_description",
+    attrs: [
+      ["message_id", env.message_id],
+      ["chat_jid", env.chat_jid],
+      ["model", env.model],
+    ],
+    body: env.text,
+  });
 }
