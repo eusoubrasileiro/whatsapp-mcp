@@ -56,3 +56,22 @@ export const schemaMeta = sqliteTable("schema_meta", {
   key: text("key").primaryKey(),
   value: text("value"),
 });
+
+/**
+ * Outbound webhook subscriptions. Each row is a delivery target that receives
+ * inbound WhatsApp messages from a curated allow-list of chats, in real time.
+ * Tenant-tagged for a future per-tenant SaaS (single `default` tenant today).
+ */
+export const webhookSubscriptions = sqliteTable("webhook_subscriptions", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  targetUrl: text("target_url").notNull(),
+  secret: text("secret"),
+  authMode: text("auth_mode").notNull().default("hmac"), // 'hmac' | 'bearer'
+  allowedJids: text("allowed_jids").notNull(),            // JSON array of canonical JIDs, or ["*"]
+  transcribe: integer("transcribe", { mode: "boolean" }).notNull().default(true),
+  label: text("label"),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});

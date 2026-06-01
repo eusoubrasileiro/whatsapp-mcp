@@ -9,6 +9,7 @@ import { registerGroupsTools } from "./mcp/tools/groups.ts";
 import { registerMediaTools } from "./mcp/tools/media.ts";
 import { registerMessagesTools } from "./mcp/tools/messages.ts";
 import { registerSendingTools } from "./mcp/tools/sending.ts";
+import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
 import type { ToolDeps } from "./mcp/tools/types.ts";
 
 export async function startMcpServer(
@@ -60,6 +61,7 @@ export async function startMcpServer(
   registerSendingTools(server, deps);
   registerActionsTools(server, deps);
   registerMediaTools(server, deps);
+  registerWebhooksTools(server, deps);
 
   // ── Resource ──────────────────────────────────────────────────────
 
@@ -78,6 +80,11 @@ TABLE messages (
   PK(id, chat_jid), FK(chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
 )
 TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
+TABLE webhook_subscriptions (
+  id TEXT PK, tenant_id TEXT, target_url TEXT, secret TEXT, auth_mode TEXT,
+  allowed_jids TEXT, transcribe INTEGER, label TEXT, active INTEGER,
+  created_at TEXT, updated_at TEXT
+)
         `.trim()
       };
     }

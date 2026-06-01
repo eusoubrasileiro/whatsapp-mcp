@@ -151,6 +151,23 @@ export function initializeDatabase(dbPath?: string): Database.Database {
       );
     `);
 
+  sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        target_url TEXT NOT NULL,
+        secret TEXT,
+        auth_mode TEXT NOT NULL DEFAULT 'hmac',
+        allowed_jids TEXT NOT NULL,
+        transcribe INTEGER NOT NULL DEFAULT 1,
+        label TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant_active ON webhook_subscriptions (tenant_id, active);`);
+
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_jid_aliases_canonical ON jid_aliases (canonical_jid);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages (chat_jid);`);
@@ -344,6 +361,49 @@ export function setMetaValue(key: string, value: string): void {
   } catch (error) {
     logError("Error writing schema_meta", error);
   }
+}
+
+// --- Webhook subscriptions (persistence for the outbound push platform) ---
+
+/**
+ * A webhook subscription as stored: `allowedJids` is a JSON string here; the
+ * registry parses it. Booleans are already coerced by drizzle (mode:boolean).
+ */
+export interface SubscriptionRow {
+  id: string;
+  tenantId: string;
+  targetUrl: string;
+  secret: string | null;
+  authMode: string;
+  allowedJids: string;
+  transcribe: boolean;
+  label: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function insertSubscriptionRow(row: SubscriptionRow): void {
+  getDb().insert(schema.webhookSubscriptions).values(row).run();
+}
+
+/** Delete a subscription scoped to its tenant. Returns true if a row was removed. */
+export function deleteSubscriptionRow(id: string, tenantId: string): boolean {
+  const res = getDb()
+    .delete(schema.webhookSubscriptions)
+    .where(
+      and(
+        eq(schema.webhookSubscriptions.id, id),
+        eq(schema.webhookSubscriptions.tenantId, tenantId),
+      ),
+    )
+    .run();
+  return res.changes > 0;
+}
+
+/** Every subscription row (all tenants, active and inactive). Used to hydrate the registry. */
+export function getAllSubscriptionRows(): SubscriptionRow[] {
+  return getDb().select().from(schema.webhookSubscriptions).all();
 }
 
 /** Every chat JID still stored in phone-number (`@s.whatsapp.net`) form. */

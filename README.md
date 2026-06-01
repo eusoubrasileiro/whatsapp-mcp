@@ -13,7 +13,7 @@ You want your personal WhatsApp account reachable as a set of tools from **Claud
 - **Public QR web page** (protected by paired-number check) — tap the ntfy push and scan directly from your phone browser
 - **ntfy push** on: first QR after disconnect, every 2min while still waiting, connection drop, reconnect after drop, and unexpected pairings
 - **Bad-pairing protection** — if someone else scans the public QR, the app auto-logs out and purges credentials (`EXPECTED_WA_NUMBER`)
-- **17 MCP tools** — search contacts/messages, list chats, send text/media, react, delete, mark read, download media (see table below)
+- **20 MCP tools** — search contacts/messages, list chats, send text/media, react, delete, mark read, download media, plus webhook subscriptions for real-time inbound push (see table below)
 - **Persistent SQLite** (chats/messages/contacts) and Baileys multi-file auth stored in a Docker volume
 
 ## Architecture
@@ -96,7 +96,7 @@ See [`examples/`](./examples/) for a raw HTTPS JSON-RPC transcript (curl), a Pyt
 
 ## MCP tools
 
-The server exposes 17 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
+The server exposes 20 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 
 | Category | Tools |
 |----------|-------|
@@ -108,6 +108,7 @@ The server exposes 17 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 | Sending | `send_message`, `send_file` |
 | Actions | `react_to_message`, `delete_message`, `mark_chat_read` |
 | Media | `download_media` (audio → transcription by default; image → opt-in description) |
+| Webhooks | `register_webhook`, `deregister_webhook`, `list_webhooks` (real-time inbound push to a reactive agent; allow-listed chats; HMAC-signed) |
 
 ## Deployment
 

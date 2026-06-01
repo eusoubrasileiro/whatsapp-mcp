@@ -35,7 +35,7 @@ Verify:
 ```bash
 claude mcp list          # whatsapp: ✓ Connected
 # In a session:
-/mcp                     # expects the 17 whatsapp tools listed
+/mcp                     # expects the 20 whatsapp tools listed
 ```
 
 The same JSON shape works for Claude Desktop (`~/.config/Claude/claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`). See `examples/mcp-clients.md` for all three.
@@ -160,7 +160,7 @@ These failures are **not regressions** — they exist on `main` and every branch
 ```
 src/
 ├── main.ts                # Entry point, createAppLogger(), graceful shutdown, startup order
-├── mcp.ts                 # MCP server, tool registration (17 tools); delegates to actions.ts
+├── mcp.ts                 # MCP server, tool registration (20 tools); delegates to actions.ts
 ├── actions.ts             # Application-layer use cases (executeLogout, executeGetGroupInfo,
 │                          #   executeReactToMessage, executeDeleteMessage, executeDownloadMedia,
 │                          #   executeMarkChatRead, assertSocketActive). Testable without FastMCP.
@@ -174,13 +174,19 @@ src/
 ├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
 ├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
 │                          #   the gap when send_file's file_path can't reach the agent's filesystem
+├── webhooks/              # Outbound inbound-message push (reactive subscribers, e.g. Hermes)
+│   ├── types.ts           #   Subscription, InboundMessageInput, InboundMessageEvent
+│   ├── event.ts           #   buildInboundEvent — pure payload builder
+│   ├── registry.ts        #   in-memory subscription cache over the DB (load/add/remove/match)
+│   ├── delivery.ts        #   signPayload (HMAC) + deliverEvent + dispatchInbound (ntfy-style isolation)
+│   └── actions.ts         #   executeRegisterWebhook / Deregister / List + resolveTenantId
 └── db/
-    └── schema.ts          # Drizzle table schemas
+    └── schema.ts          # Drizzle table schemas (incl. webhook_subscriptions)
 ```
 
 **Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
 
-## MCP Tools (17 total)
+## MCP Tools (20 total)
 
 ### Connection / Auth
 | Tool | Description |
@@ -230,6 +236,58 @@ src/
 | Tool | Description |
 |------|-------------|
 | `download_media` | Download media (image/video/audio/document/sticker). For audio messages `transcribe` defaults to `true` and returns an `<transcription>` XML block; pass `transcribe: false` for raw audio. For images, opt-in `describe: true` returns an `<image_description>` XML block via Gemini. See "Audio transcription & image description" below. |
+
+### Webhook subscriptions
+| Tool | Description |
+|------|-------------|
+| `register_webhook` | Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive. Params: `target_url`, `allowed_jids[]` (chats allowed to wake it, or `["*"]`), `secret?`, `auth_mode?` (`hmac` default \| `bearer`), `transcribe?` (default true), `label?`. Returns `{ id }`. |
+| `deregister_webhook` | Remove a subscription by `id`. Returns `{ removed }`. |
+| `list_webhooks` | List active subscriptions for the tenant (secret redacted → `has_secret`). |
+
+## Outbound webhook (inbound-message push)
+
+This MCP is otherwise poll-only; webhook subscriptions add the missing **outbound
+push** so an external agent (e.g. Hermes) becomes *reactive* — it is woken when a
+WhatsApp message arrives. See `docs/hermes-bridge-stories.md` (Epic E1). The push is
+generic and tenant-tagged, not Hermes-specific — any agent/product can subscribe.
+
+**Model.** A subscription is durable state in SQLite (`webhook_subscriptions`, in the
+backups), registered/removed at runtime via the three tools above. On each genuine
+inbound message (`type === "notify"`, not `is_from_me`), the MCP matches it against
+active subscriptions and POSTs an event to each matching target. Non-matching chats
+are **silently skipped** (still stored locally — no behavior change). With no
+subscriptions registered, the feature is inert (zero perf hit). Delivery is isolated
+exactly like ntfy: a down/slow/erroring target never throws and never drops the WA
+socket (fire-and-forget). Code: `src/webhooks/` (`event.ts` builder, `registry.ts`
+in-memory cache over the DB, `delivery.ts` sign+POST+dispatch, `actions.ts`); emit in
+`src/whatsapp.ts` `onMessageUpsert`; hydrated at boot by `loadRegistry()` in `main.ts`.
+
+**Allow-list + transcription.** Each subscription names the chats (person/group JIDs,
+canonicalized for LID↔PN) that may wake it. For matched `audio`/`ptt` messages the
+voice note is transcribed **once** (reusing the existing Whisper path) and inlined as
+`transcript` when the subscription has `transcribe: true`. Other media carry a typed
+indicator; the consumer can call `download_media` on demand.
+
+**Auth (per subscription).** `hmac` (default): each POST carries
+`X-Webhook-Signature: sha256=<hmac(`​`timestamp.body`​`)>` + `X-Webhook-Timestamp`; the
+secret is given once at registration and never re-transmitted — the subscriber
+recomputes and compares. `bearer`: `Authorization: Bearer <secret>` for consumers that
+can't verify HMAC. Secrets are never written to logs.
+
+**Event payload** (POST body):
+
+```json
+{ "event": "inbound_message", "tenant_id": "default", "subscription_id": "…",
+  "message_id": "…", "chat_jid": "…@s.whatsapp.net", "sender_jid": "…@s.whatsapp.net",
+  "timestamp": "2026-06-01T14:32:07.000Z", "is_from_me": false,
+  "content": "text body or empty for media", "transcript": "voice-note text or null",
+  "media": { "type": "ptt", "mimetype": "audio/ogg; codecs=opus", "file_size": 4821 } }
+```
+
+> **Not yet a multi-tenant SaaS.** Subscriptions are tenant-tagged (`TENANT_ID`,
+> `default` today) so the data model is forward-ready, but serving multiple tenants
+> needs one WhatsApp link per tenant (multiple Baileys sockets) — a separate, larger
+> effort. Bearer→tenant mapping and durable retry/queue are also deferred.
 
 ## Audio transcription & image description
 
@@ -558,6 +616,21 @@ CREATE TABLE contacts (
   name TEXT,
   notify TEXT,
   phone_number TEXT
+);
+
+-- Webhook subscriptions (outbound inbound-message push)
+CREATE TABLE webhook_subscriptions (
+  id TEXT PRIMARY KEY,            -- uuid
+  tenant_id TEXT NOT NULL,       -- 'default' today
+  target_url TEXT NOT NULL,
+  secret TEXT,                   -- HMAC key or Bearer token (nullable)
+  auth_mode TEXT NOT NULL DEFAULT 'hmac',   -- 'hmac' | 'bearer'
+  allowed_jids TEXT NOT NULL,    -- JSON array of canonical JIDs, or ["*"]
+  transcribe INTEGER NOT NULL DEFAULT 1,
+  label TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 ```
 
