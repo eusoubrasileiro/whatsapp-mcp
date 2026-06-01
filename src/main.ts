@@ -1,5 +1,6 @@
 import pino from "pino";
 import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
+import { loadRegistry } from "./webhooks/registry.ts";
 import { startWhatsAppConnection, getConnectionState, triggerRepair } from "./whatsapp.ts";
 import { startMcpServer } from "./mcp.ts";
 import { ensureBucketReady, putUpload } from "./storage.ts";
@@ -33,6 +34,10 @@ async function main() {
     mcpLogger.info("Initializing database...");
     initializeDatabase();
     mcpLogger.info("Database initialized successfully.");
+
+    // Hydrate webhook subscriptions before the WhatsApp connection emits, so
+    // inbound messages match against the persisted set on the very first upsert.
+    loadRegistry();
 
     if (process.env.S3_ENABLED === "true") {
       mcpLogger.info("Ensuring S3 bucket is ready...");

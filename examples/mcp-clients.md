@@ -27,7 +27,7 @@ Verify:
 ```bash
 claude mcp list     # whatsapp: ✓ Connected
 # inside a session:
-/mcp                # should list the 17 whatsapp tools
+/mcp                # should list the 20 whatsapp tools
 ```
 
 ## Claude Desktop
