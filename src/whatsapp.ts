@@ -32,6 +32,9 @@ import {
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
 import { resolveMediaInput, assertMimeForType } from "./media-input.ts";
+import { dispatchInbound } from "./webhooks/delivery.ts";
+import { toFlacMono16k } from "./transcribe/preprocess.ts";
+import { transcribeAudio } from "./transcribe/whisper.ts";
 
 /**
  * Base directory for auth_info.
@@ -157,6 +160,32 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
     : null;
   const sendNtfy = createNtfy(logger, ntfyConfig);
 
+  // Webhook push: transcribe an inbound voice note on demand for subscribers
+  // that opted in. Composes the existing download + Whisper path; injected into
+  // dispatchInbound to avoid a webhooks→whatsapp import cycle. Never throws.
+  const transcribeInbound = async (msg: ParsedMessage): Promise<string | null> => {
+    if (!msg.media_key || !msg.direct_path || !msg.media_type) return null;
+    try {
+      const { buffer } = await downloadMedia({
+        logger,
+        mediaKey: msg.media_key,
+        directPath: msg.direct_path,
+        mediaUrl: msg.media_url ?? null,
+        mediaType: msg.media_type as MediaType,
+        mimetype: msg.mimetype ?? null,
+        chatJid: msg.chat_jid,
+        messageId: msg.id,
+        fromMe: msg.is_from_me,
+      });
+      const flac = await toFlacMono16k(buffer);
+      const { text } = await transcribeAudio({ buffer: flac, filename: `${msg.id}.flac`, logger });
+      return text;
+    } catch (err) {
+      logger.warn({ err, msgId: msg.id }, "inbound webhook transcription failed");
+      return null;
+    }
+  };
+
   const notifier = createConnectionNotifier(logger, {
     sendNtfy,
     publicQrUrl: process.env.PUBLIC_QR_URL ?? "https://wa.amiticia.cc/",
@@ -270,6 +299,12 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
               `Storing message: ${parsed.content.substring(0, 50)}...`,
             );
             storeMessage(parsed);
+            // Outbound webhook push: only genuine inbound (notify), never our own
+            // sends (append/is_from_me). Fire-and-forget — dispatchInbound swallows
+            // all errors so a down subscriber can't stall ingest or drop the socket.
+            if (type === "notify" && !parsed.is_from_me) {
+              void dispatchInbound(parsed, { logger, transcribe: transcribeInbound });
+            }
           } else {
             logger.warn(
               { msgId: msg.key?.id, chatId: msg.key?.remoteJid },
