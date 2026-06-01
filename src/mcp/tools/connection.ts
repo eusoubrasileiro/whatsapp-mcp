@@ -1,10 +1,45 @@
 import { z } from "zod";
 import QRCode from "qrcode";
 import { spawn } from "node:child_process";
+import type { Logger } from "pino";
 
 import { connectionState, startWhatsAppConnection } from "../../whatsapp.ts";
 import { executeLogout } from "../../actions.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
+
+/**
+ * Open an image in the OS viewer — safely.
+ *
+ * Two guarantees, both load-bearing on a headless server (the canonical Docker
+ * deployment): (1) we never even attempt to spawn when there's no desktop
+ * session, and (2) we always attach an 'error' listener, because a missing
+ * opener binary makes `spawn` emit an 'error' event — and an EventEmitter with
+ * no 'error' listener rethrows it as an uncaught exception that crashes the
+ * whole process. That crash previously took the production container down
+ * whenever `get_connection_status` was called while a QR was pending.
+ */
+export function openImageInViewer(imagePath: string, logger: Logger): void {
+  const hasDesktop =
+    process.platform === "darwin" ||
+    process.platform === "win32" ||
+    Boolean(process.env.DISPLAY) ||
+    Boolean(process.env.WAYLAND_DISPLAY);
+  if (!hasDesktop) {
+    logger.info({ imagePath }, "Headless environment — QR PNG saved but not auto-opened");
+    return;
+  }
+  const opener =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32" ? "explorer" :
+    "xdg-open";
+  try {
+    const child = spawn(opener, [imagePath], { detached: true, stdio: "ignore" });
+    child.on("error", (err) => logger.warn({ err, imagePath }, "Failed to auto-open QR image"));
+    child.unref();
+  } catch (err) {
+    logger.warn({ err, imagePath }, "Failed to spawn image viewer");
+  }
+}
 
 export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger, waLogger } = deps;
@@ -21,16 +56,12 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
         await QRCode.toFile(qrPath, connectionState.qrCode, { scale: 10 });
         mcpLogger.info({ qrPath }, "QR code saved as PNG");
 
-        const child = spawn("xdg-open", [qrPath], {
-          detached: true,
-          stdio: "ignore",
-        });
-        child.unref();
+        openImageInViewer(qrPath, mcpLogger);
 
         return JSON.stringify({
           status: "qr_pending",
           qr_code_path: qrPath,
-          message: "QR code saved and opened. Scan with WhatsApp mobile (Settings > Linked Devices). Call this tool again after scanning.",
+          message: "QR code saved (and opened if a desktop session is available). Scan with WhatsApp mobile (Settings > Linked Devices), or open the QR web page. Call this tool again after scanning.",
         }, null, 2);
       }
 
