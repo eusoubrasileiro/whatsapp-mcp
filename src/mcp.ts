@@ -82,7 +82,7 @@ TABLE messages (
 TABLE contacts (jid TEXT PK, name TEXT, notify TEXT, phone_number TEXT)
 TABLE webhook_subscriptions (
   id TEXT PK, tenant_id TEXT, target_url TEXT, secret TEXT, auth_mode TEXT,
-  allowed_jids TEXT, transcribe INTEGER, label TEXT, active INTEGER,
+  allowed_jids TEXT, transcribe INTEGER, include_from_me INTEGER, label TEXT, active INTEGER,
   created_at TEXT, updated_at TEXT
 )
         `.trim()

@@ -261,6 +261,17 @@ describe("dispatchInbound", () => {
     expect(body.content).toBe("oi hermes");
   });
 
+  it("delivers a non-from-me message in a self-chat (the unconditional branch)", async () => {
+    addSubscription({ tenantId: "default", targetUrl: "https://h/self", allowedJids: ["5531@s.whatsapp.net"] });
+
+    await dispatchInbound(makeMsg({ is_from_me: false, content: "from someone else" }), {
+      logger: fakeLogger(),
+      ownJids: ["5531@s.whatsapp.net"],
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("matches a self-chat (keyed under your LID) when you allow-listed your NUMBER", async () => {
     // You register with your phone number; WhatsApp delivers your self-chat under
     // your LID. Detection + own-jid match should bridge that with zero config.
@@ -295,6 +306,12 @@ describe("isSelfChatJid", () => {
   it("matches your own number across @domain and :device suffixes", () => {
     expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777")).toBe(true);
     expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777:19@s.whatsapp.net")).toBe(true);
+  });
+
+  it("matches a LID self-chat against the account's own LID", () => {
+    expect(isSelfChatJid("333444555666777@lid", "333444555666777:22@lid")).toBe(true);
+    expect(isSelfChatJid("333444555666777@lid", "333444555666777@lid")).toBe(true);
+    expect(isSelfChatJid("333444555666777@lid", "5531@s.whatsapp.net")).toBe(false);
   });
 
   it("is false for other chats and when the user is unknown", () => {
