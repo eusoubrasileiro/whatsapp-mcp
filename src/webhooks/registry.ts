@@ -30,6 +30,7 @@ function rowToSubscription(row: SubscriptionRow): Subscription {
     authMode: row.authMode === "bearer" ? "bearer" : "hmac",
     allowedJids: JSON.parse(row.allowedJids) as string[],
     transcribe: row.transcribe,
+    includeFromMe: row.includeFromMe,
     label: row.label,
     active: row.active,
     createdAt: row.createdAt,
@@ -54,6 +55,7 @@ export interface NewSubscriptionInput {
   authMode?: AuthMode;
   allowedJids: string[];
   transcribe?: boolean;
+  includeFromMe?: boolean;
   label?: string | null;
 }
 
@@ -73,6 +75,7 @@ export function addSubscription(input: NewSubscriptionInput): Subscription {
     authMode: input.authMode ?? "hmac",
     allowedJids,
     transcribe: input.transcribe ?? true,
+    includeFromMe: input.includeFromMe ?? false,
     label: input.label ?? null,
     active: true,
     createdAt: now,

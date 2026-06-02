@@ -33,6 +33,7 @@ import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { createConnectionNotifier } from "./connection-notifier.ts";
 import { resolveMediaInput, assertMimeForType } from "./media-input.ts";
 import { dispatchInbound } from "./webhooks/delivery.ts";
+import { markSentByUs } from "./webhooks/sent-tracker.ts";
 import { toFlacMono16k } from "./transcribe/preprocess.ts";
 import { transcribeAudio } from "./transcribe/whisper.ts";
 
@@ -299,11 +300,22 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
               `Storing message: ${parsed.content.substring(0, 50)}...`,
             );
             storeMessage(parsed);
-            // Outbound webhook push: only genuine inbound (notify), never our own
-            // sends (append/is_from_me). Fire-and-forget — dispatchInbound swallows
-            // all errors so a down subscriber can't stall ingest or drop the socket.
-            if (type === "notify" && !parsed.is_from_me) {
-              void dispatchInbound(parsed, { logger, transcribe: transcribeInbound });
+            // Outbound webhook push: live messages only (notify), not history
+            // backfill (append). Direction is decided per-subscription inside
+            // dispatchInbound (include_from_me) and our own agent replies are
+            // suppressed there via the sent-tracker loop guard. Fire-and-forget —
+            // dispatchInbound swallows all errors so a down subscriber can't stall
+            // ingest or drop the socket.
+            if (type === "notify") {
+              // The account's own JIDs — phone-number (sock.user.id) and LID
+              // (sock.user.lid), device suffix stripped — let dispatch detect the
+              // self-chat and match it whether you allow-listed your number or LID.
+              // NOT connectionState.user, which is the display name ("Alice").
+              const u = socketState.socket?.user as { id?: string; lid?: string } | undefined;
+              const ownJids = [u?.id, u?.lid]
+                .filter((j): j is string => Boolean(j))
+                .map(normalizeJid);
+              void dispatchInbound(parsed, { logger, transcribe: transcribeInbound, ownJids });
             }
           } else {
             logger.warn(
@@ -358,6 +370,9 @@ export async function sendWhatsAppMessage(
   }
   const result = await sendTextMessage(sock, recipientJid, text, logger);
   if (result.success && result.messageId) {
+    // Loop guard: remember our own sends so the webhook never forwards an agent
+    // reply back to the agent when a self-chat subscription has include_from_me.
+    markSentByUs(result.messageId);
     return { key: { id: result.messageId } };
   }
   return;
@@ -393,6 +408,7 @@ export async function sendWhatsAppMedia(
   );
 
   if (result.success && result.messageId) {
+    markSentByUs(result.messageId); // loop guard — see sendWhatsAppMessage
     return { key: { id: result.messageId } };
   }
   return;

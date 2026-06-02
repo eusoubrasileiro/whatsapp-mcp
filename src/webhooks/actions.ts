@@ -25,6 +25,7 @@ export interface RegisterWebhookInput {
   secret?: string;
   auth_mode?: AuthMode;
   transcribe?: boolean;
+  include_from_me?: boolean;
   label?: string;
 }
 
@@ -34,6 +35,7 @@ export interface PublicSubscription {
   target_url: string;
   allowed_jids: string[];
   transcribe: boolean;
+  include_from_me: boolean;
   auth_mode: AuthMode;
   label: string | null;
   active: boolean;
@@ -65,6 +67,7 @@ export function executeRegisterWebhook(input: RegisterWebhookInput): { id: strin
     authMode: input.auth_mode,
     allowedJids: input.allowed_jids,
     transcribe: input.transcribe,
+    includeFromMe: input.include_from_me,
     label: input.label,
   });
   return { id: sub.id };
@@ -84,6 +87,7 @@ function toPublic(s: Subscription): PublicSubscription {
     target_url: s.targetUrl,
     allowed_jids: s.allowedJids,
     transcribe: s.transcribe,
+    include_from_me: s.includeFromMe,
     auth_mode: s.authMode,
     label: s.label,
     active: s.active,

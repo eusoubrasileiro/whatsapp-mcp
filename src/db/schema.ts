@@ -70,6 +70,7 @@ export const webhookSubscriptions = sqliteTable("webhook_subscriptions", {
   authMode: text("auth_mode").notNull().default("hmac"), // 'hmac' | 'bearer'
   allowedJids: text("allowed_jids").notNull(),            // JSON array of canonical JIDs, or ["*"]
   transcribe: integer("transcribe", { mode: "boolean" }).notNull().default(true),
+  includeFromMe: integer("include_from_me", { mode: "boolean" }).notNull().default(false),
   label: text("label"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull(),

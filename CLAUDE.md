@@ -178,7 +178,8 @@ src/
 │   ├── types.ts           #   Subscription, InboundMessageInput, InboundMessageEvent
 │   ├── event.ts           #   buildInboundEvent — pure payload builder
 │   ├── registry.ts        #   in-memory subscription cache over the DB (load/add/remove/match)
-│   ├── delivery.ts        #   signPayload (HMAC) + deliverEvent + dispatchInbound (ntfy-style isolation)
+│   ├── delivery.ts        #   signPayload (HMAC) + deliverEvent + dispatchInbound + isSelfChatJid
+│   ├── sent-tracker.ts    #   loop guard: remembers our own sends so replies don't echo back
 │   └── actions.ts         #   executeRegisterWebhook / Deregister / List + resolveTenantId
 └── db/
     └── schema.ts          # Drizzle table schemas (incl. webhook_subscriptions)
@@ -240,7 +241,7 @@ src/
 ### Webhook subscriptions
 | Tool | Description |
 |------|-------------|
-| `register_webhook` | Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive. Params: `target_url`, `allowed_jids[]` (chats allowed to wake it, or `["*"]`), `secret?`, `auth_mode?` (`hmac` default \| `bearer`), `transcribe?` (default true), `label?`. Returns `{ id }`. |
+| `register_webhook` | Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive. Params: `target_url`, `allowed_jids[]` (chats allowed to wake it, or `["*"]`), `secret?`, `auth_mode?` (`hmac` default \| `bearer`), `transcribe?` (default true), `include_from_me?` (default false — forward your own messages in a chat shared with others; **not needed for a self-chat**, which auto-forwards), `label?`. Returns `{ id }`. |
 | `deregister_webhook` | Remove a subscription by `id`. Returns `{ removed }`. |
 | `list_webhooks` | List active subscriptions for the tenant (secret redacted → `has_secret`). |
 
@@ -252,15 +253,28 @@ WhatsApp message arrives. See `docs/hermes-bridge-stories.md` (Epic E1). The pus
 generic and tenant-tagged, not Hermes-specific — any agent/product can subscribe.
 
 **Model.** A subscription is durable state in SQLite (`webhook_subscriptions`, in the
-backups), registered/removed at runtime via the three tools above. On each genuine
-inbound message (`type === "notify"`, not `is_from_me`), the MCP matches it against
-active subscriptions and POSTs an event to each matching target. Non-matching chats
-are **silently skipped** (still stored locally — no behavior change). With no
-subscriptions registered, the feature is inert (zero perf hit). Delivery is isolated
-exactly like ntfy: a down/slow/erroring target never throws and never drops the WA
-socket (fire-and-forget). Code: `src/webhooks/` (`event.ts` builder, `registry.ts`
-in-memory cache over the DB, `delivery.ts` sign+POST+dispatch, `actions.ts`); emit in
-`src/whatsapp.ts` `onMessageUpsert`; hydrated at boot by `loadRegistry()` in `main.ts`.
+backups), registered/removed at runtime via the three tools above. On each **live**
+message (`type === "notify"`, not history backfill), the MCP matches it against active
+subscriptions and POSTs an event to each matching target. Non-matching chats are
+**silently skipped** (still stored locally — no behavior change). With no subscriptions
+registered, the feature is inert (zero perf hit). Delivery is isolated exactly like
+ntfy: a down/slow/erroring target never throws and never drops the WA socket
+(fire-and-forget). Code: `src/webhooks/` (`event.ts` builder, `registry.ts` in-memory
+cache over the DB, `delivery.ts` sign+POST+dispatch+self-chat detect, `sent-tracker.ts`
+loop guard, `actions.ts`); emit in `src/whatsapp.ts` `onMessageUpsert`; hydrated at boot
+by `loadRegistry()` in `main.ts`.
+
+**Direction & the talk-to-yourself pattern.** The headline use case is chatting with an
+agent by messaging your **own** WhatsApp (a self-chat), à la Hermes's built-in bridge —
+your messages are `is_from_me`. So forwarding is decided per message:
+- Genuine inbound (`is_from_me=false`) → always forwarded (if the chat is allow-listed).
+- Your own message (`is_from_me=true`) → forwarded when it's your **self-chat** (auto-detected
+  by comparing `chat_jid` to the connected account's number — zero config) **or** the
+  subscription set `include_from_me: true` (to include your messages in a chat shared with
+  others, e.g. a group).
+- **Loop guard:** the agent's own replies are sent through this MCP and echo back as
+  `is_from_me`; every id this MCP sends is tracked (`sent-tracker.ts`) and never forwarded,
+  so the agent can't react to itself. This always wins, even in a self-chat.
 
 **Allow-list + transcription.** Each subscription names the chats (person/group JIDs,
 canonicalized for LID↔PN) that may wake it. For matched `audio`/`ptt` messages the
@@ -627,6 +641,7 @@ CREATE TABLE webhook_subscriptions (
   auth_mode TEXT NOT NULL DEFAULT 'hmac',   -- 'hmac' | 'bearer'
   allowed_jids TEXT NOT NULL,    -- JSON array of canonical JIDs, or ["*"]
   transcribe INTEGER NOT NULL DEFAULT 1,
+  include_from_me INTEGER NOT NULL DEFAULT 0,  -- forward your own msgs in shared chats (self-chat auto)
   label TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
