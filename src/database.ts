@@ -160,6 +160,7 @@ export function initializeDatabase(dbPath?: string): Database.Database {
         auth_mode TEXT NOT NULL DEFAULT 'hmac',
         allowed_jids TEXT NOT NULL,
         transcribe INTEGER NOT NULL DEFAULT 1,
+        include_from_me INTEGER NOT NULL DEFAULT 0,
         label TEXT,
         active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
@@ -167,6 +168,12 @@ export function initializeDatabase(dbPath?: string): Database.Database {
       );
     `);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant_active ON webhook_subscriptions (tenant_id, active);`);
+  // Migration for DBs created before include_from_me existed (safe to re-run).
+  try {
+    sqlite.exec(`ALTER TABLE webhook_subscriptions ADD COLUMN include_from_me INTEGER NOT NULL DEFAULT 0;`);
+  } catch {
+    // Column already exists — ignore.
+  }
 
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_jid_aliases_canonical ON jid_aliases (canonical_jid);`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);`);
@@ -377,6 +384,7 @@ export interface SubscriptionRow {
   authMode: string;
   allowedJids: string;
   transcribe: boolean;
+  includeFromMe: boolean;
   label: string | null;
   active: boolean;
   createdAt: string;

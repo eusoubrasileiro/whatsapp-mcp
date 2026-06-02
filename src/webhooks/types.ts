@@ -20,6 +20,13 @@ export interface Subscription {
   allowedJids: string[];
   /** When true, forwarded voice notes are transcribed before delivery. */
   transcribe: boolean;
+  /**
+   * When true, the user's OWN messages (is_from_me) in allow-listed chats are
+   * forwarded — the talk-to-yourself pattern (you message Hermes in a self-chat).
+   * Hermes's own replies are always suppressed regardless (loop guard). Default
+   * false, so a customer-facing bot only sees genuine inbound.
+   */
+  includeFromMe: boolean;
   label: string | null;
   active: boolean;
   createdAt: string;
@@ -52,7 +59,7 @@ export interface InboundMessageEvent {
   chat_jid: string;
   sender_jid: string | null;
   timestamp: string; // ISO 8601
-  is_from_me: false;
+  is_from_me: boolean;
   content: string;
   transcript: string | null;
   media: {

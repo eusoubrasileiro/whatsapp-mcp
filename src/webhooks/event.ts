@@ -23,7 +23,7 @@ export function buildInboundEvent(
     chat_jid: msg.chat_jid,
     sender_jid: msg.sender ?? null,
     timestamp: msg.timestamp.toISOString(),
-    is_from_me: false,
+    is_from_me: msg.is_from_me,
     content: msg.content,
     transcript,
     media: msg.media_type

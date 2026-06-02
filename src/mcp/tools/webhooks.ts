@@ -34,11 +34,16 @@ export function registerWebhooksTools(server: ToolRegistrar, deps: ToolDeps): vo
         .optional()
         .default(true)
         .describe("Auto-transcribe forwarded voice notes before delivery (default true)"),
+      include_from_me: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Forward YOUR OWN messages (is_from_me) in a chat shared with OTHERS (a group/contact). NOT needed for a self-chat (allow-listing your own number) — those auto-forward your messages so talk-to-yourself works with zero config. The agent's own replies are always suppressed to prevent loops. Default false (a customer-facing bot only sees genuine inbound)."),
       label: z.string().optional().describe("Human label for managing this subscription"),
     }),
-    execute: async ({ target_url, allowed_jids, secret, auth_mode, transcribe, label }) => {
-      mcpLogger.info(`[MCP Tool] Executing register_webhook for ${target_url} (${allowed_jids.length} jid(s))`);
-      const result = executeRegisterWebhook({ target_url, allowed_jids, secret, auth_mode, transcribe, label });
+    execute: async ({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label }) => {
+      mcpLogger.info(`[MCP Tool] Executing register_webhook for ${target_url} (${allowed_jids.length} jid(s), include_from_me=${include_from_me})`);
+      const result = executeRegisterWebhook({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label });
       return JSON.stringify(result, null, 2);
     },
   });

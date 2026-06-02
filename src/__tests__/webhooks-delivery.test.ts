@@ -4,10 +4,11 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "pino";
 
-import { deliverEvent, dispatchInbound, signPayload } from "../webhooks/delivery.ts";
+import { deliverEvent, dispatchInbound, isSelfChatJid, signPayload } from "../webhooks/delivery.ts";
 import type { InboundMessageInput, Subscription } from "../webhooks/types.ts";
 import { initializeDatabase, resetDatabase } from "../database.ts";
 import { addSubscription, loadRegistry, resetRegistry } from "../webhooks/registry.ts";
+import { markSentByUs, resetSentTracker } from "../webhooks/sent-tracker.ts";
 
 function fakeLogger() {
   return { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger & {
@@ -25,6 +26,7 @@ function makeSub(overrides: Partial<Subscription> = {}): Subscription {
     authMode: "hmac",
     allowedJids: ["5531@s.whatsapp.net"],
     transcribe: true,
+    includeFromMe: false,
     label: null,
     active: true,
     createdAt: "2026-06-01T00:00:00.000Z",
@@ -151,6 +153,7 @@ describe("dispatchInbound", () => {
     globalThis.fetch = originalFetch;
     resetRegistry();
     resetDatabase();
+    resetSentTracker();
     vi.restoreAllMocks();
   });
 
@@ -201,6 +204,103 @@ describe("dispatchInbound", () => {
     expect(transcribe).not.toHaveBeenCalled();
     const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
     expect(body.transcript).toBeNull();
+  });
+
+  it("forwards an is_from_me message only to subscriptions with include_from_me", async () => {
+    addSubscription({ tenantId: "default", targetUrl: "https://h/in-only", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self-chat",
+      allowedJids: ["5531@s.whatsapp.net"],
+      includeFromMe: true,
+    });
+
+    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), { logger: fakeLogger() });
+
+    // Only the include_from_me subscription receives it; the inbound-only one is skipped.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(url).toBe("https://h/self-chat");
+    const body = JSON.parse(init?.body as string);
+    expect(body.is_from_me).toBe(true);
+    expect(body.content).toBe("oi hermes");
+  });
+
+  it("never forwards a message this MCP sent (loop guard), even with include_from_me", async () => {
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self-chat",
+      allowedJids: ["5531@s.whatsapp.net"],
+      includeFromMe: true,
+    });
+    markSentByUs("REPLY1"); // Hermes's own reply echoing back
+
+    await dispatchInbound(makeMsg({ id: "REPLY1", is_from_me: true, content: "I am Hermes" }), {
+      logger: fakeLogger(),
+    });
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("auto-forwards your own messages in a self-chat without include_from_me", async () => {
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self",
+      allowedJids: ["5531@s.whatsapp.net"], // your own number — a self-chat
+      // note: includeFromMe NOT set (defaults false)
+    });
+
+    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), {
+      logger: fakeLogger(),
+      ownJids: ["5531@s.whatsapp.net"],
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    expect(body.is_from_me).toBe(true);
+    expect(body.content).toBe("oi hermes");
+  });
+
+  it("matches a self-chat (keyed under your LID) when you allow-listed your NUMBER", async () => {
+    // You register with your phone number; WhatsApp delivers your self-chat under
+    // your LID. Detection + own-jid match should bridge that with zero config.
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self",
+      allowedJids: ["5531@s.whatsapp.net"], // your number, not your LID
+    });
+
+    await dispatchInbound(
+      makeMsg({ chat_jid: "111@lid", is_from_me: true, content: "oi" }),
+      { logger: fakeLogger(), ownJids: ["5531@s.whatsapp.net", "111@lid"] },
+    );
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("still suppresses the agent's own reply in a self-chat (loop guard wins)", async () => {
+    addSubscription({ tenantId: "default", targetUrl: "https://h/self", allowedJids: ["5531@s.whatsapp.net"] });
+    markSentByUs("REPLY9");
+
+    await dispatchInbound(makeMsg({ id: "REPLY9", is_from_me: true }), {
+      logger: fakeLogger(),
+      ownJids: ["5531@s.whatsapp.net"],
+    });
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("isSelfChatJid", () => {
+  it("matches your own number across @domain and :device suffixes", () => {
+    expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777")).toBe(true);
+    expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777:19@s.whatsapp.net")).toBe(true);
+  });
+
+  it("is false for other chats and when the user is unknown", () => {
+    expect(isSelfChatJid("999@s.whatsapp.net", "553188887777")).toBe(false);
+    expect(isSelfChatJid("120363@g.us", "553188887777")).toBe(false);
+    expect(isSelfChatJid("553188887777@s.whatsapp.net", null)).toBe(false);
   });
 });
 
