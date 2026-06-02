@@ -42,7 +42,9 @@ export function registerWebhooksTools(server: ToolRegistrar, deps: ToolDeps): vo
       label: z.string().optional().describe("Human label for managing this subscription"),
     }),
     execute: async ({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label }) => {
-      mcpLogger.info(`[MCP Tool] Executing register_webhook for ${target_url} (${allowed_jids.length} jid(s), include_from_me=${include_from_me})`);
+      // Redact any user:pass@ embedded in the URL before logging.
+      const safeUrl = target_url.replace(/\/\/[^/@]*@/, "//[redacted]@");
+      mcpLogger.info(`[MCP Tool] Executing register_webhook for ${safeUrl} (${allowed_jids.length} jid(s), include_from_me=${include_from_me})`);
       const result = executeRegisterWebhook({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label });
       return JSON.stringify(result, null, 2);
     },

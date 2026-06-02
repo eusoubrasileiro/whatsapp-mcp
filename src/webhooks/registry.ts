@@ -62,11 +62,10 @@ export interface NewSubscriptionInput {
 /** Persist a new subscription and add it to the cache. Returns the stored subscription. */
 export function addSubscription(input: NewSubscriptionInput): Subscription {
   const now = new Date().toISOString();
-  // Canonicalize allow-list entries up front so matching is a plain membership
-  // test, and a LID-form chat still matches a PN-form entry (and vice versa).
-  const allowedJids = input.allowedJids.map((j) =>
-    j === "*" ? "*" : resolveCanonicalJid(j),
-  );
+  // Store the allow-list JIDs as given (raw). Canonicalization happens at match
+  // time, not here — otherwise a PN↔LID alias learned AFTER registration would
+  // leave a frozen canonical form that silently stops matching.
+  const allowedJids = [...input.allowedJids];
   const sub: Subscription = {
     id: randomUUID(),
     tenantId: input.tenantId,
@@ -110,6 +109,7 @@ export function matchSubscriptions(chatJid: string): Subscription[] {
   return cache.filter(
     (s) =>
       s.active &&
-      (s.allowedJids.includes("*") || s.allowedJids.includes(canonical)),
+      (s.allowedJids.includes("*") ||
+        s.allowedJids.some((j) => resolveCanonicalJid(j) === canonical)),
   );
 }

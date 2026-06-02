@@ -9,6 +9,7 @@ import { registerGroupsTools } from "../mcp/tools/groups.ts";
 import { registerSendingTools } from "../mcp/tools/sending.ts";
 import { registerActionsTools } from "../mcp/tools/actions.ts";
 import { registerMediaTools } from "../mcp/tools/media.ts";
+import { registerWebhooksTools } from "../mcp/tools/webhooks.ts";
 
 import type { ToolRegistrar, ToolDeps } from "../mcp/tools/types.ts";
 
@@ -83,6 +84,16 @@ describe("MCP tool registries", () => {
     const { registrar, names } = createStubRegistrar();
     registerMediaTools(registrar, deps());
     expect(names).toEqual(["download_media"]);
+  });
+
+  it("webhooks registers register/deregister/list tools", () => {
+    const { registrar, names } = createStubRegistrar();
+    registerWebhooksTools(registrar, deps());
+    expect(names).toEqual([
+      "register_webhook",
+      "deregister_webhook",
+      "list_webhooks",
+    ]);
   });
 });
 

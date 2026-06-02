@@ -286,7 +286,15 @@ indicator; the consumer can call `download_media` on demand.
 `X-Webhook-Signature: sha256=<hmac(`​`timestamp.body`​`)>` + `X-Webhook-Timestamp`; the
 secret is given once at registration and never re-transmitted — the subscriber
 recomputes and compares. `bearer`: `Authorization: Bearer <secret>` for consumers that
-can't verify HMAC. Secrets are never written to logs.
+can't verify HMAC. Secrets are never written to logs. **Subscribers should also reject
+deliveries whose `X-Webhook-Timestamp` is more than ~5 min from now** (replay guard —
+the MCP signs but can't enforce the window; the receiver must).
+
+> **Security notes.** `target_url` may be an internal/private address — that's
+> intentional (the agent/Hermes often runs on the same private network), so internal
+> URLs are *not* blocked; the gate is the `MCP_AUTH_TOKEN` on the registration call.
+> `matchSubscriptions` is tenant-agnostic today (one WhatsApp account) — add a tenant
+> filter before onboarding a second tenant.
 
 **Event payload** (POST body):
 
