@@ -4,6 +4,7 @@ import pino from "pino";
 import { registerConnectionTools } from "../mcp/tools/connection.ts";
 import { registerContactsTools } from "../mcp/tools/contacts.ts";
 import { registerMessagesTools } from "../mcp/tools/messages.ts";
+import { registerMonitoringTools } from "../mcp/tools/monitoring.ts";
 import { registerChatsTools } from "../mcp/tools/chats.ts";
 import { registerGroupsTools } from "../mcp/tools/groups.ts";
 import { registerSendingTools } from "../mcp/tools/sending.ts";
@@ -50,6 +51,12 @@ describe("MCP tool registries", () => {
       "search_messages",
       "get_message_context",
     ]);
+  });
+
+  it("monitoring registers get_new_messages and wait_for_messages", () => {
+    const { registrar, names } = createStubRegistrar();
+    registerMonitoringTools(registrar, deps());
+    expect(names).toEqual(["get_new_messages", "wait_for_messages"]);
   });
 
   it("chats registers list_chats and get_chat", () => {

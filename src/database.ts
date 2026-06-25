@@ -1027,6 +1027,42 @@ export function getMessagesWithDateFilter(
   }
 }
 
+/**
+ * Forward-cursor read for reactive monitoring: messages with
+ * `timestamp >= since`, oldest-first, across one or more chats. Each chat JID is
+ * expanded via `getAliasGroup` so a cursor expressed in either the LID or
+ * phone-number twin still matches the canonical chat. `chatJids` null/empty
+ * scans every chat. The inclusive `gte` boundary makes the cursor
+ * at-least-once — callers dedupe by `(id, chat_jid)`.
+ */
+export function getMessagesSince(
+  chatJids: string[] | null,
+  since: string,
+  limit: number = 50,
+): Message[] {
+  const db = getDb();
+  try {
+    const filters: SQL[] = [gte(schema.messages.timestamp, since)];
+    if (chatJids && chatJids.length > 0) {
+      const group = [...new Set(chatJids.flatMap((j) => getAliasGroup(j)))];
+      filters.push(inArray(schema.messages.chatJid, group));
+    }
+
+    const rows = db.select(messageColumns)
+    .from(schema.messages)
+    .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+    .where(and(...filters))
+    .orderBy(asc(schema.messages.timestamp))
+    .limit(limit)
+    .all();
+
+    return rows.map(rowToMessage);
+  } catch (error) {
+    logError("Error getting messages since", error);
+    return [];
+  }
+}
+
 export function resetDatabase(): void {
   if (sqliteInstance) {
     sqliteInstance.close();

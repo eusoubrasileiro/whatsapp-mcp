@@ -15,6 +15,8 @@ import {
   getContactName,
   getContacts,
   getMessagesWithDateFilter,
+  getMessagesSince,
+  recordJidMapping,
   searchDbForContacts,
   searchMessages,
   getMessageById,
@@ -280,6 +282,64 @@ describe("database", () => {
       }));
       const msgs = getMessagesWithDateFilter(null, "2025-03-01T00:00:00Z", "2025-05-01T00:00:00Z", 10, 0);
       expect(msgs).toHaveLength(2);
+    });
+  });
+
+  // ── getMessagesSince (forward cursor) ────────────────────────────
+
+  describe("getMessagesSince", () => {
+    beforeEach(() => {
+      storeMessage(makeMsg({
+        id: "a", chat_jid: "c1@s.whatsapp.net", content: "A",
+        timestamp: new Date("2025-06-01T10:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "b", chat_jid: "c1@s.whatsapp.net", content: "B",
+        timestamp: new Date("2025-06-01T11:00:00Z"),
+      }));
+      storeMessage(makeMsg({
+        id: "c", chat_jid: "c2@s.whatsapp.net", content: "C",
+        timestamp: new Date("2025-06-01T12:00:00Z"),
+      }));
+    });
+
+    it("returns only messages at or after the cursor (inclusive gte)", () => {
+      const msgs = getMessagesSince(null, "2025-06-01T11:00:00.000Z");
+      expect(msgs.map((m) => m.id)).toEqual(["b", "c"]);
+    });
+
+    it("orders results oldest-first (ascending)", () => {
+      const msgs = getMessagesSince(null, "2025-06-01T00:00:00.000Z");
+      expect(msgs.map((m) => m.id)).toEqual(["a", "b", "c"]);
+    });
+
+    it("filters to the given chats", () => {
+      const msgs = getMessagesSince(["c1@s.whatsapp.net"], "2025-06-01T00:00:00.000Z");
+      expect(msgs.map((m) => m.id)).toEqual(["a", "b"]);
+    });
+
+    it("honors the limit", () => {
+      const msgs = getMessagesSince(null, "2025-06-01T00:00:00.000Z", 2);
+      expect(msgs.map((m) => m.id)).toEqual(["a", "b"]);
+    });
+
+    it("returns empty when nothing is newer than the cursor", () => {
+      const msgs = getMessagesSince(null, "2025-06-02T00:00:00.000Z");
+      expect(msgs).toEqual([]);
+    });
+
+    it("matches via the LID/phone-number alias group", () => {
+      const pn = "5511888888888@s.whatsapp.net";
+      const lid = "111122223333@lid";
+      recordJidMapping(pn, lid);
+      storeChat({ jid: lid, name: "Aliased" });
+      storeMessage(makeMsg({
+        id: "x", chat_jid: lid, content: "via lid", sender: lid,
+        timestamp: new Date("2025-06-01T13:00:00Z"),
+      }));
+      // Querying by the phone-number twin still finds the LID-keyed message.
+      const msgs = getMessagesSince([pn], "2025-06-01T00:00:00.000Z");
+      expect(msgs.map((m) => m.id)).toContain("x");
     });
   });
 

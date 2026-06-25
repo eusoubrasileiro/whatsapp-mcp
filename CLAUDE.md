@@ -174,6 +174,10 @@ src/
 ├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
 ├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
 │                          #   the gap when send_file's file_path can't reach the agent's filesystem
+├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
+│                          #   waitForInbound backs the wait_for_messages long-poll
+├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
+│                          #   getNewMessagesCore (delta) + waitForMessagesCore (long-poll)
 ├── webhooks/              # Outbound inbound-message push (reactive subscribers, e.g. Hermes)
 │   ├── types.ts           #   Subscription, InboundMessageInput, InboundMessageEvent
 │   ├── event.ts           #   buildInboundEvent — pure payload builder
@@ -187,7 +191,7 @@ src/
 
 **Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
 
-## MCP Tools (20 total)
+## MCP Tools (22 total)
 
 ### Connection / Auth
 | Tool | Description |
@@ -208,6 +212,12 @@ src/
 | `get_messages_today` | Convenience tool for today's messages |
 | `search_messages` | Full-text search with optional date filtering |
 | `get_message_context` | Get messages before/after a target message |
+
+### Reactive monitoring
+| Tool | Description |
+|------|-------------|
+| `get_new_messages` | Delta read: messages received since a cursor, across one or many chats. Params: `chat_jids?` (omit/`["*"]` = all), `since?` (ISO; inclusive), `limit?` (50), `include_from_me?` (false). Returns `{ messages, next_since }`. Cheap replacement for re-scanning each chat. |
+| `wait_for_messages` | Long-poll: BLOCKS until a new message arrives in the watched chats or `timeout_seconds?` (default 60, max 240) elapses, then returns `{ messages, next_since }` (immediate if one already arrived). Blocking is free while idle — call in a loop with the rolling `next_since` to react to hour-late replies without burning tokens polling. |
 
 ### Chats
 | Tool | Description |
@@ -244,6 +254,41 @@ src/
 | `register_webhook` | Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive. Params: `target_url`, `allowed_jids[]` (chats allowed to wake it, or `["*"]`), `secret?`, `auth_mode?` (`hmac` default \| `bearer`), `transcribe?` (default true), `include_from_me?` (default false — forward your own messages in a chat shared with others; **not needed for a self-chat**, which auto-forwards), `label?`. Returns `{ id }`. |
 | `deregister_webhook` | Remove a subscription by `id`. Returns `{ removed }`. |
 | `list_webhooks` | List active subscriptions for the tenant (secret redacted → `has_secret`). |
+
+## Reactive monitoring (pull primitives)
+
+`get_new_messages` + `wait_for_messages` let an **ephemeral agent** (e.g. one messaging
+many clinic receptionists and waiting on replies) become *reactive* without the outbound
+webhook's external infra. The motivating case: an agent polled `list_messages` ~95× across
+~15 chats to notice replies — token-expensive and clumsy.
+
+**Model.** Both tools read one authoritative DB delta (`getMessagesSince`, forward `gte`
+cursor, oldest-first, LID/PN-canonicalized) and apply the same filters: the
+`sent-tracker` loop guard (drop the agent's own sends) and a direction filter (drop your
+own `is_from_me` unless `include_from_me`). `get_new_messages` is the cheap cursor read.
+`wait_for_messages` blocks on the in-process `inbound-bus` (`src/inbound-bus.ts`) — woken
+by `emitInbound(parsed)` fired in `whatsapp.ts`'s `type === "notify"` branch right after
+`storeMessage`, so a woken waiter re-querying the DB always sees the row. **Blocking is
+free while idle**: tokens are spent only on the request and the eventual response, never
+during the wait. The agent loops `wait_for_messages` with the rolling `next_since` to cover
+hour-scale reply latency with a handful of cheap calls instead of ~95 polls.
+
+**Cursor semantics.** `since` is an inclusive ISO `gte` boundary → **at-least-once**;
+`next_since` advances past every *fetched* row (even filtered-out ones, so the cursor never
+stalls on your own messages). The agent dedupes by `(id, chat_jid)`.
+
+**Lost-wakeup gap.** `waitForMessagesCore` registers its bus listener, then re-queries once
+(`gapCheck`) to catch a message persisted between the immediate check and registration;
+anything persisted after registration fires the listener. No missed message.
+
+**Timeout ceiling.** `timeout_seconds` defaults to 60, caps at 240 — kept under the
+reverse-proxy (Traefik) idle window; a heartbeat `reportProgress` every ~20s keeps the
+proxied HTTP connection warm. The agent loops to go longer.
+
+> **KB note.** Push-to-relauncher (agent ends, gets re-woken via the existing webhook) is
+> the most token-efficient pattern for hour-scale latency but needs an external relauncher
+> daemon. These pull primitives capture most of the savings with zero new infra; the
+> relauncher remains the documented next evolution if idle-zero is ever required.
 
 ## Outbound webhook (inbound-message push)
 
