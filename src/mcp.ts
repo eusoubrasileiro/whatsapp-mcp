@@ -8,6 +8,7 @@ import { registerContactsTools } from "./mcp/tools/contacts.ts";
 import { registerGroupsTools } from "./mcp/tools/groups.ts";
 import { registerMediaTools } from "./mcp/tools/media.ts";
 import { registerMessagesTools } from "./mcp/tools/messages.ts";
+import { registerMonitoringTools } from "./mcp/tools/monitoring.ts";
 import { registerSendingTools } from "./mcp/tools/sending.ts";
 import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
 import type { ToolDeps } from "./mcp/tools/types.ts";
@@ -56,6 +57,7 @@ export async function startMcpServer(
   registerConnectionTools(server, deps);
   registerContactsTools(server, deps);
   registerMessagesTools(server, deps);
+  registerMonitoringTools(server, deps);
   registerChatsTools(server, deps);
   registerGroupsTools(server, deps);
   registerSendingTools(server, deps);

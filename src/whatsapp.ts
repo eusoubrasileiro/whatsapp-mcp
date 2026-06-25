@@ -34,6 +34,7 @@ import { createConnectionNotifier } from "./connection-notifier.ts";
 import { resolveMediaInput, assertMimeForType } from "./media-input.ts";
 import { dispatchInbound } from "./webhooks/delivery.ts";
 import { markSentByUs } from "./webhooks/sent-tracker.ts";
+import { emitInbound } from "./inbound-bus.ts";
 import { toFlacMono16k } from "./transcribe/preprocess.ts";
 import { transcribeAudio } from "./transcribe/whisper.ts";
 
@@ -307,6 +308,15 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
             // dispatchInbound swallows all errors so a down subscriber can't stall
             // ingest or drop the socket.
             if (type === "notify") {
+              // Wake any long-poll waiters (wait_for_messages). Emitted AFTER
+              // storeMessage so a woken waiter re-querying the DB always sees the
+              // row. Minimal payload; the waiter's predicate filters and the DB
+              // delta is the source of truth.
+              emitInbound({
+                id: parsed.id,
+                chat_jid: parsed.chat_jid,
+                is_from_me: parsed.is_from_me,
+              });
               // The account's own JIDs — phone-number (sock.user.id) and LID
               // (sock.user.lid), device suffix stripped — let dispatch detect the
               // self-chat and match it whether you allow-listed your number or LID.
