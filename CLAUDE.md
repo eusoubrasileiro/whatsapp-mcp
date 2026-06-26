@@ -262,6 +262,37 @@ many clinic receptionists and waiting on replies) become *reactive* without the 
 webhook's external infra. The motivating case: an agent polled `list_messages` ~95× across
 ~15 chats to notice replies — token-expensive and clumsy.
 
+**Agent usage flow (the loop).** From now on an agent that needs to react to replies should:
+
+1. **Establish a cursor** — call `get_new_messages` with no `since`; save the returned
+   `next_since` as your cursor. (Pass an ISO `since` instead to backfill recent history.)
+2. **Act** — `send_message` to the chats you're tracking. Your own sends are auto-excluded,
+   so they never wake you.
+3. **Wait reactively** — `wait_for_messages({ chat_jids, since: cursor, timeout_seconds: 240 })`.
+   It blocks at zero token cost and returns the instant a real reply lands, or empty on timeout.
+4. **Process** the returned `messages`, then set `cursor = next_since`.
+5. **Loop step 3** until done. An hour-late reply is just a few empty-then-wake cycles — each
+   one a tiny round-trip, no cost while blocked.
+
+```jsonc
+// 1. bootstrap cursor
+get_new_messages()                                   // → { messages: [], next_since: T0 }
+// 2. act
+send_message({ recipient: clinicA, message: "Olá…" })
+// 3-5. react in a loop
+let cursor = T0
+while (waitingOnReplies) {
+  const r = wait_for_messages({ chat_jids: [clinicA, clinicB, …],
+                                since: cursor, timeout_seconds: 240 })
+  for (const m of r.messages) { /* reply / triage */ }
+  cursor = r.next_since                              // dedupe by (id, chat_jid)
+}
+```
+
+Notes: `chat_jids: ["*"]` watches every chat; a list scopes it (LID/PN matched
+automatically). The cursor is an inclusive boundary (at-least-once) — dedupe by
+`(id, chat_jid)`. Use `get_new_messages` alone for a one-shot "what changed?" without blocking.
+
 **Model.** Both tools read one authoritative DB delta (`getMessagesSince`, forward `gte`
 cursor, oldest-first, LID/PN-canonicalized) and apply the same filters: the
 `sent-tracker` loop guard (drop the agent's own sends) and a direction filter (drop your
