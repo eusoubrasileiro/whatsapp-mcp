@@ -16,6 +16,7 @@ import {
   getContacts,
   getMessagesWithDateFilter,
   getMessagesSince,
+  getMessagesDelta,
   recordJidMapping,
   searchDbForContacts,
   searchMessages,
@@ -340,6 +341,51 @@ describe("database", () => {
       // Querying by the phone-number twin still finds the LID-keyed message.
       const msgs = getMessagesSince([pn], "2025-06-01T00:00:00.000Z");
       expect(msgs.map((m) => m.id)).toContain("x");
+    });
+  });
+
+  // ── getMessagesDelta (rowid keyset cursor) ───────────────────────
+
+  describe("getMessagesDelta", () => {
+    beforeEach(() => {
+      storeMessage(makeMsg({ id: "a", chat_jid: "c1@s.whatsapp.net", content: "A", timestamp: new Date("2025-06-01T10:00:00Z") }));
+      storeMessage(makeMsg({ id: "b", chat_jid: "c1@s.whatsapp.net", content: "B", timestamp: new Date("2025-06-01T11:00:00Z") }));
+      storeMessage(makeMsg({ id: "c", chat_jid: "c2@s.whatsapp.net", content: "C", timestamp: new Date("2025-06-01T12:00:00Z") }));
+    });
+
+    it("fromNow returns no history but the current high-water rowid", () => {
+      const d = getMessagesDelta(null, { fromNow: true });
+      expect(d.messages).toEqual([]);
+      expect(d.cursor).toBe(3); // three rows inserted → max rowid 3
+    });
+
+    it("afterRowid is exclusive and advances the cursor to the last fetched row", () => {
+      const d = getMessagesDelta(null, { afterRowid: 1 });
+      expect(d.messages.map((m) => m.id)).toEqual(["b", "c"]);
+      expect(d.cursor).toBe(3);
+    });
+
+    it("afterRowid at the high-water mark returns nothing and holds the cursor", () => {
+      const d = getMessagesDelta(null, { afterRowid: 3 });
+      expect(d.messages).toEqual([]);
+      expect(d.cursor).toBe(3);
+    });
+
+    it("sinceIso is an inclusive backfill ordered by rowid", () => {
+      const d = getMessagesDelta(null, { sinceIso: "2025-06-01T11:00:00.000Z" });
+      expect(d.messages.map((m) => m.id)).toEqual(["b", "c"]);
+      expect(d.cursor).toBe(3);
+    });
+
+    it("empty sinceIso backfill yields a null cursor (nothing to advance to)", () => {
+      const d = getMessagesDelta(null, { sinceIso: "2025-06-02T00:00:00.000Z" });
+      expect(d.messages).toEqual([]);
+      expect(d.cursor).toBeNull();
+    });
+
+    it("filters to the given chats and honors the limit", () => {
+      expect(getMessagesDelta(["c1@s.whatsapp.net"], { afterRowid: 0 }).messages.map((m) => m.id)).toEqual(["a", "b"]);
+      expect(getMessagesDelta(null, { afterRowid: 0 }, 2).messages.map((m) => m.id)).toEqual(["a", "b"]);
     });
   });
 
