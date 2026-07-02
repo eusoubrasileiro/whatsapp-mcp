@@ -56,7 +56,7 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
   server.addTool({
     name: "wait_for_messages",
     description:
-      "Long-poll: BLOCK until a new message arrives in the watched chats, or until timeout_seconds elapses, then return { messages, next_since }. Returns immediately if one already arrived since the cursor. Blocking is free while idle — call this in a loop with the rolling next_since to react to replies that may land an hour later without burning tokens polling. Excludes your own messages by default and always excludes this agent's own sends.",
+      "Bounded await: block until the next matching message or timeout, then return { messages, next_since }. Returns immediately if one already arrived since the cursor. Use ONLY when you expect a reply within minutes of something you just sent and have nothing else to do meanwhile. Do NOT loop this to stay present in a chat — each empty return wastes one of your turns; for standing presence (monitor/watch/follow/act-as-persona) use `follow_chat` and attach the stream to your harness's background monitor. Excludes your own messages by default and always excludes this agent's own sends.",
     // Backstop above our own cap so FastMCP never times out the call first.
     timeoutMs: (MAX_TIMEOUT_S + 30) * 1000,
     parameters: z.object({

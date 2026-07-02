@@ -13,7 +13,7 @@ export function registerWebhooksTools(server: ToolRegistrar, deps: ToolDeps): vo
   server.addTool({
     name: "register_webhook",
     description:
-      "Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive (real-time push). Only messages from chats on `allowed_jids` are forwarded; everyone else is silently ignored. Returns the subscription id.",
+      "For DEPLOYED, headless services that own an HTTPS endpoint (a server, n8n, a cloud function). An interactive agent session has no URL — for session presence use `follow_chat` instead. Subscribe a URL to inbound WhatsApp messages so an agent becomes reactive (real-time push). Only messages from chats on `allowed_jids` are forwarded; everyone else is silently ignored. Returns the subscription id.",
     parameters: z.object({
       target_url: z.string().url().describe("HTTPS endpoint that receives inbound_message events"),
       allowed_jids: z
