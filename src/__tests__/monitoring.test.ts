@@ -42,7 +42,51 @@ describe("monitoring core", () => {
 
       const res = getNewMessagesCore({ since: "2025-06-01T10:30:00.000Z" });
       expect(res.messages.map((m) => m.id)).toEqual(["b"]);
-      expect(res.next_since).toBe("2025-06-01T11:00:00.000Z");
+      // next_since is now an opaque, monotonic rowid cursor (row:<n>), not an
+      // ISO timestamp — its defining property is that looping with it never
+      // re-delivers a message it already returned.
+      expect(res.next_since).toMatch(/^row:\d+$/);
+      expect(getNewMessagesCore({ since: res.next_since }).messages).toEqual([]);
+    });
+
+    it("does NOT re-deliver the boundary message when looping with next_since", () => {
+      // Regression for the observed duplicate: the old inclusive `gte` cursor
+      // re-delivered the last message ("Amei." arrived twice). The rowid cursor
+      // is exclusive, so a rolling loop sees each message exactly once.
+      storeMessage(makeMsg({ id: "amei", chat_jid: "c1@s.whatsapp.net", content: "Amei.", timestamp: new Date("2025-06-01T11:00:00Z") }));
+
+      const first = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z" });
+      expect(first.messages.map((m) => m.id)).toEqual(["amei"]);
+
+      const second = getNewMessagesCore({ since: first.next_since });
+      expect(second.messages).toEqual([]);
+    });
+
+    it("does not lose a same-second message across the cursor boundary", () => {
+      // Two messages at the SAME 1-second-resolution timestamp: a naive
+      // exclusive `gt timestamp` cursor would drop the second. The rowid cursor
+      // keeps them distinct.
+      const t = new Date("2025-06-01T11:00:00Z");
+      storeMessage(makeMsg({ id: "m1", chat_jid: "c1@s.whatsapp.net", content: "one", timestamp: t }));
+
+      const first = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z" });
+      expect(first.messages.map((m) => m.id)).toEqual(["m1"]);
+
+      storeMessage(makeMsg({ id: "m2", chat_jid: "c1@s.whatsapp.net", content: "two", timestamp: t }));
+      const second = getNewMessagesCore({ since: first.next_since });
+      expect(second.messages.map((m) => m.id)).toEqual(["m2"]);
+    });
+
+    it("with no `since`, starts from now: no backfill, then sees the next message", () => {
+      storeMessage(makeMsg({ id: "old", chat_jid: "c1@s.whatsapp.net", content: "old", timestamp: new Date("2025-06-01T09:00:00Z") }));
+
+      const boot = getNewMessagesCore({});
+      expect(boot.messages).toEqual([]); // established a high-water mark, no history
+      expect(boot.next_since).toMatch(/^row:\d+$/);
+
+      storeMessage(makeMsg({ id: "new", chat_jid: "c1@s.whatsapp.net", content: "new" }));
+      const after = getNewMessagesCore({ since: boot.next_since });
+      expect(after.messages.map((m) => m.id)).toEqual(["new"]);
     });
 
     it("filters to the given chats", () => {
@@ -64,8 +108,10 @@ describe("monitoring core", () => {
       markSentByUs("mine");
       const res = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z", includeFromMe: true });
       expect(res.messages).toHaveLength(0);
-      // ...but the cursor still advances past it so we never re-scan it.
-      expect(res.next_since).toBe("2025-06-01T12:00:00.000Z");
+      // ...but the cursor still advances past it (rowid of the filtered row) so
+      // we never re-scan it.
+      expect(res.next_since).toMatch(/^row:\d+$/);
+      expect(getNewMessagesCore({ since: res.next_since, includeFromMe: true }).messages).toEqual([]);
     });
 
     it("excludes is_from_me by default and includes it when asked", () => {
@@ -96,7 +142,7 @@ describe("monitoring core", () => {
       emitInbound({ id: "reply", chat_jid: "c1@s.whatsapp.net", is_from_me: false });
       const res = await p;
       expect(res.messages.map((m) => m.id)).toEqual(["reply"]);
-      expect(res.next_since).toBe("2025-06-01T12:00:00.000Z");
+      expect(res.next_since).toMatch(/^row:\d+$/);
     });
 
     it("returns empty on timeout", async () => {

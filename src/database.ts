@@ -1063,6 +1063,95 @@ export function getMessagesSince(
   }
 }
 
+/**
+ * Cursor for {@link getMessagesDelta}. Three entry points:
+ *  - `{ fromNow: true }` — establish a high-water mark; returns no history, just
+ *    the current max rowid so the caller can start an exclusive rolling cursor.
+ *  - `{ afterRowid }` — the normal rolling case: rows with `rowid > afterRowid`,
+ *    exclusive and monotonic → never re-delivers, never loses a same-second row.
+ *  - `{ sinceIso }` — back-compat / explicit backfill: rows with
+ *    `timestamp >= sinceIso` (inclusive, at-least-once), ordered by rowid so the
+ *    caller can switch to an exclusive rowid cursor on the next call.
+ */
+export type MessagesDeltaCursor =
+  | { fromNow: true }
+  | { afterRowid: number }
+  | { sinceIso: string };
+
+export interface MessagesDelta {
+  /** Raw rows (no filtering), oldest-first by rowid, up to `limit`. */
+  messages: Message[];
+  /**
+   * The rowid to carry forward. Advances past every *fetched* row (even ones the
+   * caller later filters out). `null` only when there is nothing to advance to
+   * (empty `sinceIso` query) — the caller then keeps its previous cursor.
+   */
+  cursor: number | null;
+}
+
+function getMaxMessageRowid(): number {
+  const db = getDb();
+  const row = db
+    .select({ maxRowid: sql<number | null>`MAX(${schema.messages}.rowid)` })
+    .from(schema.messages)
+    .get();
+  return row?.maxRowid ?? 0;
+}
+
+/**
+ * Authoritative forward delta backing `get_new_messages` / `wait_for_messages`
+ * and the `follow_chat` stream. Keyset pagination on the SQLite `rowid` — an
+ * exclusive, monotonic cursor that fixes the inclusive-`gte` boundary
+ * re-delivery the old timestamp cursor suffered.
+ */
+export function getMessagesDelta(
+  chatJids: string[] | null,
+  cursor: MessagesDeltaCursor,
+  limit: number = 50,
+): MessagesDelta {
+  const db = getDb();
+  try {
+    if ("fromNow" in cursor) {
+      // No history — just hand back the current high-water mark.
+      return { messages: [], cursor: getMaxMessageRowid() };
+    }
+
+    const rowidCol = sql<number>`${schema.messages}.rowid`;
+    const filters: SQL[] = [];
+    if ("afterRowid" in cursor) {
+      filters.push(sql`${schema.messages}.rowid > ${cursor.afterRowid}`);
+    } else {
+      filters.push(gte(schema.messages.timestamp, cursor.sinceIso));
+    }
+    if (chatJids && chatJids.length > 0) {
+      const group = [...new Set(chatJids.flatMap((j) => getAliasGroup(j)))];
+      filters.push(inArray(schema.messages.chatJid, group));
+    }
+
+    const rows = db
+      .select({ ...messageColumns, _rowid: rowidCol })
+      .from(schema.messages)
+      .innerJoin(schema.chats, eq(schema.messages.chatJid, schema.chats.jid))
+      .where(and(...filters))
+      .orderBy(asc(rowidCol))
+      .limit(limit)
+      .all();
+
+    if (rows.length > 0) {
+      return {
+        messages: rows.map(rowToMessage),
+        cursor: rows[rows.length - 1]._rowid,
+      };
+    }
+    // Nothing fetched: hold an existing rowid cursor in place; for an empty
+    // ISO backfill there is no rowid to advance to, so signal "keep yours".
+    return { messages: [], cursor: "afterRowid" in cursor ? cursor.afterRowid : null };
+  } catch (error) {
+    logError("Error getting messages delta", error);
+    return { messages: [], cursor: "afterRowid" in cursor ? cursor.afterRowid : null };
+  }
+}
+
 export function resetDatabase(): void {
   if (sqliteInstance) {
     sqliteInstance.close();

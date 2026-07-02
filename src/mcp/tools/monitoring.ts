@@ -20,7 +20,7 @@ const sinceParam = z
   .string()
   .optional()
   .describe(
-    "ISO-8601 cursor; returns messages at or after it (inclusive). Pass the previous call's `next_since`. Omit on the first call to start from now. Inclusive boundary → dedupe by (id, chat_jid).",
+    "Opaque cursor: pass the previous call's `next_since` verbatim to get only messages after it (exclusive, monotonic — never re-delivers the last one). Omit on the first call to start from now. An ISO-8601 timestamp is also accepted to backfill recent history (inclusive from that time).",
   );
 
 const includeFromMeParam = z
