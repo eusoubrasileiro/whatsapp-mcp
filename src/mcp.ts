@@ -13,6 +13,28 @@ import { registerSendingTools } from "./mcp/tools/sending.ts";
 import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
 import type { ToolDeps } from "./mcp/tools/types.ts";
 
+/**
+ * Server-level routing hint surfaced to clients under "MCP Server Instructions".
+ * Prime real estate every agent reads before choosing a tool — the three-lifetime
+ * table steers "monitor / watch / follow / act as me" to the right reactive tool
+ * instead of the blocking long-poll. See docs/spec-agent-presence-stream.md §4.
+ */
+const SERVER_INSTRUCTIONS = `
+WhatsApp as an MCP server: read/search history, send messages & media, and react to
+inbound messages.
+
+REACTING TO INCOMING MESSAGES — pick by how long you must stay reactive:
+
+| Lifetime | Situation | Tool |
+|---|---|---|
+| Seconds–minutes | "I just sent something, await the reply and have nothing else to do meanwhile" | wait_for_messages (bounded block) |
+| Session-length | "Be PRESENT in this chat — monitor / watch / follow a group, act as the user's persona, chat with people over minutes-to-hours while doing other work" | follow_chat (returns a stream URL you attach to your harness's background monitor, e.g. Monitor({ws:{url}}); woken per message, never occupies a turn) |
+| Deployment-length | A deployed, headless service that owns its own HTTPS endpoint (server, n8n, cloud function) | register_webhook |
+
+Do NOT loop wait_for_messages to "stay present" — each empty return wastes a turn and
+blocks all other work. For standing presence use follow_chat.
+`.trim();
+
 export async function startMcpServer(
   mcpLogger: Logger,
   waLogger: Logger,
@@ -29,6 +51,7 @@ export async function startMcpServer(
   const server = new FastMCP({
     name: "whatsapp-baileys-ts",
     version: "0.3.0",
+    instructions: SERVER_INSTRUCTIONS,
     authenticate: async (request) => {
       // stdio transport passes undefined — trust local invocation.
       if (!request) return {};
