@@ -53,10 +53,10 @@ describe("MCP tool registries", () => {
     ]);
   });
 
-  it("monitoring registers get_new_messages and wait_for_messages", () => {
+  it("monitoring registers get_new_messages, wait_for_messages and follow_chat", () => {
     const { registrar, names } = createStubRegistrar();
     registerMonitoringTools(registrar, deps());
-    expect(names).toEqual(["get_new_messages", "wait_for_messages"]);
+    expect(names).toEqual(["get_new_messages", "wait_for_messages", "follow_chat"]);
   });
 
   it("chats registers list_chats and get_chat", () => {

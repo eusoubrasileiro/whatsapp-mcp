@@ -163,30 +163,10 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
   const sendNtfy = createNtfy(logger, ntfyConfig);
 
   // Webhook push: transcribe an inbound voice note on demand for subscribers
-  // that opted in. Composes the existing download + Whisper path; injected into
-  // dispatchInbound to avoid a webhooks→whatsapp import cycle. Never throws.
-  const transcribeInbound = async (msg: ParsedMessage): Promise<string | null> => {
-    if (!msg.media_key || !msg.direct_path || !msg.media_type) return null;
-    try {
-      const { buffer } = await downloadMedia({
-        logger,
-        mediaKey: msg.media_key,
-        directPath: msg.direct_path,
-        mediaUrl: msg.media_url ?? null,
-        mediaType: msg.media_type as MediaType,
-        mimetype: msg.mimetype ?? null,
-        chatJid: msg.chat_jid,
-        messageId: msg.id,
-        fromMe: msg.is_from_me,
-      });
-      const flac = await toFlacMono16k(buffer);
-      const { text } = await transcribeAudio({ buffer: flac, filename: `${msg.id}.flac`, logger });
-      return text;
-    } catch (err) {
-      logger.warn({ err, msgId: msg.id }, "inbound webhook transcription failed");
-      return null;
-    }
-  };
+  // that opted in. Delegates to the shared, exported helper (also used by the
+  // follow_chat stream); bound to this connection's logger.
+  const transcribeInbound = (msg: ParsedMessage): Promise<string | null> =>
+    transcribeMediaMessage(msg, logger);
 
   const notifier = createConnectionNotifier(logger, {
     sendNtfy,
@@ -422,6 +402,51 @@ export async function sendWhatsAppMedia(
     return { key: { id: result.messageId } };
   }
   return;
+}
+
+/** Minimal media fields needed to fetch + transcribe a voice note. Satisfied by
+ * both baileys `ParsedMessage` and a DB `Message` row (same snake_case shape). */
+export interface TranscribableMessage {
+  id: string;
+  chat_jid: string;
+  media_key?: string | null;
+  direct_path?: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
+  mimetype?: string | null;
+  is_from_me: boolean;
+}
+
+/**
+ * Download an inbound voice note and return its Whisper transcript, or `null`
+ * when the message has no downloadable audio or transcription fails. Composes
+ * the existing download → ffmpeg → Whisper path. Never throws — a transcription
+ * failure must not break webhook delivery or the follow_chat stream.
+ */
+export async function transcribeMediaMessage(
+  msg: TranscribableMessage,
+  logger: P.Logger,
+): Promise<string | null> {
+  if (!msg.media_key || !msg.direct_path || !msg.media_type) return null;
+  try {
+    const { buffer } = await downloadMedia({
+      logger,
+      mediaKey: msg.media_key,
+      directPath: msg.direct_path,
+      mediaUrl: msg.media_url ?? null,
+      mediaType: msg.media_type as MediaType,
+      mimetype: msg.mimetype ?? null,
+      chatJid: msg.chat_jid,
+      messageId: msg.id,
+      fromMe: msg.is_from_me,
+    });
+    const flac = await toFlacMono16k(buffer);
+    const { text } = await transcribeAudio({ buffer: flac, filename: `${msg.id}.flac`, logger });
+    return text;
+  } catch (err) {
+    logger.warn({ err, msgId: msg.id }, "media transcription failed");
+    return null;
+  }
 }
 
 type DownloadMediaWrapperParams = {
