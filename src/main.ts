@@ -1,11 +1,13 @@
 import pino from "pino";
 import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
 import { loadRegistry } from "./webhooks/registry.ts";
-import { startWhatsAppConnection, getConnectionState, triggerRepair } from "./whatsapp.ts";
+import { startWhatsAppConnection, getConnectionState, triggerRepair, transcribeMediaMessage } from "./whatsapp.ts";
 import { startMcpServer } from "./mcp.ts";
 import { ensureBucketReady, putUpload } from "./storage.ts";
 import { createQrServer } from "./qr-server.ts";
 import { createUploadServer } from "./upload-server.ts";
+import { createStreamServer } from "./stream/server.ts";
+import { streamTokens } from "./stream/token.ts";
 import fs from "node:fs";
 
 const dataDir = process.env.WHATSAPP_MCP_DATA_DIR || '.';
@@ -85,6 +87,25 @@ async function main() {
       mcpLogger.error({ err }, "Upload server error");
     });
   }
+
+  // Start follow_chat WebSocket stream server (non-blocking) — port 39004 by
+  // default. Backs the `follow_chat` tool: an interactive agent attaches the
+  // returned wss URL to its harness background monitor and is woken per message.
+  const streamPort = Number(process.env.STREAM_SERVER_PORT ?? 39004);
+  const streamHost = process.env.STREAM_SERVER_HOST ?? "127.0.0.1";
+  const streamServer = createStreamServer({
+    logger: waLogger,
+    tokens: streamTokens,
+    // Bound to the WA logger; downloads + Whisper-transcribes an inbound voice
+    // note on demand for streams whose token opted into transcription.
+    transcribe: (msg) => transcribeMediaMessage(msg, waLogger),
+  });
+  streamServer.listen(streamPort, streamHost, () => {
+    mcpLogger.info({ host: streamHost, port: streamPort }, "follow_chat stream server listening");
+  });
+  streamServer.on("error", (err) => {
+    mcpLogger.error({ err }, "follow_chat stream server error");
+  });
 
   // Start WhatsApp connection in background (non-blocking)
   // MCP tools already handle socketState.socket being null gracefully

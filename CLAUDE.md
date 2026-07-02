@@ -177,7 +177,14 @@ src/
 ├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
 │                          #   waitForInbound backs the wait_for_messages long-poll
 ├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
-│                          #   getNewMessagesCore (delta) + waitForMessagesCore (long-poll)
+│                          #   getNewMessagesCore (delta) + waitForMessagesCore (long-poll);
+│                          #   opaque rowid cursor (parseCursor/encodeCursor/resolveStartCursor)
+├── stream/                # follow_chat WebSocket presence stream (:39004)
+│   ├── token.ts           #   scoped, short-lived bearer tokens (issue/verify/renew)
+│   ├── frame.ts           #   pure DB-message → stream-frame builder
+│   ├── connection.ts      #   per-socket drain driver: bus wake → DB delta → frames
+│   ├── server.ts          #   ws upgrade + token gate + inbound-bus fan-out + gap-fill
+│   └── follow.ts          #   executeFollowChat: mint token → wss URL (testable core)
 ├── webhooks/              # Outbound inbound-message push (reactive subscribers, e.g. Hermes)
 │   ├── types.ts           #   Subscription, InboundMessageInput, InboundMessageEvent
 │   ├── event.ts           #   buildInboundEvent — pure payload builder
@@ -191,7 +198,7 @@ src/
 
 **Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
 
-## MCP Tools (22 total)
+## MCP Tools (23 total)
 
 ### Connection / Auth
 | Tool | Description |
@@ -216,8 +223,9 @@ src/
 ### Reactive monitoring
 | Tool | Description |
 |------|-------------|
-| `get_new_messages` | Delta read: messages received since a cursor, across one or many chats. Params: `chat_jids?` (omit/`["*"]` = all), `since?` (ISO; inclusive), `limit?` (50), `include_from_me?` (false). Returns `{ messages, next_since }`. Cheap replacement for re-scanning each chat. |
-| `wait_for_messages` | Long-poll: BLOCKS until a new message arrives in the watched chats or `timeout_seconds?` (default 60, max 240) elapses, then returns `{ messages, next_since }` (immediate if one already arrived). Blocking is free while idle — call in a loop with the rolling `next_since` to react to hour-late replies without burning tokens polling. |
+| `get_new_messages` | Delta read: messages received since a cursor, across one or many chats. Params: `chat_jids?` (omit/`["*"]` = all), `since?` (opaque `row:<n>` cursor — exclusive; ISO also accepted for backfill), `limit?` (50), `include_from_me?` (false). Returns `{ messages, next_since }`. Cheap replacement for re-scanning each chat. |
+| `wait_for_messages` | Bounded await: BLOCKS until the next matching message or `timeout_seconds?` (default 60, max 240), then returns `{ messages, next_since }` (immediate if one already arrived). Use ONLY for a reply you expect within minutes with nothing else to do; do NOT loop it to stay present (each empty return wastes a turn) — use `follow_chat` for standing presence. |
+| `follow_chat` | **Presence stream.** Returns `{ ws_url, expires_at, note }` — a scoped, short-lived `wss://…/stream?token=…` URL you attach to your harness's background monitor (`Monitor({ws:{url}})`) so you are **woken per inbound message while doing other work**. THIS is the tool for monitor / watch / follow a group / act as the user's persona / chat over hours. Params: `chat_jids?` (omit/`["*"]` = all), `include_from_me?` (default **true** — persona mode sees the user's own phone replies), `transcribe?` (default true). One JSON frame per message (schema incl. `reply_to`, `media.transcription`, `media.fetch_id`); reconnect with `?since=<cursor>` gap-fills. Your own MCP sends stay suppressed (sent-tracker). Recipe: `docs/agent-presence-stream-recipe.md`. |
 
 ### Chats
 | Tool | Description |
@@ -464,6 +472,10 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `QR_SERVER_PORT` | `39002` | Bind port for the QR web page |
 | `UPLOAD_SERVER_HOST` | `127.0.0.1` | Bind host for the host-disk upload endpoint (only started when `S3_ENABLED=true`) |
 | `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `mcp.amiticia.cc/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
+| `STREAM_SERVER_HOST` | `127.0.0.1` | Bind host for the `follow_chat` WebSocket presence stream. |
+| `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `mcp.amiticia.cc/stream` (WebSocket upgrade). |
+| `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://mcp.amiticia.cc/stream`. |
+| `STREAM_TOKEN_TTL_S` | `1800` | Lifetime (seconds) of a `follow_chat` stream token. In-memory only; scoped to the requested jids + flags; treated as a bearer secret. |
 | `PUBLIC_QR_URL` | `https://wa.amiticia.cc/` | URL sent in ntfy `Click` header so tapping the push opens the QR page |
 | `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
 | `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |

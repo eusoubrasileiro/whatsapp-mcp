@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { getNewMessagesCore, waitForMessagesCore } from "../../monitoring.ts";
 import { formatDbMessageForJson } from "../../formatters.ts";
+import { executeFollowChat, resolveStreamBaseUrl } from "../../stream/follow.ts";
+import { streamTokens } from "../../stream/token.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 // Long-poll caps. The default is short so the agent stays responsive; the max is
@@ -91,6 +93,33 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
         null,
         2,
       );
+    },
+  });
+
+  server.addTool({
+    name: "follow_chat",
+    description:
+      "Become PRESENT in one or more chats: returns a stream URL that pushes each inbound message as it arrives, designed to be attached to your harness's background monitor (e.g. Claude Code Monitor({ws:{url}})) so you are woken per message while continuing other work. THIS is the tool for: monitoring a chat, watching a group, following a conversation, acting as the user's persona in a chat, chatting with people over hours. For a one-shot bounded wait for a reply you expect within minutes, use wait_for_messages. For a deployed headless service with its own HTTPS endpoint, use register_webhook.",
+    parameters: z.object({
+      chat_jids: chatJidsParam,
+      include_from_me: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Forward YOUR OWN (is_from_me) messages too — default true so persona mode sees replies you type from your phone and doesn't answer twice. The agent's own MCP sends are always suppressed."),
+      transcribe: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Transcribe inbound voice notes before pushing the frame (default true)."),
+    }),
+    execute: async ({ chat_jids, include_from_me, transcribe }) => {
+      mcpLogger.info(`[MCP Tool] follow_chat chats=${chat_jids?.length ?? "all"} include_from_me=${include_from_me}`);
+      const result = executeFollowChat(
+        { chatJids: chat_jids, includeFromMe: include_from_me, transcribe },
+        { tokens: streamTokens, baseUrl: resolveStreamBaseUrl() },
+      );
+      return JSON.stringify(result, null, 2);
     },
   });
 }
