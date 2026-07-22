@@ -163,11 +163,22 @@ describe("formatAckErrorForAgent", () => {
     }
   });
 
-  it("points a 463 at the JID/LID as the prime suspect", () => {
+  it("points a 463 at the JID/LID as the first suspect", () => {
     const text = formatAckErrorForAgent(ack("463"), "5531912344567@s.whatsapp.net");
 
     expect(text).toMatch(/lid/i);
     expect(text).toMatch(/search_contacts/);
+  });
+
+  // Proven live 2026-07-22: 5531991234567 passed the onWhatsApp existence check
+  // (it is a real number) and was still refused with 463, because no chat had
+  // ever been established with it. Blaming the JID alone would send the next
+  // agent hunting for a typo in a perfectly valid number.
+  it("also names first-contact as a cause, not just a wrong number", () => {
+    const text = formatAckErrorForAgent(ack("463"), "5531991234567@s.whatsapp.net");
+
+    expect(text).toMatch(/first contact|never/i);
+    expect(text).toMatch(/trusted-contact token/i);
   });
 
   it("points a 479 at the stale session rather than the JID", () => {

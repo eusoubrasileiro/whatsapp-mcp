@@ -29,12 +29,13 @@ export type AckError = {
 const REASONS: Record<string, string> = {
   // Not rate limiting, and — despite the server's "account restricted" text —
   // usually not an account problem at all. WhatsApp gates 1:1 messages behind a
-  // TC (Trusted Contact) privacy token. A number that isn't on WhatsApp can
-  // never mint one, so a mistyped recipient 463s forever while every real chat
-  // keeps working. That is exactly what the 2026-07-22 incident turned out to
-  // be. Never re-send: each attempt is another reach-out.
+  // TC (Trusted Contact) privacy token. Two distinct causes, both observed on
+  // 2026-07-22: a mistyped number that isn't on WhatsApp can never mint a token
+  // (5531912344567), and a real number you have never chatted with does not have
+  // one yet (5531991234567 — it passed the existence check and was still
+  // refused). Never re-send: each attempt is another reach-out.
   "463":
-    "wrong recipient JID/LID, or no privacy token (tctoken) for this contact — verify the JID, do not retry",
+    "wrong recipient JID/LID, or no trusted-contact token (tctoken) yet for this chat (first contact) — verify the JID, do not retry",
   "479": "stanza rejected (smax-invalid) — likely a stale device session",
 };
 
@@ -54,14 +55,22 @@ export function formatAckErrorForAgent(ackError: AckError, recipient: string): s
 
   if (ackError.code === "463") {
     lines.push(
-      "Most likely cause: wrong recipient JID — that number may not be on WhatsApp,",
-      "or the contact is addressed by @lid, not by phone.",
+      "463 = no trusted-contact token for this chat. Two causes are common —",
+      "check them in this order:",
       "",
-      "DO NOT RETRY this send. Resolve the real JID first:",
-      '  search_contacts("<name>") -> use the @lid it returns.',
+      "  1. WRONG RECIPIENT JID. The number may not be on WhatsApp at all, or the",
+      "     contact is addressed by @lid rather than by phone. Verify it:",
+      '       search_contacts("<name>") -> use the @lid it returns.',
+      "     Do not retype the number from memory or from a doc.",
       "",
-      "(463 = missing trusted-contact token. A number that is not on WhatsApp can",
-      "never obtain one, so retrying will fail identically every time.)",
+      "  2. FIRST CONTACT with a real number. WhatsApp gates 1:1 sends behind a",
+      "     token that a chat you have never exchanged messages with does not yet",
+      "     have. Nothing is wrong with the number, the account, or this server.",
+      "     This cannot be forced from here — the contact must message first, or",
+      "     the chat must be established from the linked phone / WhatsApp Web.",
+      "",
+      "DO NOT RETRY this send. A wrong number fails identically every time, and a",
+      "retry to a real number is just another reach-out against the same gate.",
     );
   } else if (ackError.code === "479") {
     lines.push(
