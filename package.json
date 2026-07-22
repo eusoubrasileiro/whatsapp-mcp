@@ -24,6 +24,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
+    "quality-gate": "node scripts/quality-gate.mjs",
+    "quality-gate:update": "node scripts/quality-gate.mjs --update-baseline",
     "prepare": "husky"
   },
   "dependencies": {
@@ -54,6 +56,8 @@
     "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.31.10",
     "husky": "^9.1.7",
+    "jscpd": "^5.0.12",
+    "knip": "^6.29.0",
     "lint-staged": "^17.1.1",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/main.ts", "src/__tests__/**/*.test.ts", "scripts/**/*.mjs"],
+  "project": ["src/**/*.ts", "scripts/**/*.mjs"],
+  "ignore": ["src/db/schema.ts"],
+  "ignoreDependencies": ["@amiticia/baileys-client"],
+  "ignoreBinaries": ["biome"]
+}
