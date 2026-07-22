@@ -2,34 +2,59 @@ import { z } from "zod";
 import { normalizeJid } from "@amiticia/baileys-client";
 
 import { assertSocketActive } from "../../actions.ts";
+import { resolveRecipient } from "../../recipient.ts";
+import {
+  assertSendAccepted,
+  getSendAckWaitMs,
+  isPresendCheckEnabled,
+} from "../../send-guard.ts";
 import { sendWhatsAppMedia, sendWhatsAppMessage } from "../../whatsapp.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger, waLogger } = deps;
 
+  /**
+   * Verify the recipient exists and upgrade it to its canonical LID.
+   *
+   * Runs before every send so a mistyped number fails without spending a
+   * reach-out — see `recipient.ts` for why that matters.
+   */
+  async function resolveTarget(socket: ReturnType<typeof assertSocketActive>, jid: string) {
+    if (!isPresendCheckEnabled()) return jid;
+    return resolveRecipient(socket, jid, waLogger);
+  }
+
   server.addTool({
     name: "send_message",
-    description: "Send a text message to a contact or group",
+    description:
+      "Send a text message to a contact or group. The recipient is verified before sending: " +
+      "a number that is not on WhatsApp is rejected outright, and a phone JID is upgraded to " +
+      "its canonical @lid. If the server refuses the message, this tool THROWS rather than " +
+      "reporting success — do not build phone JIDs by hand, resolve them with search_contacts.",
     parameters: z.object({
       recipient: z.string().describe("Recipient JID (e.g., 'number@s.whatsapp.net' or 'group@g.us')"),
       message: z.string().min(1).describe("The text message to send"),
     }),
     execute: async ({ recipient, message }) => {
       mcpLogger.info(`[MCP Tool] Executing send_message to ${recipient}`);
-      assertSocketActive();
+      const socket = assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
       if (!normalizedRecipient.includes("@")) {
         throw new Error(`Invalid recipient format: "${recipient}". JID must contain "@".`);
       }
 
-      const result = await sendWhatsAppMessage(waLogger, normalizedRecipient, message);
+      const target = await resolveTarget(socket, normalizedRecipient);
+      const result = await sendWhatsAppMessage(waLogger, target, message);
 
       if (result && result.key && result.key.id) {
-        return `Message sent successfully to ${normalizedRecipient} (ID: ${result.key.id}).`;
+        // sendMessage() resolving only means "written to the socket". Wait for a
+        // possible refusal so we never report a phantom delivery.
+        await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
+        return `Message sent successfully to ${target} (ID: ${result.key.id}).`;
       } else {
-        throw new Error(`Failed to send message to ${normalizedRecipient}.`);
+        throw new Error(`Failed to send message to ${target}.`);
       }
     },
   });
@@ -45,21 +70,24 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
     }),
     execute: async ({ recipient, file_path, caption, type }) => {
       mcpLogger.info(`[MCP Tool] Executing send_file to ${recipient}: ${file_path}`);
-      assertSocketActive();
+      const socket = assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
+      const target = await resolveTarget(socket, normalizedRecipient);
+
       let result: Awaited<ReturnType<typeof sendWhatsAppMedia>>;
       try {
-        result = await sendWhatsAppMedia(waLogger, normalizedRecipient, file_path, caption, type);
+        result = await sendWhatsAppMedia(waLogger, target, file_path, caption, type);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to send ${type} to ${normalizedRecipient}: ${reason}`);
+        throw new Error(`Failed to send ${type} to ${target}: ${reason}`);
       }
 
       if (result && result.key && result.key.id) {
-        return `${type.charAt(0).toUpperCase() + type.slice(1)} sent successfully to ${normalizedRecipient} (ID: ${result.key.id}).`;
+        await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
+        return `${type.charAt(0).toUpperCase() + type.slice(1)} sent successfully to ${target} (ID: ${result.key.id}).`;
       } else {
-        throw new Error(`Failed to send ${type} to ${normalizedRecipient} (no message ID returned — socket may be disconnected)`);
+        throw new Error(`Failed to send ${type} to ${target} (no message ID returned — socket may be disconnected)`);
       }
     },
   });
