@@ -1,6 +1,8 @@
 import type { WAMessageUpdate } from "@amiticia/baileys-client";
 import type { Logger } from "pino";
 
+import { emitAckError } from "./ack-bus.ts";
+
 /**
  * Server-side rejections of messages we sent.
  *
@@ -25,14 +27,71 @@ export type AckError = {
 };
 
 const REASONS: Record<string, string> = {
-  // Not rate limiting. WhatsApp gates 1:1 messages behind a TC (Trusted
-  // Contact) privacy token; a send without one is refused. Established chats
-  // already carry a token, which is why this shows up on new reach-outs.
-  // Baileys issues the token and retries on its own — we must not re-send, as
-  // each attempt counts as another reach-out and worsens the restriction.
-  "463": "account restricted or missing privacy token (tctoken) for this contact — do not retry",
+  // Not rate limiting, and — despite the server's "account restricted" text —
+  // usually not an account problem at all. WhatsApp gates 1:1 messages behind a
+  // TC (Trusted Contact) privacy token. Two distinct causes, both observed on
+  // 2026-07-22: a mistyped number that isn't on WhatsApp can never mint a token
+  // (5531912344567), and a real number you have never chatted with does not have
+  // one yet (5531991234567 — it passed the existence check and was still
+  // refused). Never re-send: each attempt is another reach-out.
+  "463":
+    "wrong recipient JID/LID, or no trusted-contact token (tctoken) yet for this chat (first contact) — verify the JID, do not retry",
   "479": "stanza rejected (smax-invalid) — likely a stale device session",
 };
+
+/**
+ * Agent-facing explanation of a rejected send.
+ *
+ * Pure and separate from the log line: operators read `wa-logs.txt`, but the
+ * agent that called `send_message` needs to be told, in its own tool result,
+ * that the message is gone and what to do instead.
+ */
+export function formatAckErrorForAgent(ackError: AckError, recipient: string): string {
+  const code = ackError.code ?? "unspecified";
+  const lines = [
+    `Message to ${recipient} was REJECTED by WhatsApp (code ${code}) and did NOT arrive.`,
+    "",
+  ];
+
+  if (ackError.code === "463") {
+    lines.push(
+      "463 = no trusted-contact token for this chat. Two causes are common —",
+      "check them in this order:",
+      "",
+      "  1. WRONG RECIPIENT JID. The number may not be on WhatsApp at all, or the",
+      "     contact is addressed by @lid rather than by phone. Verify it:",
+      '       search_contacts("<name>") -> use the @lid it returns.',
+      "     Do not retype the number from memory or from a doc.",
+      "",
+      "  2. FIRST CONTACT with a real number. WhatsApp gates 1:1 sends behind a",
+      "     token that a chat you have never exchanged messages with does not yet",
+      "     have. Nothing is wrong with the number, the account, or this server.",
+      "     This cannot be forced from here — the contact must message first, or",
+      "     the chat must be established from the linked phone / WhatsApp Web.",
+      "",
+      "DO NOT RETRY this send. A wrong number fails identically every time, and a",
+      "retry to a real number is just another reach-out against the same gate.",
+    );
+  } else if (ackError.code === "479") {
+    lines.push(
+      "Cause: a stale device session for this contact (479).",
+      "",
+      "DO NOT RETRY immediately — Baileys re-establishes the session on its own.",
+      "Verify the recipient JID, then try again later.",
+    );
+  } else {
+    lines.push(
+      `Server reason: ${ackError.reason}`,
+      "",
+      "DO NOT RETRY blindly. Verify the recipient JID first:",
+      '  search_contacts("<name>") -> use the @lid it returns.',
+    );
+  }
+
+  if (ackError.detail) lines.push("", `Server detail: ${ackError.detail}`);
+
+  return lines.join("\n");
+}
 
 export function classifyAckError(entry: WAMessageUpdate): AckError | null {
   const update = entry.update;
@@ -52,17 +111,21 @@ export function classifyAckError(entry: WAMessageUpdate): AckError | null {
 }
 
 /**
- * Log every server-rejected send in a `messages.update` batch.
+ * Log every server-rejected send in a `messages.update` batch, and publish it
+ * on the ack bus.
  *
- * Operator-facing only: nothing is persisted and the agent still sees
- * `send_message` as fire-and-forget. Deliberate — the fix for the 463 that
- * prompted this is the Baileys upgrade itself; this is the safety net that
- * makes a recurrence visible instead of silent.
+ * This used to be operator-facing only, leaving `send_message` fire-and-forget.
+ * That is precisely what made the 2026-07-22 incident so expensive: the tool
+ * reported success for four messages the server had refused, the evidence sat
+ * only in `wa-logs.txt`, and the agent concluded the MCP was broken. The bus
+ * lets the send path block briefly and tell the caller the truth.
  */
 export function logAckErrors(updates: WAMessageUpdate[], logger: Logger): void {
   for (const entry of updates) {
     const ackError = classifyAckError(entry);
     if (!ackError) continue;
+
+    emitAckError(ackError);
 
     logger.warn(
       {
