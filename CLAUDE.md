@@ -70,6 +70,8 @@ Remember to swap back to the HTTP entry afterwards.
 | `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
 | ntfy silent | `NTFY_TOPIC_URL` unset on VPS, or topic not subscribed in the ntfy app. Check `docker exec whatsapp-mcp grep ntfy /data/wa-logs.txt`. |
 | Container `unhealthy` | Healthcheck hits `http://127.0.0.1:39002/health`. If the QR web server failed to bind (port clash), container flaps. `docker logs whatsapp-mcp`. |
+| `send_message` reports success but the message never arrives | Look for `send rejected by server` in `wa-logs.txt` (`src/ack-errors.ts`). WhatsApp refuses sends **asynchronously**, in an ack that lands after `sendMessage()` already resolved, so the tool cannot surface it in its return value. Code `463` = no trusted-contact (tc) token for that chat, `479` = stale device session. **Never re-send on a 463** — each attempt counts as another "reach out" and worsens the restriction; Baileys issues the token and recovers on its own. |
+| `error 463` for one specific contact only | Expected, not an account ban. WhatsApp gates 1:1 sends behind a tc token; established chats already carry one, so a chat that can't be established gets refused while every other chat keeps working. **Check the recipient number is still live before debugging anything else** — a line deactivated by the carrier (unpaid bill, cancelled plan) can never mint a token, which is exactly what produced the 2026-07-22 463s against `5531991234567`. Confirm scope with `grep 'send rejected by server' /data/wa-logs.txt`: if every `chat_jid` is the same, it's the contact, not you. An actual account restriction hits every chat, including your own self-chat. |
 | `send_file` fails with "cannot read local file …" or "ENOENT" | The MCP server runs in a remote container — it can't see your host disk. Use `POST /upload` to publish the file first, then pass the returned URL to `send_file`. See "Sending host-disk files" above. |
 | `POST /upload` returns 401 | `MCP_AUTH_TOKEN` mismatch — same secret as the MCP endpoint. |
 | `POST /upload` returns 415 | Bytes didn't match any known magic header. Re-encode the file or check it's not truncated; `sniffMimetype` only recognises JPEG/PNG/GIF/WebP/PDF/MP4/3GP/MOV/M4A/OGG/WAV/MP3. |
@@ -174,6 +176,9 @@ src/
 ├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
 ├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
 │                          #   the gap when send_file's file_path can't reach the agent's filesystem
+├── ack-errors.ts          # classifyAckError/logAckErrors: server rejections of our own sends,
+│                          #   which arrive async on messages.update (status=ERROR) long after
+│                          #   sendMessage() resolved. Decodes 463 (missing tctoken) / 479
 ├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
 │                          #   waitForInbound backs the wait_for_messages long-poll
 ├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
