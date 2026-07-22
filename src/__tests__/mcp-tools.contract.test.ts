@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { FastMCP } from "fastmcp";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 // Contract tests pinning the zod + fastmcp API surface consumed by src/mcp.ts.

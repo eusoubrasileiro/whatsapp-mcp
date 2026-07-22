@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import pino from "pino";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendWhatsAppMessage = vi.fn();
 const sendWhatsAppMedia = vi.fn();
@@ -106,11 +106,7 @@ describe("send_message guards", () => {
       message: "hi",
     } as never);
 
-    expect(sendWhatsAppMessage).toHaveBeenCalledWith(
-      expect.anything(),
-      "22233344455566@lid",
-      "hi",
-    );
+    expect(sendWhatsAppMessage).toHaveBeenCalledWith(expect.anything(), "22233344455566@lid", "hi");
   });
 
   it("leaves group sends untouched", async () => {

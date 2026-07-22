@@ -21,7 +21,9 @@
     "typecheck": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
   },
   "dependencies": {
     "@amiticia/baileys-client": "link:../baileys-client",
@@ -40,6 +42,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
     "@testcontainers/minio": "^10.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",

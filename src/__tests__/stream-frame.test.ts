@@ -1,7 +1,6 @@
-import { describe, it, expect } from "vitest";
-
-import { buildStreamFrame } from "../stream/frame.ts";
+import { describe, expect, it } from "vitest";
 import type { Message } from "../database.ts";
+import { buildStreamFrame } from "../stream/frame.ts";
 
 function msg(o: Partial<Message> & { id: string; chat_jid: string; content: string }): Message {
   return {
@@ -39,8 +38,12 @@ describe("buildStreamFrame", () => {
   it("emits a media block with the transcription and a download fetch_id", () => {
     const frame = buildStreamFrame(
       msg({
-        id: "V1", chat_jid: "1203@g.us", content: "",
-        media_type: "ptt", mimetype: "audio/ogg; codecs=opus", file_length: 4821,
+        id: "V1",
+        chat_jid: "1203@g.us",
+        content: "",
+        media_type: "ptt",
+        mimetype: "audio/ogg; codecs=opus",
+        file_length: 4821,
       }),
       13,
       "Beatriz",

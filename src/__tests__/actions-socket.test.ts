@@ -5,7 +5,7 @@
  * We avoid `importOriginal` on whatsapp.ts (which requires @amiticia/baileys-client)
  * by providing a minimal inline mock that only exposes the socketState we need.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Provide a self-contained stub — avoids importOriginal resolving baileys-client.
 vi.mock("../whatsapp.ts", () => ({
@@ -38,16 +38,16 @@ vi.mock("../database.ts", async (importOriginal) => {
   };
 });
 
+import pino from "pino";
 import {
   assertSocketActive,
-  executeLogout,
-  executeGetGroupInfo,
-  executeReactToMessage,
   executeDeleteMessage,
+  executeGetGroupInfo,
+  executeLogout,
+  executeReactToMessage,
 } from "../actions.ts";
-import { socketState } from "../whatsapp.ts";
 import { getContactName } from "../database.ts";
-import pino from "pino";
+import { socketState } from "../whatsapp.ts";
 
 const logger = pino({ level: "silent" });
 
@@ -129,15 +129,13 @@ describe("executeGetGroupInfo", () => {
 
   it("throws when socket is not connected", async () => {
     socketState.socket = null;
-    await expect(
-      executeGetGroupInfo({ group_jid: "abc@g.us" }),
-    ).rejects.toThrow(/not active/i);
+    await expect(executeGetGroupInfo({ group_jid: "abc@g.us" })).rejects.toThrow(/not active/i);
   });
 
   it("throws when JID does not end with @g.us", async () => {
-    await expect(
-      executeGetGroupInfo({ group_jid: "abc@s.whatsapp.net" }),
-    ).rejects.toThrow(/@g\.us/);
+    await expect(executeGetGroupInfo({ group_jid: "abc@s.whatsapp.net" })).rejects.toThrow(
+      /@g\.us/,
+    );
   });
 
   it("returns group metadata JSON with participants", async () => {

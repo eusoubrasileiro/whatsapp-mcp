@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sniffMedia, extensionFor } from "../sniffed-media.ts";
+import { extensionFor, sniffMedia } from "../sniffed-media.ts";
 
 /**
  * The sniffer is the single source of truth for the magic-byte ↔ mimetype

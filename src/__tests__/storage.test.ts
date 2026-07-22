@@ -1,37 +1,44 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Readable } from "node:stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  putMedia,
-  putUpload,
-  publicUrlFor,
   ensureBucketReady,
   getMediaBytes,
-  setStorageClient,
-  resetStorageClient,
   type MediaStorageClient,
+  publicUrlFor,
+  putMedia,
+  putUpload,
+  resetStorageClient,
+  setStorageClient,
 } from "../storage.ts";
 
-function makeMockClient(overrides: {
-  putObject?: ReturnType<typeof vi.fn>;
-  bucketExists?: ReturnType<typeof vi.fn>;
-  makeBucket?: ReturnType<typeof vi.fn>;
-  setBucketPolicy?: ReturnType<typeof vi.fn>;
-  getObject?: ReturnType<typeof vi.fn>;
-} = {}) {
+function makeMockClient(
+  overrides: {
+    putObject?: ReturnType<typeof vi.fn>;
+    bucketExists?: ReturnType<typeof vi.fn>;
+    makeBucket?: ReturnType<typeof vi.fn>;
+    setBucketPolicy?: ReturnType<typeof vi.fn>;
+    getObject?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   return {
     putObject: overrides.putObject ?? vi.fn().mockResolvedValue({}),
     bucketExists: overrides.bucketExists ?? vi.fn().mockResolvedValue(false),
     makeBucket: overrides.makeBucket ?? vi.fn().mockResolvedValue(undefined),
     setBucketPolicy: overrides.setBucketPolicy ?? vi.fn().mockResolvedValue(undefined),
-    getObject: overrides.getObject ?? vi.fn().mockResolvedValue(Readable.from([Buffer.from("default")])),
+    getObject:
+      overrides.getObject ?? vi.fn().mockResolvedValue(Readable.from([Buffer.from("default")])),
   };
 }
 
 const savedEnv: Record<string, string | undefined> = {};
 const envKeys = [
-  "S3_BUCKET", "S3_REGION", "S3_SKIP_POLICY",
-  "S3_ENDPOINT", "S3_PORT",
-  "MEDIA_PUBLIC_BASE_URL", "TENANT_ID",
+  "S3_BUCKET",
+  "S3_REGION",
+  "S3_SKIP_POLICY",
+  "S3_ENDPOINT",
+  "S3_PORT",
+  "MEDIA_PUBLIC_BASE_URL",
+  "TENANT_ID",
 ];
 
 describe("storage", () => {
@@ -137,9 +144,7 @@ describe("storage", () => {
         buffer: Buffer.from("x"),
       });
 
-      expect(url).toBe(
-        "http://localhost:9000/test-bucket/t/default/123@s.whatsapp.net/abc.jpg",
-      );
+      expect(url).toBe("http://localhost:9000/test-bucket/t/default/123@s.whatsapp.net/abc.jpg");
     });
   });
 
@@ -172,13 +177,9 @@ describe("storage", () => {
         ext: "jpg",
       });
 
-      expect(mock.putObject).toHaveBeenCalledWith(
-        "test-bucket",
-        key,
-        buffer,
-        buffer.length,
-        { "Content-Type": "image/jpeg" },
-      );
+      expect(mock.putObject).toHaveBeenCalledWith("test-bucket", key, buffer, buffer.length, {
+        "Content-Type": "image/jpeg",
+      });
     });
 
     it("uses provided tenantId override", async () => {
@@ -229,9 +230,7 @@ describe("storage", () => {
     it("is independent of S3_ENDPOINT", () => {
       process.env.S3_ENDPOINT = "internal.minio:9000";
       process.env.MEDIA_PUBLIC_BASE_URL = "https://media.amiticia.cc";
-      expect(publicUrlFor("some/key.jpg")).toBe(
-        "https://media.amiticia.cc/some/key.jpg",
-      );
+      expect(publicUrlFor("some/key.jpg")).toBe("https://media.amiticia.cc/some/key.jpg");
     });
   });
 
@@ -352,10 +351,9 @@ describe("storage", () => {
 
   describe("getMediaBytes", () => {
     it("concatenates the stream returned by getObject into a single Buffer", async () => {
-      const getObject = vi.fn().mockResolvedValue(Readable.from([
-        Buffer.from("hello "),
-        Buffer.from("world"),
-      ]));
+      const getObject = vi
+        .fn()
+        .mockResolvedValue(Readable.from([Buffer.from("hello "), Buffer.from("world")]));
       const mock = makeMockClient({ getObject });
       setStorageClient(mock as MediaStorageClient);
 

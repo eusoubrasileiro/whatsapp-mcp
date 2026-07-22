@@ -1,10 +1,9 @@
-import { z } from "zod";
-import QRCode from "qrcode";
 import { spawn } from "node:child_process";
 import type { Logger } from "pino";
-
-import { connectionState, startWhatsAppConnection } from "../../whatsapp.ts";
+import QRCode from "qrcode";
+import { z } from "zod";
 import { executeLogout } from "../../actions.ts";
+import { connectionState, startWhatsAppConnection } from "../../whatsapp.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 /**
@@ -29,9 +28,7 @@ export function openImageInViewer(imagePath: string, logger: Logger): void {
     return;
   }
   const opener =
-    process.platform === "darwin" ? "open" :
-    process.platform === "win32" ? "explorer" :
-    "xdg-open";
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
   try {
     const child = spawn(opener, [imagePath], { detached: true, stdio: "ignore" });
     child.on("error", (err) => logger.warn({ err, imagePath }, "Failed to auto-open QR image"));
@@ -51,18 +48,23 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
     execute: async () => {
       mcpLogger.info("[MCP Tool] Executing get_connection_status");
 
-      if (connectionState.status === 'qr_pending' && connectionState.qrCode) {
+      if (connectionState.status === "qr_pending" && connectionState.qrCode) {
         const qrPath = "/tmp/whatsapp-mcp-qr.png";
         await QRCode.toFile(qrPath, connectionState.qrCode, { scale: 10 });
         mcpLogger.info({ qrPath }, "QR code saved as PNG");
 
         openImageInViewer(qrPath, mcpLogger);
 
-        return JSON.stringify({
-          status: "qr_pending",
-          qr_code_path: qrPath,
-          message: "QR code saved (and opened if a desktop session is available). Scan with WhatsApp mobile (Settings > Linked Devices), or open the QR web page. Call this tool again after scanning.",
-        }, null, 2);
+        return JSON.stringify(
+          {
+            status: "qr_pending",
+            qr_code_path: qrPath,
+            message:
+              "QR code saved (and opened if a desktop session is available). Scan with WhatsApp mobile (Settings > Linked Devices), or open the QR web page. Call this tool again after scanning.",
+          },
+          null,
+          2,
+        );
       }
 
       const result: Record<string, unknown> = {
@@ -73,9 +75,9 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
         result.user = connectionState.user;
       }
 
-      if (connectionState.status === 'connected') {
+      if (connectionState.status === "connected") {
         result.message = "WhatsApp is connected and ready";
-      } else if (connectionState.status === 'syncing') {
+      } else if (connectionState.status === "syncing") {
         result.message = "WhatsApp is connected but syncing history. Some operations may fail.";
         result.sync_progress = {
           chats: connectionState.syncProgress.chats,
@@ -85,7 +87,7 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
             ? Math.round((Date.now() - connectionState.syncProgress.lastBatchAt.getTime()) / 1000)
             : null,
         };
-      } else if (connectionState.status === 'connecting') {
+      } else if (connectionState.status === "connecting") {
         result.message = "Connecting to WhatsApp...";
       } else {
         result.message = "WhatsApp is disconnected. Attempting to reconnect...";
@@ -96,7 +98,7 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
       }
 
       return JSON.stringify(result, null, 2);
-    }
+    },
   });
 
   server.addTool({
@@ -106,6 +108,6 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
     execute: async () => {
       mcpLogger.info("[MCP Tool] Executing logout");
       return executeLogout();
-    }
+    },
   });
 }

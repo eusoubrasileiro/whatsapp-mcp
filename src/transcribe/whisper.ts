@@ -61,7 +61,9 @@ export async function transcribeAudio(opts: TranscribeOptions): Promise<Transcri
   const openaiKey = process.env.OPENAI_API_KEY;
 
   if (!groqKey && !openaiKey) {
-    throw new TranscribeError("Neither GROQ_API_KEY nor OPENAI_API_KEY is set — cannot transcribe audio.");
+    throw new TranscribeError(
+      "Neither GROQ_API_KEY nor OPENAI_API_KEY is set — cannot transcribe audio.",
+    );
   }
 
   if (groqKey) {
@@ -76,10 +78,11 @@ export async function transcribeAudio(opts: TranscribeOptions): Promise<Transcri
         language,
         response_format: "verbose_json",
       });
-      const text = typeof response === "string" ? response : (response as any).text ?? "";
-      const duration_s = typeof response === "object" && response && "duration" in response
-        ? Number((response as any).duration)
-        : undefined;
+      const text = typeof response === "string" ? response : ((response as any).text ?? "");
+      const duration_s =
+        typeof response === "object" && response && "duration" in response
+          ? Number((response as any).duration)
+          : undefined;
       logger?.debug({ provider: "groq", model, chars: text.length }, "whisper.transcribe done");
       return { text, model, provider: "groq", duration_s };
     } catch (err) {
@@ -98,10 +101,11 @@ export async function transcribeAudio(opts: TranscribeOptions): Promise<Transcri
       language,
       response_format: "verbose_json",
     });
-    const text = typeof response === "string" ? response : (response as any).text ?? "";
-    const duration_s = typeof response === "object" && response && "duration" in response
-      ? Number((response as any).duration)
-      : undefined;
+    const text = typeof response === "string" ? response : ((response as any).text ?? "");
+    const duration_s =
+      typeof response === "object" && response && "duration" in response
+        ? Number((response as any).duration)
+        : undefined;
     logger?.debug({ provider: "openai", model, chars: text.length }, "whisper.transcribe done");
     return { text, model, provider: "openai", duration_s };
   } catch (err) {

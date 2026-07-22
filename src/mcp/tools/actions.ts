@@ -1,10 +1,6 @@
 import { z } from "zod";
 
-import {
-  executeDeleteMessage,
-  executeMarkChatRead,
-  executeReactToMessage,
-} from "../../actions.ts";
+import { executeDeleteMessage, executeMarkChatRead, executeReactToMessage } from "../../actions.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 export function registerActionsTools(server: ToolRegistrar, deps: ToolDeps): void {
@@ -16,11 +12,21 @@ export function registerActionsTools(server: ToolRegistrar, deps: ToolDeps): voi
     parameters: z.object({
       chat_jid: z.string().describe("The chat JID where the message is"),
       message_id: z.string().describe("The ID of the message to react to"),
-      emoji: z.string().describe("The emoji to react with (e.g., '👍', '❤️', '😂'). Use empty string to remove reaction."),
-      from_me: z.boolean().optional().default(false).describe("Whether the target message was sent by you"),
+      emoji: z
+        .string()
+        .describe(
+          "The emoji to react with (e.g., '👍', '❤️', '😂'). Use empty string to remove reaction.",
+        ),
+      from_me: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Whether the target message was sent by you"),
     }),
     execute: async ({ chat_jid, message_id, emoji, from_me }) => {
-      mcpLogger.info(`[MCP Tool] Executing react_to_message: ${emoji} on ${message_id} in ${chat_jid}`);
+      mcpLogger.info(
+        `[MCP Tool] Executing react_to_message: ${emoji} on ${message_id} in ${chat_jid}`,
+      );
       return executeReactToMessage({ chat_jid, message_id, emoji, from_me });
     },
   });
@@ -31,7 +37,11 @@ export function registerActionsTools(server: ToolRegistrar, deps: ToolDeps): voi
     parameters: z.object({
       chat_jid: z.string().describe("The chat JID where the message is"),
       message_id: z.string().describe("The ID of the message to delete"),
-      from_me: z.boolean().optional().default(true).describe("Whether the message was sent by you (default true)"),
+      from_me: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Whether the message was sent by you (default true)"),
     }),
     execute: async ({ chat_jid, message_id, from_me }) => {
       mcpLogger.info(`[MCP Tool] Executing delete_message: ${message_id} in ${chat_jid}`);

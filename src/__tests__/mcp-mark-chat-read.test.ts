@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../database.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../database.ts")>();
@@ -31,10 +31,10 @@ vi.mock("../whatsapp.ts", () => ({
   downloadMedia: vi.fn(),
 }));
 
+import pino from "pino";
 import { executeMarkChatRead } from "../actions.ts";
 import { getLatestMessage } from "../database.ts";
 import { socketState } from "../whatsapp.ts";
-import pino from "pino";
 
 const logger = pino({ level: "silent" });
 
@@ -86,17 +86,17 @@ describe("executeMarkChatRead", () => {
 
   it("throws when there are no messages to mark", async () => {
     vi.mocked(getLatestMessage).mockReturnValue(null);
-    await expect(
-      executeMarkChatRead(logger, { chat_jid: "empty@s.whatsapp.net" }),
-    ).rejects.toThrow(/no messages|empty/i);
+    await expect(executeMarkChatRead(logger, { chat_jid: "empty@s.whatsapp.net" })).rejects.toThrow(
+      /no messages|empty/i,
+    );
     expect(chatModify).not.toHaveBeenCalled();
   });
 
   it("throws when socket is not connected", async () => {
     socketState.socket = null;
-    await expect(
-      executeMarkChatRead(logger, { chat_jid: "x@s.whatsapp.net" }),
-    ).rejects.toThrow(/not active/i);
+    await expect(executeMarkChatRead(logger, { chat_jid: "x@s.whatsapp.net" })).rejects.toThrow(
+      /not active/i,
+    );
   });
 
   it("includes participant for group chats so receipt routes correctly", async () => {

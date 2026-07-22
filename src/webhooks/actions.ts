@@ -4,11 +4,7 @@
  * `@amiticia/baileys-client`. MCP tools delegate here.
  */
 
-import {
-  addSubscription,
-  listSubscriptions,
-  removeSubscription,
-} from "./registry.ts";
+import { addSubscription, listSubscriptions, removeSubscription } from "./registry.ts";
 import type { AuthMode, Subscription } from "./types.ts";
 
 /**

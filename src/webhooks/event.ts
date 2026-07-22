@@ -4,11 +4,7 @@
  * conventions mirror `formatDbMessageForJson` (src/formatters.ts).
  */
 
-import type {
-  InboundMessageEvent,
-  InboundMessageInput,
-  Subscription,
-} from "./types.ts";
+import type { InboundMessageEvent, InboundMessageInput, Subscription } from "./types.ts";
 
 export function buildInboundEvent(
   sub: Pick<Subscription, "id" | "tenantId">,

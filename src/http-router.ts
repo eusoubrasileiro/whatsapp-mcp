@@ -17,11 +17,7 @@ export interface Route {
    * upload-server / mcp HTTP guard when `MCP_AUTH_TOKEN` is unset.
    */
   auth?: "bearer";
-  handler: (
-    req: IncomingMessage,
-    res: ServerResponse,
-    ctx: RouteContext,
-  ) => Promise<void> | void;
+  handler: (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => Promise<void> | void;
 }
 
 export interface RouterOptions {
@@ -35,10 +31,7 @@ export interface RouterOptions {
  * `405 + Allow` for path-without-method, `404 not found`, and `500 internal
  * error` for handler exceptions (preserving partially-sent responses).
  */
-export function createRouter(
-  routes: Route[],
-  opts: RouterOptions,
-): RequestListener {
+export function createRouter(routes: Route[], opts: RouterOptions): RequestListener {
   const { logger, bearerToken } = opts;
 
   return async function routerListener(req, res) {

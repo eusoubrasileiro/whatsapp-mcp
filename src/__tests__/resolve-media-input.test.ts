@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveMediaInput } from "../media-input.ts";
 
 describe("resolveMediaInput", () => {
@@ -19,10 +19,7 @@ describe("resolveMediaInput", () => {
     beforeEach(() => {
       tmpFile = path.join(os.tmpdir(), `resolve-media-${Date.now()}-${Math.random()}.bin`);
       // Full PNG magic: 89 50 4E 47 0D 0A 1A 0A
-      fs.writeFileSync(
-        tmpFile,
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      );
+      fs.writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     });
 
     afterEach(() => {
@@ -98,15 +95,17 @@ describe("resolveMediaInput", () => {
     });
 
     it("rejects on non-2xx response with status in error", async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response("Not Found", { status: 404 }),
-      ) as unknown as typeof fetch;
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response("Not Found", { status: 404 })) as unknown as typeof fetch;
 
       await expect(resolveMediaInput("https://example.com/missing.jpg")).rejects.toThrow(/404/);
     });
 
     it("rejects on fetch failure", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error("ENOTFOUND")) as unknown as typeof fetch;
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("ENOTFOUND")) as unknown as typeof fetch;
 
       await expect(resolveMediaInput("https://bad.example.com/x")).rejects.toThrow(
         /fetch|ENOTFOUND/i,

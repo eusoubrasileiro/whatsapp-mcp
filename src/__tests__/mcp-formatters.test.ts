@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { initializeDatabase, resetDatabase, storeContact } from "../database.ts";
-import { formatDbMessageForJson, formatDbChatForJson } from "../formatters.ts";
+import { formatDbChatForJson, formatDbMessageForJson } from "../formatters.ts";
 
 describe("formatDbMessageForJson", () => {
   beforeEach(() => initializeDatabase(":memory:"));
@@ -9,8 +9,12 @@ describe("formatDbMessageForJson", () => {
   it("uses contact name as sender_display when available", () => {
     storeContact({ jid: "5511@s.whatsapp.net", name: "Alice" });
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "5511@s.whatsapp.net", sender: "5511@s.whatsapp.net",
-      content: "hi", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: false,
+      id: "m",
+      chat_jid: "5511@s.whatsapp.net",
+      sender: "5511@s.whatsapp.net",
+      content: "hi",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: false,
       chat_name: "Alice",
     } as any);
     expect(out.sender_display).toBe("Alice");
@@ -18,8 +22,12 @@ describe("formatDbMessageForJson", () => {
 
   it("falls back to bare phone (split @) when no contact entry", () => {
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "5599@s.whatsapp.net", sender: "5599@s.whatsapp.net",
-      content: "hi", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: false,
+      id: "m",
+      chat_jid: "5599@s.whatsapp.net",
+      sender: "5599@s.whatsapp.net",
+      content: "hi",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: false,
       chat_name: null,
     } as any);
     expect(out.sender_display).toBe("5599");
@@ -27,8 +35,12 @@ describe("formatDbMessageForJson", () => {
 
   it("uses 'Me' for outgoing messages with null sender", () => {
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "5599@s.whatsapp.net", sender: null,
-      content: "hi", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: true,
+      id: "m",
+      chat_jid: "5599@s.whatsapp.net",
+      sender: null,
+      content: "hi",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: true,
       chat_name: null,
     } as any);
     expect(out.sender_display).toBe("Me");
@@ -36,22 +48,39 @@ describe("formatDbMessageForJson", () => {
 
   it("emits a media block with downloaded=false when media_object_key is null", () => {
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "x@s.whatsapp.net", sender: "x@s.whatsapp.net",
-      content: "[Image]", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: false,
+      id: "m",
+      chat_jid: "x@s.whatsapp.net",
+      sender: "x@s.whatsapp.net",
+      content: "[Image]",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: false,
       chat_name: null,
-      media_type: "image", mimetype: "image/jpeg", file_length: 100, media_object_key: null,
+      media_type: "image",
+      mimetype: "image/jpeg",
+      file_length: 100,
+      media_object_key: null,
     } as any);
     expect((out as any).media).toEqual({
-      type: "image", mimetype: "image/jpeg", file_size: 100, downloaded: false, object_key: null,
+      type: "image",
+      mimetype: "image/jpeg",
+      file_size: 100,
+      downloaded: false,
+      object_key: null,
     });
   });
 
   it("emits a media block with downloaded=true when media_object_key is set", () => {
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "x@s.whatsapp.net", sender: "x@s.whatsapp.net",
-      content: "[Image]", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: false,
+      id: "m",
+      chat_jid: "x@s.whatsapp.net",
+      sender: "x@s.whatsapp.net",
+      content: "[Image]",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: false,
       chat_name: null,
-      media_type: "image", mimetype: "image/jpeg", file_length: 100,
+      media_type: "image",
+      mimetype: "image/jpeg",
+      file_length: 100,
       media_object_key: "t/default/x/m.jpg",
     } as any);
     expect((out as any).media.downloaded).toBe(true);
@@ -60,9 +89,14 @@ describe("formatDbMessageForJson", () => {
 
   it("omits media block for text-only messages", () => {
     const out = formatDbMessageForJson({
-      id: "m", chat_jid: "x@s.whatsapp.net", sender: "x@s.whatsapp.net",
-      content: "hello", timestamp: new Date("2025-06-01T12:00:00Z"), is_from_me: false,
-      chat_name: null, media_type: null,
+      id: "m",
+      chat_jid: "x@s.whatsapp.net",
+      sender: "x@s.whatsapp.net",
+      content: "hello",
+      timestamp: new Date("2025-06-01T12:00:00Z"),
+      is_from_me: false,
+      chat_name: null,
+      media_type: null,
     } as any);
     expect((out as any).media).toBeUndefined();
   });
@@ -74,7 +108,8 @@ describe("formatDbChatForJson", () => {
 
   it("flags @g.us jids as is_group=true", () => {
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "My Group",
+      jid: "abc@g.us",
+      name: "My Group",
       last_message_time: new Date("2025-06-01T12:00:00Z"),
     } as any);
     expect(out.is_group).toBe(true);
@@ -82,7 +117,8 @@ describe("formatDbChatForJson", () => {
 
   it("flags @s.whatsapp.net jids as is_group=false and falls back name to phone segment", () => {
     const out = formatDbChatForJson({
-      jid: "5599@s.whatsapp.net", name: null,
+      jid: "5599@s.whatsapp.net",
+      name: null,
       last_message_time: null,
     } as any);
     expect(out.is_group).toBe(false);
@@ -92,7 +128,8 @@ describe("formatDbChatForJson", () => {
   it("returns last_message_time as ISO string when set", () => {
     const ts = new Date("2025-06-01T12:00:00Z");
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: ts,
     } as any);
     expect(out.last_message_time).toBe("2025-06-01T12:00:00.000Z");
@@ -100,7 +137,8 @@ describe("formatDbChatForJson", () => {
 
   it("returns null last_message_time when not set", () => {
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: null,
     } as any);
     expect(out.last_message_time).toBeNull();
@@ -109,7 +147,8 @@ describe("formatDbChatForJson", () => {
   it("uses contact name as last_sender_display when last_sender has a contact entry", () => {
     storeContact({ jid: "5511@s.whatsapp.net", name: "Alice" });
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: null,
       last_sender: "5511@s.whatsapp.net",
       last_is_from_me: false,
@@ -119,7 +158,8 @@ describe("formatDbChatForJson", () => {
 
   it("falls back to phone segment as last_sender_display when no contact entry", () => {
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: null,
       last_sender: "5599@s.whatsapp.net",
       last_is_from_me: false,
@@ -129,7 +169,8 @@ describe("formatDbChatForJson", () => {
 
   it("returns 'Me' as last_sender_display when last_sender is null and last_is_from_me is true", () => {
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: null,
       last_sender: null,
       last_is_from_me: true,
@@ -139,7 +180,8 @@ describe("formatDbChatForJson", () => {
 
   it("returns null last_sender_display when no sender and not from me", () => {
     const out = formatDbChatForJson({
-      jid: "abc@g.us", name: "G",
+      jid: "abc@g.us",
+      name: "G",
       last_message_time: null,
       last_sender: null,
       last_is_from_me: false,
@@ -149,7 +191,8 @@ describe("formatDbChatForJson", () => {
 
   it("propagates last_is_from_me from the chat row", () => {
     const out = formatDbChatForJson({
-      jid: "abc@s.whatsapp.net", name: "X",
+      jid: "abc@s.whatsapp.net",
+      name: "X",
       last_message_time: null,
       last_is_from_me: true,
     } as any);
@@ -158,7 +201,8 @@ describe("formatDbChatForJson", () => {
 
   it("includes last_message_preview from last_message field", () => {
     const out = formatDbChatForJson({
-      jid: "abc@s.whatsapp.net", name: "X",
+      jid: "abc@s.whatsapp.net",
+      name: "X",
       last_message_time: null,
       last_message: "Hey there!",
     } as any);
@@ -167,7 +211,8 @@ describe("formatDbChatForJson", () => {
 
   it("returns null last_message_preview when no last_message", () => {
     const out = formatDbChatForJson({
-      jid: "abc@s.whatsapp.net", name: "X",
+      jid: "abc@s.whatsapp.net",
+      name: "X",
       last_message_time: null,
       last_message: null,
     } as any);

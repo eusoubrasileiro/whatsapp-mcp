@@ -1,11 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-
-import {
-  assertSendAccepted,
-  getSendAckWaitMs,
-  isPresendCheckEnabled,
-} from "../send-guard.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emitAckError, resetAckBus } from "../ack-bus.ts";
+import { assertSendAccepted, getSendAckWaitMs, isPresendCheckEnabled } from "../send-guard.ts";
 
 function ack(msgId: string, code = "463") {
   return { msgId, chatJid: "c@s.whatsapp.net", code, reason: "r", detail: null };
@@ -53,9 +48,9 @@ describe("assertSendAccepted", () => {
   it("throws with agent-actionable text when the server rejected the send", async () => {
     emitAckError(ack("m1"));
 
-    await expect(
-      assertSendAccepted("m1", "5531912344567@s.whatsapp.net", 3000),
-    ).rejects.toThrow(/did NOT arrive[\s\S]*DO NOT RETRY/);
+    await expect(assertSendAccepted("m1", "5531912344567@s.whatsapp.net", 3000)).rejects.toThrow(
+      /did NOT arrive[\s\S]*DO NOT RETRY/,
+    );
   });
 
   it("resolves quietly when no rejection arrives", async () => {

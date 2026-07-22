@@ -24,8 +24,18 @@ export function registerMediaTools(server: ToolRegistrar, deps: ToolDeps): void 
     parameters: z.object({
       message_id: z.string().describe("The ID of the message containing media"),
       chat_jid: z.string().describe("The JID of the chat where the message is"),
-      transcribe: z.boolean().optional().describe("Audio only: transcribe to text (default true for audio/ptt). Set false to receive raw audio bytes."),
-      describe: z.boolean().optional().describe("Image only: caption via Gemini 2.5 Flash (default false). Set true to receive an <image_description> text block instead of the inline image."),
+      transcribe: z
+        .boolean()
+        .optional()
+        .describe(
+          "Audio only: transcribe to text (default true for audio/ptt). Set false to receive raw audio bytes.",
+        ),
+      describe: z
+        .boolean()
+        .optional()
+        .describe(
+          "Image only: caption via Gemini 2.5 Flash (default false). Set true to receive an <image_description> text block instead of the inline image.",
+        ),
     }),
     execute: executeDownloadMedia.bind(null, waLogger),
   });

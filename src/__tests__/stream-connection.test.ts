@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
-
-import { StreamConnection } from "../stream/connection.ts";
+import { describe, expect, it, vi } from "vitest";
 import type { Message } from "../database.ts";
 import type { NewMessagesResult } from "../monitoring.ts";
+import { StreamConnection } from "../stream/connection.ts";
 
 function msg(o: Partial<Message> & { id: string; content: string }): Message {
   return {
@@ -35,14 +34,17 @@ function fakeDelta(rows: Array<{ rowid: number; m: Message; fromMe?: boolean }>)
 
 function makeConn(rows: Parameters<typeof fakeDelta>[0], overrides = {}) {
   const sent: unknown[] = [];
-  const conn = new StreamConnection({
-    scope: { jids: null, includeFromMe: true, transcribe: true },
-    readDelta: fakeDelta(rows),
-    resolveSenderDisplay: () => "Beatriz",
-    transcribe: async () => "TRANSCRIPT",
-    send: (f) => sent.push(f),
-    ...overrides,
-  }, "row:0");
+  const conn = new StreamConnection(
+    {
+      scope: { jids: null, includeFromMe: true, transcribe: true },
+      readDelta: fakeDelta(rows),
+      resolveSenderDisplay: () => "Beatriz",
+      transcribe: async () => "TRANSCRIPT",
+      send: (f) => sent.push(f),
+      ...overrides,
+    },
+    "row:0",
+  );
   return { conn, sent };
 }
 
@@ -53,7 +55,10 @@ describe("StreamConnection", () => {
       { rowid: 2, m: msg({ id: "b", content: "two" }) },
     ]);
     await conn.drain();
-    expect(sent.map((f: any) => [f.seq, f.id])).toEqual([[1, "a"], [2, "b"]]);
+    expect(sent.map((f: any) => [f.seq, f.id])).toEqual([
+      [1, "a"],
+      [2, "b"],
+    ]);
     expect(conn.cursor).toBe("row:2");
   });
 
@@ -95,7 +100,10 @@ describe("StreamConnection", () => {
   });
 
   it("drains across multiple batches when more than one limit's worth is waiting", async () => {
-    const rows = Array.from({ length: 5 }, (_, i) => ({ rowid: i + 1, m: msg({ id: `m${i + 1}`, content: "x" }) }));
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      rowid: i + 1,
+      m: msg({ id: `m${i + 1}`, content: "x" }),
+    }));
     const { conn, sent } = makeConn(rows, { batchSize: 2 });
     await conn.drain();
     expect(sent.map((f: any) => f.id)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
@@ -104,13 +112,21 @@ describe("StreamConnection", () => {
   it("coalesces a wake that arrives mid-drain instead of running twice", async () => {
     let calls = 0;
     const rows = [{ rowid: 1, m: msg({ id: "a", content: "one" }) }];
-    const conn = new StreamConnection({
-      scope: { jids: null, includeFromMe: true, transcribe: false },
-      readDelta: (opts) => { calls++; return fakeDelta(rows)(opts); },
-      resolveSenderDisplay: () => "R",
-      transcribe: async () => null,
-      send: () => { conn.wake(); }, // re-entrant wake during send
-    }, "row:0");
+    const conn = new StreamConnection(
+      {
+        scope: { jids: null, includeFromMe: true, transcribe: false },
+        readDelta: (opts) => {
+          calls++;
+          return fakeDelta(rows)(opts);
+        },
+        resolveSenderDisplay: () => "R",
+        transcribe: async () => null,
+        send: () => {
+          conn.wake();
+        }, // re-entrant wake during send
+      },
+      "row:0",
+    );
     await conn.drain();
     // The mid-drain wake causes exactly one extra empty re-scan, not a parallel drain.
     expect(calls).toBe(2);

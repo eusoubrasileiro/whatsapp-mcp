@@ -60,7 +60,8 @@ export async function deliverEvent(
       } else {
         const timestamp = String(Math.floor(Date.now() / 1000));
         headers["X-Webhook-Timestamp"] = timestamp;
-        headers["X-Webhook-Signature"] = `sha256=${signPayload(`${timestamp}.${body}`, sub.secret)}`;
+        headers["X-Webhook-Signature"] =
+          `sha256=${signPayload(`${timestamp}.${body}`, sub.secret)}`;
       }
     }
 
@@ -128,9 +129,7 @@ export async function dispatchInbound<T extends InboundMessageInput>(
     // Direction filter: a genuine inbound (is_from_me=false) always qualifies. An
     // is_from_me message (you typing) qualifies when it's your self-chat (auto) OR
     // the subscription opted in via include_from_me (for a shared group/contact).
-    const subs = matched.filter((s) =>
-      msg.is_from_me ? isSelfChat || s.includeFromMe : true,
-    );
+    const subs = matched.filter((s) => (msg.is_from_me ? isSelfChat || s.includeFromMe : true));
     if (subs.length === 0) return;
 
     let transcript: string | null = null;
@@ -143,9 +142,7 @@ export async function dispatchInbound<T extends InboundMessageInput>(
     }
 
     await Promise.all(
-      subs.map((sub) =>
-        deliverEvent(sub, msg, sub.transcribe ? transcript : null, deps.logger),
-      ),
+      subs.map((sub) => deliverEvent(sub, msg, sub.transcribe ? transcript : null, deps.logger)),
     );
   } catch (err) {
     deps.logger.warn({ err, chatId: msg.chat_jid }, "inbound webhook dispatch failed");

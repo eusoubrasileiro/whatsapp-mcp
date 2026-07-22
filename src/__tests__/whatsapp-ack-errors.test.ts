@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionState, SocketState } from "@amiticia/baileys-client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Integration counterpart to ack-errors.test.ts: that file covers the pure
 // classifier, this one proves whatsapp.ts actually *registers* the hook.

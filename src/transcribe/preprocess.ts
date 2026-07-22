@@ -22,10 +22,7 @@ import { join } from "node:path";
 // "Invalid data found when processing input" is too generic — ffmpeg also
 // emits it as a recoverable warning on some valid containers. The two markers
 // below fire only on the actual demux-truncation failure mode (issue #4).
-const DEMUX_ERROR_MARKERS = [
-  "Error during demuxing",
-  "partial file",
-];
+const DEMUX_ERROR_MARKERS = ["Error during demuxing", "partial file"];
 
 export class FfmpegError extends Error {
   stderr?: string;
@@ -57,12 +54,18 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
     return await new Promise<Buffer>((resolve, reject) => {
       const args = [
         "-hide_banner",
-        "-loglevel", "error",
-        "-i", inputPath,
-        "-ar", "16000",
-        "-ac", "1",
-        "-c:a", "flac",
-        "-f", "flac",
+        "-loglevel",
+        "error",
+        "-i",
+        inputPath,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-c:a",
+        "flac",
+        "-f",
+        "flac",
         "pipe:1",
       ];
 
@@ -76,7 +79,11 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
 
       proc.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "ENOENT") {
-          reject(new FfmpegError(`ffmpeg binary not found at "${ffmpegBin}". Install ffmpeg or set FFMPEG_BIN.`));
+          reject(
+            new FfmpegError(
+              `ffmpeg binary not found at "${ffmpegBin}". Install ffmpeg or set FFMPEG_BIN.`,
+            ),
+          );
           return;
         }
         reject(new FfmpegError(`ffmpeg spawn failed: ${err.message}`));
@@ -93,17 +100,21 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
         // letting Whisper reject downstream with a misleading "audio too short".
         const demuxFailed = DEMUX_ERROR_MARKERS.some((m) => stderr.includes(m));
         if (demuxFailed) {
-          reject(new FfmpegError(
-            "ffmpeg exited 0 but stderr reports a demux failure — input is likely corrupt or its container is unsupported",
-            stderr,
-            0,
-          ));
+          reject(
+            new FfmpegError(
+              "ffmpeg exited 0 but stderr reports a demux failure — input is likely corrupt or its container is unsupported",
+              stderr,
+              0,
+            ),
+          );
           return;
         }
         resolve(Buffer.concat(stdoutChunks));
       });
     });
   } finally {
-    await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best effort */ });
+    await rm(stageDir, { recursive: true, force: true }).catch(() => {
+      /* best effort */
+    });
   }
 }

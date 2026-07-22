@@ -80,7 +80,10 @@ function extractText(response: any): string {
   const candidates = response?.candidates ?? [];
   for (const cand of candidates) {
     const parts = cand?.content?.parts ?? [];
-    const merged = parts.map((p: any) => p?.text ?? "").filter(Boolean).join("");
+    const merged = parts
+      .map((p: any) => p?.text ?? "")
+      .filter(Boolean)
+      .join("");
     if (merged) return merged;
   }
   return "";

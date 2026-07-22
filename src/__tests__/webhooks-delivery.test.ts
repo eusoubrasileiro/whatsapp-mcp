@@ -1,14 +1,12 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "pino";
-
-import { deliverEvent, dispatchInbound, isSelfChatJid, signPayload } from "../webhooks/delivery.ts";
-import type { InboundMessageInput, Subscription } from "../webhooks/types.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeDatabase, resetDatabase } from "../database.ts";
+import { deliverEvent, dispatchInbound, isSelfChatJid, signPayload } from "../webhooks/delivery.ts";
 import { addSubscription, loadRegistry, resetRegistry } from "../webhooks/registry.ts";
 import { markSentByUs, resetSentTracker } from "../webhooks/sent-tracker.ts";
+import type { InboundMessageInput, Subscription } from "../webhooks/types.ts";
 
 function fakeLogger() {
   return { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger & {
@@ -158,13 +156,21 @@ describe("dispatchInbound", () => {
   });
 
   it("does not deliver when no subscription matches", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/x", allowedJids: ["9999@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/x",
+      allowedJids: ["9999@s.whatsapp.net"],
+    });
     await dispatchInbound(makeMsg(), { logger: fakeLogger() });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("delivers a text message to each matching subscription", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/a", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/a",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
     addSubscription({ tenantId: "default", targetUrl: "https://h/b", allowedJids: ["*"] });
 
     await dispatchInbound(makeMsg(), { logger: fakeLogger() });
@@ -172,18 +178,28 @@ describe("dispatchInbound", () => {
   });
 
   it("transcribes an audio message once even with several subscribers", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/a", allowedJids: ["5531@s.whatsapp.net"] });
-    addSubscription({ tenantId: "default", targetUrl: "https://h/b", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/a",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/b",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
     const transcribe = vi.fn(async () => "transcribed text");
 
-    await dispatchInbound(
-      makeMsg({ content: "", media_type: "ptt", mimetype: "audio/ogg" }),
-      { logger: fakeLogger(), transcribe },
-    );
+    await dispatchInbound(makeMsg({ content: "", media_type: "ptt", mimetype: "audio/ogg" }), {
+      logger: fakeLogger(),
+      transcribe,
+    });
 
     expect(transcribe).toHaveBeenCalledTimes(1);
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-    const bodies = vi.mocked(globalThis.fetch).mock.calls.map((c) => JSON.parse(c[1]?.body as string));
+    const bodies = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map((c) => JSON.parse(c[1]?.body as string));
     expect(bodies.every((b) => b.transcript === "transcribed text")).toBe(true);
   });
 
@@ -196,10 +212,10 @@ describe("dispatchInbound", () => {
     });
     const transcribe = vi.fn(async () => "x");
 
-    await dispatchInbound(
-      makeMsg({ content: "", media_type: "ptt", mimetype: "audio/ogg" }),
-      { logger: fakeLogger(), transcribe },
-    );
+    await dispatchInbound(makeMsg({ content: "", media_type: "ptt", mimetype: "audio/ogg" }), {
+      logger: fakeLogger(),
+      transcribe,
+    });
 
     expect(transcribe).not.toHaveBeenCalled();
     const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
@@ -207,7 +223,11 @@ describe("dispatchInbound", () => {
   });
 
   it("forwards an is_from_me message only to subscriptions with include_from_me", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/in-only", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/in-only",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
     addSubscription({
       tenantId: "default",
       targetUrl: "https://h/self-chat",
@@ -215,7 +235,9 @@ describe("dispatchInbound", () => {
       includeFromMe: true,
     });
 
-    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), { logger: fakeLogger() });
+    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), {
+      logger: fakeLogger(),
+    });
 
     // Only the include_from_me subscription receives it; the inbound-only one is skipped.
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
@@ -262,7 +284,11 @@ describe("dispatchInbound", () => {
   });
 
   it("delivers a non-from-me message in a self-chat (the unconditional branch)", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/self", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
 
     await dispatchInbound(makeMsg({ is_from_me: false, content: "from someone else" }), {
       logger: fakeLogger(),
@@ -281,16 +307,20 @@ describe("dispatchInbound", () => {
       allowedJids: ["5531@s.whatsapp.net"], // your number, not your LID
     });
 
-    await dispatchInbound(
-      makeMsg({ chat_jid: "111@lid", is_from_me: true, content: "oi" }),
-      { logger: fakeLogger(), ownJids: ["5531@s.whatsapp.net", "111@lid"] },
-    );
+    await dispatchInbound(makeMsg({ chat_jid: "111@lid", is_from_me: true, content: "oi" }), {
+      logger: fakeLogger(),
+      ownJids: ["5531@s.whatsapp.net", "111@lid"],
+    });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("still suppresses the agent's own reply in a self-chat (loop guard wins)", async () => {
-    addSubscription({ tenantId: "default", targetUrl: "https://h/self", allowedJids: ["5531@s.whatsapp.net"] });
+    addSubscription({
+      tenantId: "default",
+      targetUrl: "https://h/self",
+      allowedJids: ["5531@s.whatsapp.net"],
+    });
     markSentByUs("REPLY9");
 
     await dispatchInbound(makeMsg({ id: "REPLY9", is_from_me: true }), {
@@ -305,7 +335,9 @@ describe("dispatchInbound", () => {
 describe("isSelfChatJid", () => {
   it("matches your own number across @domain and :device suffixes", () => {
     expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777")).toBe(true);
-    expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777:19@s.whatsapp.net")).toBe(true);
+    expect(isSelfChatJid("553188887777@s.whatsapp.net", "553188887777:19@s.whatsapp.net")).toBe(
+      true,
+    );
   });
 
   it("matches a LID self-chat against the account's own LID", () => {

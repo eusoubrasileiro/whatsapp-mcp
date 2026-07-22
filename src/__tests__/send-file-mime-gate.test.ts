@@ -47,15 +47,12 @@ describe("assertMimeForType — WABA-allow-list gate", () => {
   });
 
   describe("type=audio", () => {
-    it.each([
-      "audio/aac",
-      "audio/amr",
-      "audio/mpeg",
-      "audio/mp4",
-      "audio/ogg",
-    ])("accepts %s", (mime) => {
-      expect(() => assertMimeForType("audio", mime)).not.toThrow();
-    });
+    it.each(["audio/aac", "audio/amr", "audio/mpeg", "audio/mp4", "audio/ogg"])(
+      "accepts %s",
+      (mime) => {
+        expect(() => assertMimeForType("audio", mime)).not.toThrow();
+      },
+    );
 
     it("rejects non-audio mime", () => {
       expect(() => assertMimeForType("audio", "image/png")).toThrow(/png|audio|type/i);

@@ -1,8 +1,14 @@
-import * as Minio from "minio";
 import { randomUUID } from "node:crypto";
+import * as Minio from "minio";
 
 export interface MediaStorageClient {
-  putObject(bucket: string, key: string, data: Buffer, size?: number, metadata?: Record<string, string>): Promise<unknown>;
+  putObject(
+    bucket: string,
+    key: string,
+    data: Buffer,
+    size?: number,
+    metadata?: Record<string, string>,
+  ): Promise<unknown>;
   bucketExists(bucket: string): Promise<boolean>;
   makeBucket(bucket: string, region?: string): Promise<void>;
   setBucketPolicy(bucket: string, policy: string): Promise<void>;
@@ -43,7 +49,10 @@ function getClient(): MediaStorageClient {
 
 export function publicUrlFor(key: string): string {
   const bucket = getBucket();
-  const base = (process.env.MEDIA_PUBLIC_BASE_URL ?? `http://localhost:9000/${bucket}`).replace(/\/$/, "");
+  const base = (process.env.MEDIA_PUBLIC_BASE_URL ?? `http://localhost:9000/${bucket}`).replace(
+    /\/$/,
+    "",
+  );
   return `${base}/${key}`;
 }
 
@@ -56,7 +65,7 @@ export async function putMedia(params: {
   buffer: Buffer;
 }): Promise<{ key: string; url: string }> {
   const { chatJid, messageId, ext, mimetype, buffer } = params;
-  const tenantId = params.tenantId ?? (process.env.TENANT_ID ?? "default");
+  const tenantId = params.tenantId ?? process.env.TENANT_ID ?? "default";
   const bucket = getBucket();
   const sanitizedJid = chatJid.replace(/[^a-zA-Z0-9@._-]/g, "_");
   const key = `t/${tenantId}/${sanitizedJid}/${messageId}.${ext}`;
@@ -80,7 +89,7 @@ export async function putUpload(params: {
   ext: string;
 }): Promise<{ key: string; url: string }> {
   const { buffer, mimetype, ext } = params;
-  const tenantId = params.tenantId ?? (process.env.TENANT_ID ?? "default");
+  const tenantId = params.tenantId ?? process.env.TENANT_ID ?? "default";
   const bucket = getBucket();
   const key = `t/${tenantId}/uploads/${randomUUID()}.${ext}`;
 

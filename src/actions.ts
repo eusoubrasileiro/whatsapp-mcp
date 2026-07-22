@@ -8,33 +8,39 @@
  *  - reuse the same logic from future transports (REST, CLI, …)
  */
 
-import { imageContent, audioContent } from "fastmcp";
-import type { Logger } from "pino";
 import type { MediaType, WhatsAppSocket } from "@amiticia/baileys-client";
+import { audioContent, imageContent } from "fastmcp";
+import type { Logger } from "pino";
 
 import {
-  getMessageById,
-  getLatestMessage,
-  updateMessageMediaObjectKey,
   getContactName,
+  getLatestMessage,
+  getMessageById,
+  updateMessageMediaObjectKey,
 } from "./database.ts";
-import { downloadMedia, socketState } from "./whatsapp.ts";
-import { putMedia, publicUrlFor } from "./storage.ts";
+import { describeImage } from "./describe/vision.ts";
+import { publicUrlFor, putMedia } from "./storage.ts";
 import { toFlacMono16k } from "./transcribe/preprocess.ts";
 import { transcribeAudio } from "./transcribe/whisper.ts";
-import { describeImage } from "./describe/vision.ts";
-import { renderTranscription, renderImageDescription } from "./xml.ts";
+import { downloadMedia, socketState } from "./whatsapp.ts";
+import { renderImageDescription, renderTranscription } from "./xml.ts";
 
 export const MEDIA_INLINE_MAX_BYTES = Number(process.env.MEDIA_INLINE_MAX_BYTES ?? 5_242_880);
 
 /** True when the message's media is audio (regular audio or push-to-talk). */
-function isAudioMessage(message: { media_type?: string | null; mimetype?: string | null }): boolean {
+function isAudioMessage(message: {
+  media_type?: string | null;
+  mimetype?: string | null;
+}): boolean {
   const t = message.media_type;
   if (t === "audio" || t === "ptt") return true;
   return Boolean(message.mimetype?.startsWith("audio/"));
 }
 
-function isImageMessage(message: { media_type?: string | null; mimetype?: string | null }): boolean {
+function isImageMessage(message: {
+  media_type?: string | null;
+  mimetype?: string | null;
+}): boolean {
   if (message.media_type === "image") return true;
   return Boolean(message.mimetype?.startsWith("image/"));
 }
@@ -64,19 +70,20 @@ export interface DownloadMediaParams {
   describe?: boolean;
 }
 
-export async function executeDownloadMedia(
-  waLogger: Logger,
-  params: DownloadMediaParams,
-) {
+export async function executeDownloadMedia(waLogger: Logger, params: DownloadMediaParams) {
   const { message_id, chat_jid, transcribe, describe } = params;
-  waLogger.info(`[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid} (transcribe=${transcribe}, describe=${describe})`);
+  waLogger.info(
+    `[MCP Tool] Executing download_media for msg ${message_id} in ${chat_jid} (transcribe=${transcribe}, describe=${describe})`,
+  );
 
   const message = getMessageById(message_id, chat_jid);
   if (!message) {
     throw new Error(`Message ${message_id} not found in chat ${chat_jid}.`);
   }
   if (!message.media_type || !message.media_key || !message.direct_path) {
-    throw new Error(`Message ${message_id} does not contain downloadable media or media metadata is missing.`);
+    throw new Error(
+      `Message ${message_id} does not contain downloadable media or media metadata is missing.`,
+    );
   }
 
   const mimetype = message.mimetype ?? "application/octet-stream";
@@ -103,8 +110,26 @@ export async function executeDownloadMedia(
     if (shouldTranscribe || shouldDescribe) {
       buffer = await fetchObjectBytes(message.media_object_key);
     } else {
-      const linkBlock = { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype };
-      const textBlock = { type: "text" as const, text: JSON.stringify({ status: "cached", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2) };
+      const linkBlock = {
+        type: "resource_link" as const,
+        uri: url,
+        name: `${message_id}.${ext}`,
+        mimeType: mimetype,
+      };
+      const textBlock = {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            status: "cached",
+            url,
+            media_type: message.media_type,
+            mimetype,
+            file_size: message.file_length,
+          },
+          null,
+          2,
+        ),
+      };
       return { content: [linkBlock, textBlock] };
     }
   } else {
@@ -121,20 +146,45 @@ export async function executeDownloadMedia(
     });
     buffer = downloaded.buffer;
     ext = downloaded.ext;
-    const stored = await putMedia({ chatJid: chat_jid, messageId: message_id, ext, mimetype, buffer });
+    const stored = await putMedia({
+      chatJid: chat_jid,
+      messageId: message_id,
+      ext,
+      mimetype,
+      buffer,
+    });
     url = stored.url;
     updateMessageMediaObjectKey(message_id, chat_jid, stored.key);
     cached = false;
   }
 
-  const metaText = JSON.stringify({ status: cached ? "cached" : "uploaded", url, media_type: message.media_type, mimetype, file_size: message.file_length }, null, 2);
-  const resLink = { type: "resource_link" as const, uri: url, name: `${message_id}.${ext}`, mimeType: mimetype };
+  const metaText = JSON.stringify(
+    {
+      status: cached ? "cached" : "uploaded",
+      url,
+      media_type: message.media_type,
+      mimetype,
+      file_size: message.file_length,
+    },
+    null,
+    2,
+  );
+  const resLink = {
+    type: "resource_link" as const,
+    uri: url,
+    name: `${message_id}.${ext}`,
+    mimeType: mimetype,
+  };
   const textBlock = { type: "text" as const, text: metaText };
 
   // Audio + transcribe → return XML transcription instead of audio bytes.
   if (shouldTranscribe) {
     const flac = await toFlacMono16k(buffer);
-    const result = await transcribeAudio({ buffer: flac, filename: `${message_id}.flac`, logger: waLogger });
+    const result = await transcribeAudio({
+      buffer: flac,
+      filename: `${message_id}.flac`,
+      logger: waLogger,
+    });
     const xml = renderTranscription({
       message_id,
       chat_jid,
@@ -143,11 +193,7 @@ export async function executeDownloadMedia(
       text: result.text,
     });
     return {
-      content: [
-        { type: "text" as const, text: xml },
-        resLink,
-        textBlock,
-      ],
+      content: [{ type: "text" as const, text: xml }, resLink, textBlock],
     };
   }
 
@@ -161,11 +207,7 @@ export async function executeDownloadMedia(
       text: result.text,
     });
     return {
-      content: [
-        { type: "text" as const, text: xml },
-        resLink,
-        textBlock,
-      ],
+      content: [{ type: "text" as const, text: xml }, resLink, textBlock],
     };
   }
 
@@ -212,10 +254,7 @@ export async function executeMarkChatRead(
     messageTimestamp: Math.floor(latest.timestamp.getTime() / 1000),
   };
 
-  await socket.chatModify(
-    { markRead: true, lastMessages: [minimalMessage] as any },
-    chat_jid,
-  );
+  await socket.chatModify({ markRead: true, lastMessages: [minimalMessage] as any }, chat_jid);
 
   return `Chat ${chat_jid} marked as read.`;
 }
@@ -232,9 +271,7 @@ export async function executeLogout(): Promise<string> {
 
 // ── Group actions ──────────────────────────────────────────────────
 
-export async function executeGetGroupInfo(
-  { group_jid }: { group_jid: string },
-): Promise<string> {
+export async function executeGetGroupInfo({ group_jid }: { group_jid: string }): Promise<string> {
   const socket = assertSocketActive();
   if (!group_jid.endsWith("@g.us")) {
     throw new Error(`Invalid group JID: "${group_jid}". Must end with "@g.us".`);
@@ -242,26 +279,38 @@ export async function executeGetGroupInfo(
 
   const metadata = await socket.groupMetadata(group_jid);
 
-  return JSON.stringify({
-    jid: metadata.id,
-    name: metadata.subject,
-    description: metadata.desc ?? null,
-    owner: metadata.owner ?? null,
-    creation_time: metadata.creation ? new Date(metadata.creation * 1000).toISOString() : null,
-    participant_count: metadata.participants.length,
-    participants: metadata.participants.map((p: any) => ({
-      jid: p.id,
-      name: getContactName(p.id) ?? p.id.split("@")[0],
-      admin: p.admin ?? null,
-    })),
-  }, null, 2);
+  return JSON.stringify(
+    {
+      jid: metadata.id,
+      name: metadata.subject,
+      description: metadata.desc ?? null,
+      owner: metadata.owner ?? null,
+      creation_time: metadata.creation ? new Date(metadata.creation * 1000).toISOString() : null,
+      participant_count: metadata.participants.length,
+      participants: metadata.participants.map((p: any) => ({
+        jid: p.id,
+        name: getContactName(p.id) ?? p.id.split("@")[0],
+        admin: p.admin ?? null,
+      })),
+    },
+    null,
+    2,
+  );
 }
 
 // ── Message actions ────────────────────────────────────────────────
 
-export async function executeReactToMessage(
-  { chat_jid, message_id, emoji, from_me }: { chat_jid: string; message_id: string; emoji: string; from_me: boolean },
-): Promise<string> {
+export async function executeReactToMessage({
+  chat_jid,
+  message_id,
+  emoji,
+  from_me,
+}: {
+  chat_jid: string;
+  message_id: string;
+  emoji: string;
+  from_me: boolean;
+}): Promise<string> {
   const socket = assertSocketActive();
 
   await socket.sendMessage(chat_jid, {
@@ -280,9 +329,15 @@ export async function executeReactToMessage(
     : `Removed reaction from message ${message_id}.`;
 }
 
-export async function executeDeleteMessage(
-  { chat_jid, message_id, from_me }: { chat_jid: string; message_id: string; from_me: boolean },
-): Promise<string> {
+export async function executeDeleteMessage({
+  chat_jid,
+  message_id,
+  from_me,
+}: {
+  chat_jid: string;
+  message_id: string;
+  from_me: boolean;
+}): Promise<string> {
   const socket = assertSocketActive();
 
   await socket.sendMessage(chat_jid, {

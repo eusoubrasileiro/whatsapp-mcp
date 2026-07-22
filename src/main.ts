@@ -1,16 +1,21 @@
+import fs from "node:fs";
 import pino from "pino";
-import { initializeDatabase, setDatabaseLogger, closeDatabase } from "./database.ts";
-import { loadRegistry } from "./webhooks/registry.ts";
-import { startWhatsAppConnection, getConnectionState, triggerRepair, transcribeMediaMessage } from "./whatsapp.ts";
+import { closeDatabase, initializeDatabase, setDatabaseLogger } from "./database.ts";
 import { startMcpServer } from "./mcp.ts";
-import { ensureBucketReady, putUpload } from "./storage.ts";
 import { createQrServer } from "./qr-server.ts";
-import { createUploadServer } from "./upload-server.ts";
+import { ensureBucketReady, putUpload } from "./storage.ts";
 import { createStreamServer } from "./stream/server.ts";
 import { streamTokens } from "./stream/token.ts";
-import fs from "node:fs";
+import { createUploadServer } from "./upload-server.ts";
+import { loadRegistry } from "./webhooks/registry.ts";
+import {
+  getConnectionState,
+  startWhatsAppConnection,
+  transcribeMediaMessage,
+  triggerRepair,
+} from "./whatsapp.ts";
 
-const dataDir = process.env.WHATSAPP_MCP_DATA_DIR || '.';
+const dataDir = process.env.WHATSAPP_MCP_DATA_DIR || ".";
 fs.mkdirSync(dataDir, { recursive: true });
 
 function createAppLogger(filename: string) {
@@ -19,7 +24,7 @@ function createAppLogger(filename: string) {
       level: process.env.LOG_LEVEL || "info",
       timestamp: pino.stdTimeFunctions.isoTime,
     },
-    pino.destination(`${dataDir}/${filename}`)
+    pino.destination(`${dataDir}/${filename}`),
   );
 }
 
@@ -52,10 +57,7 @@ async function main() {
     await startMcpServer(mcpLogger, waLogger);
     mcpLogger.info("MCP Server started and listening.");
   } catch (error: any) {
-    mcpLogger.fatal(
-      { err: error },
-      "Failed during initialization or MCP server startup"
-    );
+    mcpLogger.fatal({ err: error }, "Failed during initialization or MCP server startup");
 
     process.exit(1);
   }

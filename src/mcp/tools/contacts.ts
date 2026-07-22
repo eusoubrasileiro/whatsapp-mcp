@@ -15,10 +15,14 @@ export function registerContactsTools(server: ToolRegistrar, deps: ToolDeps): vo
     execute: async ({ query }) => {
       mcpLogger.info(`[MCP Tool] Executing search_contacts with query: "${query}"`);
       const contacts = searchDbForContacts(query, 20);
-      return JSON.stringify(contacts.map((c) => ({
-        jid: c.jid,
-        name: c.name ?? c.jid.split("@")[0],
-      })), null, 2);
+      return JSON.stringify(
+        contacts.map((c) => ({
+          jid: c.jid,
+          name: c.name ?? c.jid.split("@")[0],
+        })),
+        null,
+        2,
+      );
     },
   });
 
@@ -27,7 +31,13 @@ export function registerContactsTools(server: ToolRegistrar, deps: ToolDeps): vo
     description: "List all contacts with optional name/number filter",
     parameters: z.object({
       query: z.string().optional().describe("Optional filter by name or phone number"),
-      limit: z.number().int().positive().optional().default(50).describe("Max contacts to return (default 50)"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(50)
+        .describe("Max contacts to return (default 50)"),
     }),
     execute: async ({ query, limit }) => {
       mcpLogger.info(`[MCP Tool] Executing list_contacts, query="${query ?? ""}", limit=${limit}`);

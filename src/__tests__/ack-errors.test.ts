@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { classifyAckError, formatAckErrorForAgent, logAckErrors } from "../ack-errors.ts";
 import { resetAckBus, waitForAckError } from "../ack-bus.ts";
+import { classifyAckError, formatAckErrorForAgent, logAckErrors } from "../ack-errors.ts";
 
 // WhatsApp rejects a send *asynchronously*, in an ack that arrives long after
 // socket.sendMessage() already resolved. Baileys surfaces it on `messages.update`

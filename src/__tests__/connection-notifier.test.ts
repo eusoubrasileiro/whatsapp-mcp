@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
-import { createConnectionNotifier } from "../connection-notifier.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionFSM } from "../connection-fsm.ts";
+import { createConnectionNotifier } from "../connection-notifier.ts";
 import type { NtfyMessage, SendNtfy } from "../ntfy.ts";
 
 function makeFakeTimer() {
@@ -11,7 +11,11 @@ function makeFakeTimer() {
   const setTimer = vi.fn((cb: () => void, ms: number) => {
     const h: Handle = { cb, ms, cancelled: false };
     handles.push(h);
-    return { cancel: () => { h.cancelled = true; } };
+    return {
+      cancel: () => {
+        h.cancelled = true;
+      },
+    };
   });
 
   return {

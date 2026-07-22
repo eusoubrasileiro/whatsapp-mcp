@@ -4,6 +4,7 @@ import {
   getChats,
   getMessagesWithDateFilter,
   initializeDatabase,
+  type Message,
   recordJidMapping,
   recordJidPair,
   resetDatabase,
@@ -11,7 +12,6 @@ import {
   searchDbForContacts,
   storeContact,
   storeMessage,
-  type Message,
 } from "../database.ts";
 
 // Observed fragmentation case (BUG-lid-contact-fragmentation.md, 2026-05-18).

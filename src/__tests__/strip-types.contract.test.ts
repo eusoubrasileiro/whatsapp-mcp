@@ -10,11 +10,11 @@
  * and crashed the prod container in a restart loop. Keep this guard.
  */
 
-import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { join, relative, dirname } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcRoot = join(here, "..");
@@ -33,10 +33,14 @@ function listTsFiles(dir: string, out: string[] = []): string[] {
 async function loadUnderStripTypes(file: string): Promise<{ ok: boolean; stderr: string }> {
   return new Promise((resolve) => {
     const code = `import(${JSON.stringify(file)}).then(() => process.exit(0)).catch(e => { console.error(e.code || e.name, e.message); process.exit(1) })`;
-    const proc = spawn(process.execPath, ["--experimental-strip-types", "-e", code], { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(process.execPath, ["--experimental-strip-types", "-e", code], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const err: Buffer[] = [];
     proc.stderr.on("data", (c) => err.push(c));
-    proc.on("close", (rc) => resolve({ ok: rc === 0, stderr: Buffer.concat(err).toString("utf8") }));
+    proc.on("close", (rc) =>
+      resolve({ ok: rc === 0, stderr: Buffer.concat(err).toString("utf8") }),
+    );
   });
 }
 
@@ -47,7 +51,12 @@ describe("strip-types compatibility", () => {
   // codebase already imports them through whatsapp.ts which pulls in
   // @amiticia/baileys-client (absent in CI). Targeted modules give a
   // deterministic guard without the workspace coupling.
-  const TARGETS = ["transcribe/preprocess.ts", "transcribe/whisper.ts", "describe/vision.ts", "xml.ts"];
+  const TARGETS = [
+    "transcribe/preprocess.ts",
+    "transcribe/whisper.ts",
+    "describe/vision.ts",
+    "xml.ts",
+  ];
 
   for (const target of TARGETS) {
     it(`${target} parses under --experimental-strip-types`, async () => {

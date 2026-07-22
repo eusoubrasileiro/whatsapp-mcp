@@ -1,31 +1,33 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  initializeDatabase,
-  resetDatabase,
-  resolveDbPath,
-  storeChat,
-  storeMessage,
-  storeContact,
-  getMessages,
-  getChats,
   getChat,
-  getMessagesAround,
-  getLatestMessage,
+  getChats,
   getContactName,
   getContacts,
-  getMessagesWithDateFilter,
-  getMessagesSince,
+  getLatestMessage,
+  getMessageById,
+  getMessages,
+  getMessagesAround,
   getMessagesDelta,
+  getMessagesSince,
+  getMessagesWithDateFilter,
+  initializeDatabase,
+  type Message,
   recordJidMapping,
+  resetDatabase,
+  resolveDbPath,
   searchDbForContacts,
   searchMessages,
-  getMessageById,
+  storeChat,
+  storeContact,
+  storeMessage,
   updateMessageMediaObjectKey,
-  type Message,
 } from "../database.ts";
 
-function makeMsg(overrides: Partial<Message> & { id: string; chat_jid: string; content: string }): Message {
+function makeMsg(
+  overrides: Partial<Message> & { id: string; chat_jid: string; content: string },
+): Message {
   return {
     timestamp: new Date("2025-06-01T12:00:00Z"),
     is_from_me: false,
@@ -82,12 +84,14 @@ describe("database", () => {
 
     it("paginates correctly", () => {
       for (let i = 0; i < 5; i++) {
-        storeMessage(makeMsg({
-          id: `msg${i}`,
-          chat_jid: "chat1@s.whatsapp.net",
-          content: `Message ${i}`,
-          timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
-        }));
+        storeMessage(
+          makeMsg({
+            id: `msg${i}`,
+            chat_jid: "chat1@s.whatsapp.net",
+            content: `Message ${i}`,
+            timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
+          }),
+        );
       }
       const page0 = getMessages("chat1@s.whatsapp.net", 2, 0);
       const page1 = getMessages("chat1@s.whatsapp.net", 2, 1);
@@ -115,8 +119,16 @@ describe("database", () => {
 
   describe("getChats", () => {
     it("lists chats sorted by last_active", () => {
-      storeChat({ jid: "old@s.whatsapp.net", name: "Old", last_message_time: new Date("2025-01-01") });
-      storeChat({ jid: "new@s.whatsapp.net", name: "New", last_message_time: new Date("2025-06-01") });
+      storeChat({
+        jid: "old@s.whatsapp.net",
+        name: "Old",
+        last_message_time: new Date("2025-01-01"),
+      });
+      storeChat({
+        jid: "new@s.whatsapp.net",
+        name: "New",
+        last_message_time: new Date("2025-06-01"),
+      });
 
       const chats = getChats(10, 0, "last_active", null, false);
       expect(chats).toHaveLength(2);
@@ -142,12 +154,14 @@ describe("database", () => {
     });
 
     it("includes last message when requested", () => {
-      storeMessage(makeMsg({
-        id: "msg1",
-        chat_jid: "chat1@s.whatsapp.net",
-        content: "Last message content",
-        is_from_me: true,
-      }));
+      storeMessage(
+        makeMsg({
+          id: "msg1",
+          chat_jid: "chat1@s.whatsapp.net",
+          content: "Last message content",
+          is_from_me: true,
+        }),
+      );
 
       const chats = getChats(10, 0, "last_active", null, true);
       expect(chats).toHaveLength(1);
@@ -160,12 +174,14 @@ describe("database", () => {
   describe("getMessagesAround", () => {
     it("returns context around a target message", () => {
       for (let i = 0; i < 10; i++) {
-        storeMessage(makeMsg({
-          id: `msg${i}`,
-          chat_jid: "chat@s.whatsapp.net",
-          content: `Message ${i}`,
-          timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
-        }));
+        storeMessage(
+          makeMsg({
+            id: `msg${i}`,
+            chat_jid: "chat@s.whatsapp.net",
+            content: `Message ${i}`,
+            timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
+          }),
+        );
       }
 
       const ctx = getMessagesAround("msg5", "chat@s.whatsapp.net", 2, 2);
@@ -237,36 +253,66 @@ describe("database", () => {
 
   describe("getMessagesWithDateFilter", () => {
     beforeEach(() => {
-      storeMessage(makeMsg({
-        id: "jan", chat_jid: "chat@s.whatsapp.net", content: "January",
-        timestamp: new Date("2025-01-15T12:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "mar", chat_jid: "chat@s.whatsapp.net", content: "March",
-        timestamp: new Date("2025-03-15T12:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "jun", chat_jid: "chat@s.whatsapp.net", content: "June",
-        timestamp: new Date("2025-06-15T12:00:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "jan",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "January",
+          timestamp: new Date("2025-01-15T12:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "mar",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "March",
+          timestamp: new Date("2025-03-15T12:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "jun",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "June",
+          timestamp: new Date("2025-06-15T12:00:00Z"),
+        }),
+      );
     });
 
     it("filters from a date", () => {
-      const msgs = getMessagesWithDateFilter("chat@s.whatsapp.net", "2025-03-01T00:00:00Z", null, 10, 0);
+      const msgs = getMessagesWithDateFilter(
+        "chat@s.whatsapp.net",
+        "2025-03-01T00:00:00Z",
+        null,
+        10,
+        0,
+      );
       expect(msgs).toHaveLength(2);
       expect(msgs.map((m) => m.content)).toContain("March");
       expect(msgs.map((m) => m.content)).toContain("June");
     });
 
     it("filters up to a date", () => {
-      const msgs = getMessagesWithDateFilter("chat@s.whatsapp.net", null, "2025-04-01T00:00:00Z", 10, 0);
+      const msgs = getMessagesWithDateFilter(
+        "chat@s.whatsapp.net",
+        null,
+        "2025-04-01T00:00:00Z",
+        10,
+        0,
+      );
       expect(msgs).toHaveLength(2);
       expect(msgs.map((m) => m.content)).toContain("January");
       expect(msgs.map((m) => m.content)).toContain("March");
     });
 
     it("filters date range", () => {
-      const msgs = getMessagesWithDateFilter("chat@s.whatsapp.net", "2025-02-01T00:00:00Z", "2025-05-01T00:00:00Z", 10, 0);
+      const msgs = getMessagesWithDateFilter(
+        "chat@s.whatsapp.net",
+        "2025-02-01T00:00:00Z",
+        "2025-05-01T00:00:00Z",
+        10,
+        0,
+      );
       expect(msgs).toHaveLength(1);
       expect(msgs[0].content).toBe("March");
     });
@@ -277,11 +323,21 @@ describe("database", () => {
     });
 
     it("filters across all chats when chatJid is null", () => {
-      storeMessage(makeMsg({
-        id: "other", chat_jid: "other@s.whatsapp.net", content: "Other",
-        timestamp: new Date("2025-04-01T12:00:00Z"),
-      }));
-      const msgs = getMessagesWithDateFilter(null, "2025-03-01T00:00:00Z", "2025-05-01T00:00:00Z", 10, 0);
+      storeMessage(
+        makeMsg({
+          id: "other",
+          chat_jid: "other@s.whatsapp.net",
+          content: "Other",
+          timestamp: new Date("2025-04-01T12:00:00Z"),
+        }),
+      );
+      const msgs = getMessagesWithDateFilter(
+        null,
+        "2025-03-01T00:00:00Z",
+        "2025-05-01T00:00:00Z",
+        10,
+        0,
+      );
       expect(msgs).toHaveLength(2);
     });
   });
@@ -290,18 +346,30 @@ describe("database", () => {
 
   describe("getMessagesSince", () => {
     beforeEach(() => {
-      storeMessage(makeMsg({
-        id: "a", chat_jid: "c1@s.whatsapp.net", content: "A",
-        timestamp: new Date("2025-06-01T10:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "b", chat_jid: "c1@s.whatsapp.net", content: "B",
-        timestamp: new Date("2025-06-01T11:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "c", chat_jid: "c2@s.whatsapp.net", content: "C",
-        timestamp: new Date("2025-06-01T12:00:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "a",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "A",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "b",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "B",
+          timestamp: new Date("2025-06-01T11:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "c",
+          chat_jid: "c2@s.whatsapp.net",
+          content: "C",
+          timestamp: new Date("2025-06-01T12:00:00Z"),
+        }),
+      );
     });
 
     it("returns only messages at or after the cursor (inclusive gte)", () => {
@@ -334,10 +402,15 @@ describe("database", () => {
       const lid = "111122223333@lid";
       recordJidMapping(pn, lid);
       storeChat({ jid: lid, name: "Aliased" });
-      storeMessage(makeMsg({
-        id: "x", chat_jid: lid, content: "via lid", sender: lid,
-        timestamp: new Date("2025-06-01T13:00:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "x",
+          chat_jid: lid,
+          content: "via lid",
+          sender: lid,
+          timestamp: new Date("2025-06-01T13:00:00Z"),
+        }),
+      );
       // Querying by the phone-number twin still finds the LID-keyed message.
       const msgs = getMessagesSince([pn], "2025-06-01T00:00:00.000Z");
       expect(msgs.map((m) => m.id)).toContain("x");
@@ -348,9 +421,30 @@ describe("database", () => {
 
   describe("getMessagesDelta", () => {
     beforeEach(() => {
-      storeMessage(makeMsg({ id: "a", chat_jid: "c1@s.whatsapp.net", content: "A", timestamp: new Date("2025-06-01T10:00:00Z") }));
-      storeMessage(makeMsg({ id: "b", chat_jid: "c1@s.whatsapp.net", content: "B", timestamp: new Date("2025-06-01T11:00:00Z") }));
-      storeMessage(makeMsg({ id: "c", chat_jid: "c2@s.whatsapp.net", content: "C", timestamp: new Date("2025-06-01T12:00:00Z") }));
+      storeMessage(
+        makeMsg({
+          id: "a",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "A",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "b",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "B",
+          timestamp: new Date("2025-06-01T11:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "c",
+          chat_jid: "c2@s.whatsapp.net",
+          content: "C",
+          timestamp: new Date("2025-06-01T12:00:00Z"),
+        }),
+      );
     });
 
     it("fromNow returns no history but the current high-water rowid", () => {
@@ -384,8 +478,13 @@ describe("database", () => {
     });
 
     it("filters to the given chats and honors the limit", () => {
-      expect(getMessagesDelta(["c1@s.whatsapp.net"], { afterRowid: 0 }).messages.map((m) => m.id)).toEqual(["a", "b"]);
-      expect(getMessagesDelta(null, { afterRowid: 0 }, 2).messages.map((m) => m.id)).toEqual(["a", "b"]);
+      expect(
+        getMessagesDelta(["c1@s.whatsapp.net"], { afterRowid: 0 }).messages.map((m) => m.id),
+      ).toEqual(["a", "b"]);
+      expect(getMessagesDelta(null, { afterRowid: 0 }, 2).messages.map((m) => m.id)).toEqual([
+        "a",
+        "b",
+      ]);
     });
   });
 
@@ -415,10 +514,14 @@ describe("database", () => {
     });
 
     it("supports date filtering in search", () => {
-      storeMessage(makeMsg({
-        id: "m4", chat_jid: "c1@s.whatsapp.net", content: "Hello old",
-        timestamp: new Date("2024-01-01T12:00:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "m4",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "Hello old",
+          timestamp: new Date("2024-01-01T12:00:00Z"),
+        }),
+      );
       const msgs = searchMessages("hello", null, "2025-01-01T00:00:00Z", null, 10, 0);
       expect(msgs).toHaveLength(2); // m1 and m3, not m4
     });
@@ -428,19 +531,21 @@ describe("database", () => {
 
   describe("media metadata", () => {
     it("stores and retrieves media metadata", () => {
-      storeMessage(makeMsg({
-        id: "media1",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "[Image] Nice photo",
-        media_type: "image",
-        mimetype: "image/jpeg",
-        media_key: "AQID",
-        direct_path: "/v/t62.1234/image.enc",
-        media_url: "https://mmg.whatsapp.net/image.enc",
-        file_length: 54321,
-        file_sha256: "ChQe",
-        file_enc_sha256: "KDI8",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "media1",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "[Image] Nice photo",
+          media_type: "image",
+          mimetype: "image/jpeg",
+          media_key: "AQID",
+          direct_path: "/v/t62.1234/image.enc",
+          media_url: "https://mmg.whatsapp.net/image.enc",
+          file_length: 54321,
+          file_sha256: "ChQe",
+          file_enc_sha256: "KDI8",
+        }),
+      );
 
       const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
       expect(msgs).toHaveLength(1);
@@ -452,21 +557,25 @@ describe("database", () => {
     });
 
     it("preserves media metadata on upsert with COALESCE", () => {
-      storeMessage(makeMsg({
-        id: "media2",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "[Image]",
-        media_type: "image",
-        media_key: "KEY123",
-        direct_path: "/path/img.enc",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "media2",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "[Image]",
+          media_type: "image",
+          media_key: "KEY123",
+          direct_path: "/path/img.enc",
+        }),
+      );
 
       // Re-store without media fields (simulating a text-only update)
-      storeMessage(makeMsg({
-        id: "media2",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "[Image] Updated",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "media2",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "[Image] Updated",
+        }),
+      );
 
       const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
       expect(msgs[0].media_key).toBe("KEY123");
@@ -475,11 +584,13 @@ describe("database", () => {
     });
 
     it("text messages have null media fields", () => {
-      storeMessage(makeMsg({
-        id: "text1",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "Just text",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "text1",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "Just text",
+        }),
+      );
 
       const msgs = getMessages("chat@s.whatsapp.net", 10, 0);
       expect(msgs[0].media_type).toBeNull();
@@ -492,13 +603,15 @@ describe("database", () => {
 
   describe("getMessageById", () => {
     it("retrieves a specific message by id and chat_jid", () => {
-      storeMessage(makeMsg({
-        id: "specific1",
-        chat_jid: "chat@s.whatsapp.net",
-        content: "Find me",
-        media_type: "image",
-        media_key: "KEY",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "specific1",
+          chat_jid: "chat@s.whatsapp.net",
+          content: "Find me",
+          media_type: "image",
+          media_key: "KEY",
+        }),
+      );
 
       const msg = getMessageById("specific1", "chat@s.whatsapp.net");
       expect(msg).not.toBeNull();
@@ -512,11 +625,13 @@ describe("database", () => {
     });
 
     it("returns null when id matches but chat_jid differs", () => {
-      storeMessage(makeMsg({
-        id: "msg_in_chat_a",
-        chat_jid: "chatA@s.whatsapp.net",
-        content: "In chat A",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "msg_in_chat_a",
+          chat_jid: "chatA@s.whatsapp.net",
+          content: "In chat A",
+        }),
+      );
 
       const msg = getMessageById("msg_in_chat_a", "chatB@s.whatsapp.net");
       expect(msg).toBeNull();
@@ -527,26 +642,38 @@ describe("database", () => {
 
   describe("getMessagesAround across chats", () => {
     it("returns the row from the requested chat when the same message id exists in two chats", () => {
-      storeMessage(makeMsg({
-        id: "shared_id",
-        chat_jid: "chatA@s.whatsapp.net",
-        content: "From A",
-        timestamp: new Date("2025-06-01T10:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "shared_id",
-        chat_jid: "chatB@s.whatsapp.net",
-        content: "From B",
-        timestamp: new Date("2025-06-01T11:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "ctx_a_before", chat_jid: "chatA@s.whatsapp.net", content: "ctx-A-before",
-        timestamp: new Date("2025-06-01T09:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "ctx_a_after", chat_jid: "chatA@s.whatsapp.net", content: "ctx-A-after",
-        timestamp: new Date("2025-06-01T10:30:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "shared_id",
+          chat_jid: "chatA@s.whatsapp.net",
+          content: "From A",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "shared_id",
+          chat_jid: "chatB@s.whatsapp.net",
+          content: "From B",
+          timestamp: new Date("2025-06-01T11:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "ctx_a_before",
+          chat_jid: "chatA@s.whatsapp.net",
+          content: "ctx-A-before",
+          timestamp: new Date("2025-06-01T09:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "ctx_a_after",
+          chat_jid: "chatA@s.whatsapp.net",
+          content: "ctx-A-after",
+          timestamp: new Date("2025-06-01T10:30:00Z"),
+        }),
+      );
 
       const ctxA = getMessagesAround("shared_id", "chatA@s.whatsapp.net", 5, 5);
       expect(ctxA.target).not.toBeNull();
@@ -563,9 +690,13 @@ describe("database", () => {
     });
 
     it("returns null target when message id exists only in a different chat", () => {
-      storeMessage(makeMsg({
-        id: "only_in_a", chat_jid: "chatA@s.whatsapp.net", content: "x",
-      }));
+      storeMessage(
+        makeMsg({
+          id: "only_in_a",
+          chat_jid: "chatA@s.whatsapp.net",
+          content: "x",
+        }),
+      );
       const ctx = getMessagesAround("only_in_a", "chatB@s.whatsapp.net", 5, 5);
       expect(ctx.target).toBeNull();
     });
@@ -575,18 +706,30 @@ describe("database", () => {
 
   describe("getLatestMessage", () => {
     it("returns the most recent message of a chat", () => {
-      storeMessage(makeMsg({
-        id: "old", chat_jid: "c@s.whatsapp.net", content: "old",
-        timestamp: new Date("2025-06-01T08:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "newest", chat_jid: "c@s.whatsapp.net", content: "newest",
-        timestamp: new Date("2025-06-01T12:00:00Z"),
-      }));
-      storeMessage(makeMsg({
-        id: "mid", chat_jid: "c@s.whatsapp.net", content: "mid",
-        timestamp: new Date("2025-06-01T10:00:00Z"),
-      }));
+      storeMessage(
+        makeMsg({
+          id: "old",
+          chat_jid: "c@s.whatsapp.net",
+          content: "old",
+          timestamp: new Date("2025-06-01T08:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "newest",
+          chat_jid: "c@s.whatsapp.net",
+          content: "newest",
+          timestamp: new Date("2025-06-01T12:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "mid",
+          chat_jid: "c@s.whatsapp.net",
+          content: "mid",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+        }),
+      );
 
       const latest = getLatestMessage("c@s.whatsapp.net");
       expect(latest).not.toBeNull();
@@ -628,16 +771,26 @@ describe("database", () => {
 
   describe("getChats last-message metadata", () => {
     it("returns last_is_from_me for the most recent message", () => {
-      storeMessage(makeMsg({
-        id: "m1", chat_jid: "c@s.whatsapp.net", content: "older",
-        timestamp: new Date("2025-06-01T10:00:00Z"),
-        is_from_me: false, sender: "5511@s.whatsapp.net",
-      }));
-      storeMessage(makeMsg({
-        id: "m2", chat_jid: "c@s.whatsapp.net", content: "newest",
-        timestamp: new Date("2025-06-01T12:00:00Z"),
-        is_from_me: true, sender: undefined,
-      }));
+      storeMessage(
+        makeMsg({
+          id: "m1",
+          chat_jid: "c@s.whatsapp.net",
+          content: "older",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+          is_from_me: false,
+          sender: "5511@s.whatsapp.net",
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "m2",
+          chat_jid: "c@s.whatsapp.net",
+          content: "newest",
+          timestamp: new Date("2025-06-01T12:00:00Z"),
+          is_from_me: true,
+          sender: undefined,
+        }),
+      );
       const chats = getChats(10, 0, "last_active", null, true);
       expect(chats).toHaveLength(1);
       expect(chats[0].last_message).toBe("newest");
@@ -650,10 +803,14 @@ describe("database", () => {
   describe("getMessagesWithDateFilter pagination", () => {
     it("paginates results across two pages", () => {
       for (let i = 0; i < 5; i++) {
-        storeMessage(makeMsg({
-          id: `p${i}`, chat_jid: "c@s.whatsapp.net", content: `M${i}`,
-          timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
-        }));
+        storeMessage(
+          makeMsg({
+            id: `p${i}`,
+            chat_jid: "c@s.whatsapp.net",
+            content: `M${i}`,
+            timestamp: new Date(`2025-06-01T${String(i).padStart(2, "0")}:00:00Z`),
+          }),
+        );
       }
       const p0 = getMessagesWithDateFilter("c@s.whatsapp.net", null, null, 2, 0);
       const p1 = getMessagesWithDateFilter("c@s.whatsapp.net", null, null, 2, 1);
@@ -662,7 +819,6 @@ describe("database", () => {
       expect(p0[0].id).not.toBe(p1[0].id);
     });
   });
-
 });
 
 describe("resolveDbPath", () => {
@@ -708,12 +864,14 @@ describe("updateMessageMediaObjectKey", () => {
   afterEach(() => resetDatabase());
 
   it("persists media_object_key and getMessageById returns it", () => {
-    storeMessage(makeMsg({
-      id: "mok1",
-      chat_jid: "chat@s.whatsapp.net",
-      content: "photo",
-      media_type: "image",
-    }));
+    storeMessage(
+      makeMsg({
+        id: "mok1",
+        chat_jid: "chat@s.whatsapp.net",
+        content: "photo",
+        media_type: "image",
+      }),
+    );
 
     updateMessageMediaObjectKey("mok1", "chat@s.whatsapp.net", "t/default/jid/mok1.jpg");
 

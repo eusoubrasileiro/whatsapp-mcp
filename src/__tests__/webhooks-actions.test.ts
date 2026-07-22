@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { initializeDatabase, resetDatabase } from "../database.ts";
-import { loadRegistry, matchSubscriptions, resetRegistry } from "../webhooks/registry.ts";
 import {
   executeDeregisterWebhook,
   executeListWebhooks,
   executeRegisterWebhook,
 } from "../webhooks/actions.ts";
+import { loadRegistry, matchSubscriptions, resetRegistry } from "../webhooks/registry.ts";
 
 beforeEach(() => {
   initializeDatabase(":memory:");

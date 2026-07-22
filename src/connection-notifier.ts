@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
-import { ConnectionFSM } from "./connection-fsm.ts";
 import type { FSMConfig } from "./connection-fsm.ts";
+import { ConnectionFSM } from "./connection-fsm.ts";
 
 export type NotifierConfig = FSMConfig;
 
@@ -16,10 +16,7 @@ export type NotifierHandlers = {
  * event-handler shape consumed by `whatsapp.ts` — each handler simply
  * dispatches a typed event into the state machine.
  */
-export function createConnectionNotifier(
-  logger: Logger,
-  config: NotifierConfig,
-): NotifierHandlers {
+export function createConnectionNotifier(logger: Logger, config: NotifierConfig): NotifierHandlers {
   const fsm = new ConnectionFSM(logger, config);
 
   return {
