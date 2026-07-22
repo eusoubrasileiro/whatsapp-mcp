@@ -174,6 +174,9 @@ src/
 ├── qr-server.ts           # Standalone HTTP server serving the public QR web page (:39002)
 ├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
 │                          #   the gap when send_file's file_path can't reach the agent's filesystem
+├── ack-errors.ts          # classifyAckError/logAckErrors: server rejections of our own sends,
+│                          #   which arrive async on messages.update (status=ERROR) long after
+│                          #   sendMessage() resolved. Decodes 463 (missing tctoken) / 479
 ├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
 │                          #   waitForInbound backs the wait_for_messages long-poll
 ├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
