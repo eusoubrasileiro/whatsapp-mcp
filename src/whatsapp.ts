@@ -205,17 +205,17 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
         logger.info("Group metadata synced.");
       },
 
-      onHistorySync: async ({ chats, contacts, messages, isLatest }) => {
+      onHistorySync: async ({ chats, contacts, messages }) => {
         if (contacts.length > 0) {
           logger.info(`Storing ${contacts.length} contacts from history sync.`);
-          contacts.forEach((c) =>
+          contacts.forEach((c) => {
             storeContact({
               jid: c.id,
               name: c.name ?? null,
               notify: c.notify ?? null,
               phoneNumber: (c as any).phoneNumber ?? null,
-            }),
-          );
+            });
+          });
         }
 
         logger.info(`Storing ${chats.length} chats from history sync.`);
@@ -357,7 +357,7 @@ export async function sendWhatsAppMessage(
   logger: P.Logger,
   recipientJid: string,
   text: string,
-): Promise<{ key: { id: string } } | void> {
+): Promise<{ key: { id: string } } | undefined> {
   const sock = socketState.socket;
   if (!sock) {
     logger.error("Cannot send message: WhatsApp socket not connected.");
@@ -379,7 +379,7 @@ export async function sendWhatsAppMedia(
   filePathOrUrl: string,
   caption?: string,
   type: "image" | "video" | "document" | "audio" = "image",
-): Promise<{ key: { id: string } } | void> {
+): Promise<{ key: { id: string } } | undefined> {
   const sock = socketState.socket;
   if (!sock) {
     logger.error("Cannot send media: WhatsApp socket not connected.");

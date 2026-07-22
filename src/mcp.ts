@@ -57,7 +57,7 @@ export async function startMcpServer(mcpLogger: Logger, waLogger: Logger): Promi
 
       const header = request.headers.authorization;
       const raw = Array.isArray(header) ? header[0] : header;
-      if (!raw || !raw.startsWith("Bearer ")) {
+      if (!raw?.startsWith("Bearer ")) {
         throw new Response(null, {
           status: 401,
           statusText: "Missing or invalid Authorization header",

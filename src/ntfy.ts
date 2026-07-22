@@ -24,7 +24,10 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
 
   // HTTP header values must be Latin-1 (bytes 0-255). Strip anything above
   // so em-dashes and other Unicode glyphs don't crash fetch on Title/Tags/Click.
-  // Body (POST data) is UTF-8 so accented text still works there.
+  // Body (POST data) is UTF-8 so accented text still works there. The \x00-\xff
+  // range IS the Latin-1 byte range we match against — the control chars in it
+  // are deliberate, hence the suppression.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00-\xff is the intended Latin-1 range
   const toLatin1 = (s: string): string => s.replace(/[^\x00-\xff]/g, "");
 
   return async (msg) => {

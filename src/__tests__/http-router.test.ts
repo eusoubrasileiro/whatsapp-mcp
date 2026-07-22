@@ -1,7 +1,7 @@
 import http, { type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pino, { type Logger } from "pino";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createRouter, type Route } from "../http-router.ts";
 
 function makeSilentLogger(): Logger {
