@@ -25,8 +25,7 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
   // HTTP header values must be Latin-1 (bytes 0-255). Strip anything above
   // so em-dashes and other Unicode glyphs don't crash fetch on Title/Tags/Click.
   // Body (POST data) is UTF-8 so accented text still works there.
-  const toLatin1 = (s: string): string =>
-    s.replace(/[^\x00-\xff]/g, "");
+  const toLatin1 = (s: string): string => s.replace(/[^\x00-\xff]/g, "");
 
   return async (msg) => {
     const headers: Record<string, string> = { Title: toLatin1(msg.title) };
@@ -42,10 +41,7 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
         body: msg.message,
       });
       if (!res.ok) {
-        logger.warn(
-          { status: res.status, topicUrl },
-          "ntfy returned non-2xx status",
-        );
+        logger.warn({ status: res.status, topicUrl }, "ntfy returned non-2xx status");
         return;
       }
       logger.debug({ title: msg.title }, "ntfy push sent");

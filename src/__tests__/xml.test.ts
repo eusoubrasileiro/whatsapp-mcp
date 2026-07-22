@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { renderTranscription, renderImageDescription, renderEnvelope } from "../xml.ts";
+import { describe, expect, it } from "vitest";
+import { renderEnvelope, renderImageDescription, renderTranscription } from "../xml.ts";
 
 describe("renderEnvelope", () => {
   it("renders tag, attributes (in declared order), and body", () => {
@@ -31,9 +31,7 @@ describe("renderEnvelope", () => {
   it("escapes XML-unsafe characters in attribute values", () => {
     const out = renderEnvelope({
       tag: "t",
-      attrs: [
-        ["q", `a"b&c<d>e`],
-      ],
+      attrs: [["q", `a"b&c<d>e`]],
       body: "x",
     });
     expect(out).toContain(`q="a&quot;b&amp;c&lt;d&gt;e"`);

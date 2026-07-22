@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import pino, { type Logger } from "pino";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNtfy } from "../ntfy.ts";
 
 function makeSilentLogger(): Logger {
@@ -25,9 +25,7 @@ describe("createNtfy", () => {
   });
 
   it("POSTs to topicUrl with message body and Title header", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("", { status: 200 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/test-topic",
@@ -45,9 +43,7 @@ describe("createNtfy", () => {
   });
 
   it("includes Priority, Tags, Click headers when provided", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("", { status: 200 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/t",
@@ -68,9 +64,7 @@ describe("createNtfy", () => {
   });
 
   it("sends Authorization: Bearer when token is set", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("", { status: 200 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/t",
@@ -94,9 +88,7 @@ describe("createNtfy", () => {
   });
 
   it("never throws on non-2xx response", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("rate limited", { status: 429 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("rate limited", { status: 429 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/t",
@@ -106,9 +98,7 @@ describe("createNtfy", () => {
   });
 
   it("strips non-Latin-1 characters from header values (em-dash etc.)", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("", { status: 200 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/t",
@@ -128,9 +118,7 @@ describe("createNtfy", () => {
   });
 
   it("omits optional headers when not provided", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(
-      new Response("", { status: 200 }),
-    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
     const send = createNtfy(makeSilentLogger(), {
       topicUrl: "https://ntfy.sh/t",

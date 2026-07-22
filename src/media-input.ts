@@ -112,9 +112,7 @@ export async function resolveMediaInput(input: string): Promise<ResolvedMedia> {
   }
 
   if (!path.isAbsolute(input)) {
-    throw new Error(
-      `send_file: "${input}" is not an absolute path, http(s) URL, or data: URL`,
-    );
+    throw new Error(`send_file: "${input}" is not an absolute path, http(s) URL, or data: URL`);
   }
 
   return resolveLocalPath(input);
@@ -130,8 +128,7 @@ async function resolveLocalPath(absPath: string): Promise<ResolvedMedia> {
     }
     const ext = path.extname(absPath).slice(1).toLowerCase();
     const sniffed = sniffMedia(buffer);
-    const mimetype =
-      sniffed?.mimetype ?? mimeFromExtension(ext) ?? "application/octet-stream";
+    const mimetype = sniffed?.mimetype ?? mimeFromExtension(ext) ?? "application/octet-stream";
     return { buffer, fileName: path.basename(absPath), mimetype };
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("send_file:")) throw err;
@@ -176,8 +173,7 @@ async function resolveHttpUrl(url: string): Promise<ResolvedMedia> {
   const buffer = await readBodyCapped(res, url);
   const contentTypeHeader = res.headers.get("content-type");
   const declaredMime = contentTypeHeader?.split(";")[0].trim() || null;
-  const mimetype =
-    sniffMimetypeImpl(buffer) ?? declaredMime ?? "application/octet-stream";
+  const mimetype = sniffMimetypeImpl(buffer) ?? declaredMime ?? "application/octet-stream";
 
   return {
     buffer,
@@ -190,9 +186,7 @@ async function readBodyCapped(res: Response, url: string): Promise<Buffer> {
   if (!res.body) {
     const ab = await res.arrayBuffer();
     if (ab.byteLength > MAX_MEDIA_BYTES) {
-      throw new Error(
-        `send_file: remote resource at ${url} exceeded 16 MB during read`,
-      );
+      throw new Error(`send_file: remote resource at ${url} exceeded 16 MB during read`);
     }
     return Buffer.from(ab);
   }
@@ -208,9 +202,7 @@ async function readBodyCapped(res: Response, url: string): Promise<Buffer> {
       total += value.byteLength;
       if (total > MAX_MEDIA_BYTES) {
         await reader.cancel();
-        throw new Error(
-          `send_file: remote resource at ${url} exceeded 16 MB during read`,
-        );
+        throw new Error(`send_file: remote resource at ${url} exceeded 16 MB during read`);
       }
       chunks.push(value);
     }
@@ -244,16 +236,16 @@ function resolveDataUrl(input: string): ResolvedMedia {
   }
   const [, mediatype, base64Flag, data] = match;
   if (!base64Flag) {
-    throw new Error("send_file: data URL must be base64-encoded (no plain-text data URLs supported)");
+    throw new Error(
+      "send_file: data URL must be base64-encoded (no plain-text data URLs supported)",
+    );
   }
   const buffer = Buffer.from(data, "base64");
   if (buffer.length === 0) {
     throw new Error("send_file: data URL decoded to empty buffer (malformed base64?)");
   }
   if (buffer.length > MAX_MEDIA_BYTES) {
-    throw new Error(
-      `send_file: data URL decodes to ${buffer.length} bytes, exceeds 16 MB limit`,
-    );
+    throw new Error(`send_file: data URL decodes to ${buffer.length} bytes, exceeds 16 MB limit`);
   }
   const declared = (mediatype ?? "application/octet-stream").trim();
   // Sniffer wins over the caller's declared mediatype — that's the

@@ -13,10 +13,10 @@
  */
 
 import type { Logger } from "pino";
-import { buildStreamFrame, type StreamFrame } from "./frame.ts";
-import type { StreamScope } from "./token.ts";
 import type { Message } from "../database.ts";
 import type { NewMessagesResult } from "../monitoring.ts";
+import { buildStreamFrame, type StreamFrame } from "./frame.ts";
+import type { StreamScope } from "./token.ts";
 
 export interface ReadDeltaOpts {
   chatJids: string[] | null;

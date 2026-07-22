@@ -4,12 +4,12 @@ import {
   getMessagesWithDateFilter,
   getMetaValue,
   initializeDatabase,
+  type Message,
   mergeChatPair,
   recordJidMapping,
   resetDatabase,
   setMetaValue,
   storeMessage,
-  type Message,
 } from "../database.ts";
 
 // Observed fragmentation case (BUG-lid-contact-fragmentation.md, 2026-05-18).
@@ -94,7 +94,11 @@ describe("Phase 2 — physical chat merge", () => {
       mergeChatPair(PN, LID);
       mergeChatPair(PN, LID); // second run — stale row already gone
 
-      expect(getMessagesWithDateFilter(LID).map((m) => m.id).sort()).toEqual(["new", "old"]);
+      expect(
+        getMessagesWithDateFilter(LID)
+          .map((m) => m.id)
+          .sort(),
+      ).toEqual(["new", "old"]);
       expect(getChats().map((c) => c.jid)).toEqual([LID]);
     });
   });
@@ -107,7 +111,11 @@ describe("Phase 2 — physical chat merge", () => {
       recordJidMapping(PN, LID);
 
       expect(getChats().map((c) => c.jid)).toEqual([LID]);
-      expect(getMessagesWithDateFilter(PN).map((m) => m.id).sort()).toEqual(["new", "old"]);
+      expect(
+        getMessagesWithDateFilter(PN)
+          .map((m) => m.id)
+          .sort(),
+      ).toEqual(["new", "old"]);
     });
   });
 

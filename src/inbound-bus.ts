@@ -42,9 +42,7 @@ export function emitInbound(msg: InboundBusMessage): void {
  * unsubscribe is called — the `follow_chat` stream keeps one per open socket.
  * The listener must never throw; it is called inside `emit`.
  */
-export function subscribeInbound(
-  listener: (msg: InboundBusMessage) => void,
-): () => void {
+export function subscribeInbound(listener: (msg: InboundBusMessage) => void): () => void {
   emitter.on(EVENT, listener);
   return () => emitter.off(EVENT, listener);
 }

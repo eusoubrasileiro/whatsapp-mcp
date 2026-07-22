@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import http, { type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pino, { type Logger } from "pino";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRouter, type Route } from "../http-router.ts";
 
 function makeSilentLogger(): Logger {
@@ -119,9 +119,7 @@ describe("createRouter", () => {
         },
       },
     ];
-    server = http.createServer(
-      createRouter(routes, { logger, bearerToken: "shh" }),
-    );
+    server = http.createServer(createRouter(routes, { logger, bearerToken: "shh" }));
     baseUrl = await start(server);
 
     const res = await fetch(`${baseUrl}/secure`, { method: "POST" });
@@ -141,9 +139,7 @@ describe("createRouter", () => {
         },
       },
     ];
-    server = http.createServer(
-      createRouter(routes, { logger, bearerToken: "shh" }),
-    );
+    server = http.createServer(createRouter(routes, { logger, bearerToken: "shh" }));
     baseUrl = await start(server);
 
     const res = await fetch(`${baseUrl}/secure`, {
@@ -165,9 +161,7 @@ describe("createRouter", () => {
         },
       },
     ];
-    server = http.createServer(
-      createRouter(routes, { logger, bearerToken: "shh" }),
-    );
+    server = http.createServer(createRouter(routes, { logger, bearerToken: "shh" }));
     baseUrl = await start(server);
 
     const res = await fetch(`${baseUrl}/secure`, {
@@ -208,9 +202,7 @@ describe("createRouter", () => {
         },
       },
     ];
-    server = http.createServer(
-      createRouter(routes, { logger, bearerToken: "shh" }),
-    );
+    server = http.createServer(createRouter(routes, { logger, bearerToken: "shh" }));
     baseUrl = await start(server);
 
     const res = await fetch(`${baseUrl}/public`);

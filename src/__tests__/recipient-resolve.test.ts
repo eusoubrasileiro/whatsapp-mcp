@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveRecipient, resetRecipientCache } from "../recipient.ts";
+import { resetRecipientCache, resolveRecipient } from "../recipient.ts";
 
 // Root cause of the 2026-07-22 "MCP isn't delivering" incident: agents built a
 // phone JID by hand. The real test number is 551100000011 (12 digits); BR
@@ -22,9 +22,11 @@ describe("resolveRecipient", () => {
   });
 
   it("rewrites a phone JID to the canonical LID the server returns", async () => {
-    const onWhatsApp = vi.fn().mockResolvedValue([
-      { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" },
-    ]);
+    const onWhatsApp = vi
+      .fn()
+      .mockResolvedValue([
+        { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" },
+      ]);
 
     const result = await resolveRecipient(
       socketWith(onWhatsApp),
@@ -36,9 +38,9 @@ describe("resolveRecipient", () => {
   });
 
   it("keeps the phone JID when the contact exists but has no LID", async () => {
-    const onWhatsApp = vi.fn().mockResolvedValue([
-      { jid: "551100000011@s.whatsapp.net", exists: true },
-    ]);
+    const onWhatsApp = vi
+      .fn()
+      .mockResolvedValue([{ jid: "551100000011@s.whatsapp.net", exists: true }]);
 
     const result = await resolveRecipient(
       socketWith(onWhatsApp),
@@ -50,9 +52,9 @@ describe("resolveRecipient", () => {
   });
 
   it("throws for a number that is not on WhatsApp, before anything is sent", async () => {
-    const onWhatsApp = vi.fn().mockResolvedValue([
-      { jid: "5511900000012@s.whatsapp.net", exists: false },
-    ]);
+    const onWhatsApp = vi
+      .fn()
+      .mockResolvedValue([{ jid: "5511900000012@s.whatsapp.net", exists: false }]);
 
     await expect(
       resolveRecipient(
@@ -144,9 +146,11 @@ describe("resolveRecipient", () => {
   });
 
   it("reuses a cached positive lookup instead of querying twice", async () => {
-    const onWhatsApp = vi.fn().mockResolvedValue([
-      { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" },
-    ]);
+    const onWhatsApp = vi
+      .fn()
+      .mockResolvedValue([
+        { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" },
+      ]);
     const socket = socketWith(onWhatsApp);
 
     await resolveRecipient(socket, "551100000011@s.whatsapp.net", makeLogger() as never);

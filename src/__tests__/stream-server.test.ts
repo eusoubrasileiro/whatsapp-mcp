@@ -1,18 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { AddressInfo } from "node:net";
 import pino from "pino";
-
-import { createStreamServer } from "../stream/server.ts";
-import { createStreamTokenStore } from "../stream/token.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   initializeDatabase,
+  type Message,
   resetDatabase,
   storeChat,
   storeMessage,
-  type Message,
 } from "../database.ts";
 import { emitInbound, resetInboundBus, subscribeInbound } from "../inbound-bus.ts";
 import { getNewMessagesCore } from "../monitoring.ts";
+import { createStreamServer } from "../stream/server.ts";
+import { createStreamTokenStore } from "../stream/token.ts";
 import { markSentByUs, resetSentTracker } from "../webhooks/sent-tracker.ts";
 
 const logger = pino({ level: "silent" });
@@ -91,7 +90,12 @@ describe("stream WS server", () => {
     await tick();
 
     expect(frames).toHaveLength(1);
-    expect(frames[0]).toMatchObject({ id: "a", chat_jid: "g@g.us", content: "Amei.", chat_name: "AmiticIA AutoSys" });
+    expect(frames[0]).toMatchObject({
+      id: "a",
+      chat_jid: "g@g.us",
+      content: "Amei.",
+      chat_name: "AmiticIA AutoSys",
+    });
   });
 
   it("does not push messages outside the token's chat scope", async () => {
@@ -122,7 +126,15 @@ describe("stream WS server", () => {
     const { token } = tokens.issue({ jids: ["g@g.us"], includeFromMe: true, transcribe: true });
     const { frames } = await connect(`${baseWs}?token=${token}`);
 
-    storeMessage(makeMsg({ id: "v", chat_jid: "g@g.us", content: "", media_type: "ptt", mimetype: "audio/ogg" }));
+    storeMessage(
+      makeMsg({
+        id: "v",
+        chat_jid: "g@g.us",
+        content: "",
+        media_type: "ptt",
+        mimetype: "audio/ogg",
+      }),
+    );
     emitInbound({ id: "v", chat_jid: "g@g.us", is_from_me: false });
     await tick();
 
@@ -134,11 +146,15 @@ describe("stream WS server", () => {
     const { frames } = await connect(`${baseWs}?token=${token}`);
 
     // Alice types from his phone → is_from_me, must appear (persona mode).
-    storeMessage(makeMsg({ id: "phone", chat_jid: "g@g.us", content: "eu respondo", is_from_me: true }));
+    storeMessage(
+      makeMsg({ id: "phone", chat_jid: "g@g.us", content: "eu respondo", is_from_me: true }),
+    );
     emitInbound({ id: "phone", chat_jid: "g@g.us", is_from_me: true });
     // The agent's own MCP send echoes back as is_from_me → must be suppressed.
     markSentByUs("agent");
-    storeMessage(makeMsg({ id: "agent", chat_jid: "g@g.us", content: "agent reply", is_from_me: true }));
+    storeMessage(
+      makeMsg({ id: "agent", chat_jid: "g@g.us", content: "agent reply", is_from_me: true }),
+    );
     emitInbound({ id: "agent", chat_jid: "g@g.us", is_from_me: true });
     await tick();
 

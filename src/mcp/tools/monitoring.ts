@@ -1,7 +1,6 @@
 import { z } from "zod";
-
-import { getNewMessagesCore, waitForMessagesCore } from "../../monitoring.ts";
 import { formatDbMessageForJson } from "../../formatters.ts";
+import { getNewMessagesCore, waitForMessagesCore } from "../../monitoring.ts";
 import { executeFollowChat, resolveStreamBaseUrl } from "../../stream/follow.ts";
 import { streamTokens } from "../../stream/token.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
@@ -29,7 +28,9 @@ const includeFromMeParam = z
   .boolean()
   .optional()
   .default(false)
-  .describe("Include YOUR OWN (is_from_me) messages. Default false — the agent's own replies are always excluded regardless.");
+  .describe(
+    "Include YOUR OWN (is_from_me) messages. Default false — the agent's own replies are always excluded regardless.",
+  );
 
 export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger } = deps;
@@ -41,12 +42,26 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
     parameters: z.object({
       chat_jids: chatJidsParam,
       since: sinceParam,
-      limit: z.number().int().positive().max(200).optional().default(50).describe("Max messages (default 50)"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(200)
+        .optional()
+        .default(50)
+        .describe("Max messages (default 50)"),
       include_from_me: includeFromMeParam,
     }),
     execute: async ({ chat_jids, since, limit, include_from_me }) => {
-      mcpLogger.info(`[MCP Tool] get_new_messages since=${since ?? "(now)"} chats=${chat_jids?.length ?? "all"}`);
-      const result = getNewMessagesCore({ chatJids: chat_jids, since, limit, includeFromMe: include_from_me });
+      mcpLogger.info(
+        `[MCP Tool] get_new_messages since=${since ?? "(now)"} chats=${chat_jids?.length ?? "all"}`,
+      );
+      const result = getNewMessagesCore({
+        chatJids: chat_jids,
+        since,
+        limit,
+        includeFromMe: include_from_me,
+      });
       return JSON.stringify(
         { messages: result.messages.map(formatDbMessageForJson), next_since: result.next_since },
         null,
@@ -71,11 +86,15 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
         .max(MAX_TIMEOUT_S)
         .optional()
         .default(DEFAULT_TIMEOUT_S)
-        .describe(`Max seconds to block before returning (default ${DEFAULT_TIMEOUT_S}, max ${MAX_TIMEOUT_S}). Loop with next_since to cover longer waits.`),
+        .describe(
+          `Max seconds to block before returning (default ${DEFAULT_TIMEOUT_S}, max ${MAX_TIMEOUT_S}). Loop with next_since to cover longer waits.`,
+        ),
       include_from_me: includeFromMeParam,
     }),
     execute: async ({ chat_jids, since, timeout_seconds, include_from_me }, { reportProgress }) => {
-      mcpLogger.info(`[MCP Tool] wait_for_messages timeout=${timeout_seconds}s chats=${chat_jids?.length ?? "all"}`);
+      mcpLogger.info(
+        `[MCP Tool] wait_for_messages timeout=${timeout_seconds}s chats=${chat_jids?.length ?? "all"}`,
+      );
       let beats = 0;
       const result = await waitForMessagesCore({
         chatJids: chat_jids,
@@ -85,7 +104,10 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
         heartbeatMs: HEARTBEAT_MS,
         // Keep the proxied HTTP connection warm during a long block.
         onHeartbeat: () => {
-          void reportProgress?.({ progress: ++beats, total: Math.ceil((timeout_seconds * 1000) / HEARTBEAT_MS) });
+          void reportProgress?.({
+            progress: ++beats,
+            total: Math.ceil((timeout_seconds * 1000) / HEARTBEAT_MS),
+          });
         },
       });
       return JSON.stringify(
@@ -106,7 +128,9 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
         .boolean()
         .optional()
         .default(true)
-        .describe("Forward YOUR OWN (is_from_me) messages too — default true so persona mode sees replies you type from your phone and doesn't answer twice. The agent's own MCP sends are always suppressed."),
+        .describe(
+          "Forward YOUR OWN (is_from_me) messages too — default true so persona mode sees replies you type from your phone and doesn't answer twice. The agent's own MCP sends are always suppressed.",
+        ),
       transcribe: z
         .boolean()
         .optional()
@@ -114,7 +138,9 @@ export function registerMonitoringTools(server: ToolRegistrar, deps: ToolDeps): 
         .describe("Transcribe inbound voice notes before pushing the frame (default true)."),
     }),
     execute: async ({ chat_jids, include_from_me, transcribe }) => {
-      mcpLogger.info(`[MCP Tool] follow_chat chats=${chat_jids?.length ?? "all"} include_from_me=${include_from_me}`);
+      mcpLogger.info(
+        `[MCP Tool] follow_chat chats=${chat_jids?.length ?? "all"} include_from_me=${include_from_me}`,
+      );
       const result = executeFollowChat(
         { chatJids: chat_jids, includeFromMe: include_from_me, transcribe },
         { tokens: streamTokens, baseUrl: resolveStreamBaseUrl() },

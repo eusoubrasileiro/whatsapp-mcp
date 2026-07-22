@@ -1,18 +1,16 @@
-import { describe, expect, it } from "vitest";
 import pino from "pino";
-
+import { describe, expect, it } from "vitest";
+import { registerActionsTools } from "../mcp/tools/actions.ts";
+import { registerChatsTools } from "../mcp/tools/chats.ts";
 import { registerConnectionTools } from "../mcp/tools/connection.ts";
 import { registerContactsTools } from "../mcp/tools/contacts.ts";
+import { registerGroupsTools } from "../mcp/tools/groups.ts";
+import { registerMediaTools } from "../mcp/tools/media.ts";
 import { registerMessagesTools } from "../mcp/tools/messages.ts";
 import { registerMonitoringTools } from "../mcp/tools/monitoring.ts";
-import { registerChatsTools } from "../mcp/tools/chats.ts";
-import { registerGroupsTools } from "../mcp/tools/groups.ts";
 import { registerSendingTools } from "../mcp/tools/sending.ts";
-import { registerActionsTools } from "../mcp/tools/actions.ts";
-import { registerMediaTools } from "../mcp/tools/media.ts";
+import type { ToolDeps, ToolRegistrar } from "../mcp/tools/types.ts";
 import { registerWebhooksTools } from "../mcp/tools/webhooks.ts";
-
-import type { ToolRegistrar, ToolDeps } from "../mcp/tools/types.ts";
 
 function createStubRegistrar(): { registrar: ToolRegistrar; names: string[] } {
   const names: string[] = [];
@@ -80,11 +78,7 @@ describe("MCP tool registries", () => {
   it("actions registers react/delete/mark_read", () => {
     const { registrar, names } = createStubRegistrar();
     registerActionsTools(registrar, deps());
-    expect(names).toEqual([
-      "react_to_message",
-      "delete_message",
-      "mark_chat_read",
-    ]);
+    expect(names).toEqual(["react_to_message", "delete_message", "mark_chat_read"]);
   });
 
   it("media registers download_media", () => {
@@ -96,11 +90,7 @@ describe("MCP tool registries", () => {
   it("webhooks registers register/deregister/list tools", () => {
     const { registrar, names } = createStubRegistrar();
     registerWebhooksTools(registrar, deps());
-    expect(names).toEqual([
-      "register_webhook",
-      "deregister_webhook",
-      "list_webhooks",
-    ]);
+    expect(names).toEqual(["register_webhook", "deregister_webhook", "list_webhooks"]);
   });
 });
 

@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import pino, { type Logger } from "pino";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Replace child_process so no real viewer is launched and we can drive 'error'.
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+
 import { spawn } from "node:child_process";
 import { openImageInViewer } from "../mcp/tools/connection.ts";
 

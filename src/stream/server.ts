@@ -18,13 +18,12 @@
 import http, { type Server } from "node:http";
 import type { Duplex } from "node:stream";
 import type { Logger } from "pino";
-import { WebSocketServer, type WebSocket } from "ws";
-
-import { StreamConnection } from "./connection.ts";
-import type { StreamScope, StreamTokenStore } from "./token.ts";
-import { getNewMessagesCore, resolveStartCursor, type NewMessagesResult } from "../monitoring.ts";
+import { type WebSocket, WebSocketServer } from "ws";
 import { getContactName, type Message } from "../database.ts";
 import { subscribeInbound } from "../inbound-bus.ts";
+import { getNewMessagesCore, type NewMessagesResult, resolveStartCursor } from "../monitoring.ts";
+import { StreamConnection } from "./connection.ts";
+import type { StreamScope, StreamTokenStore } from "./token.ts";
 
 export interface StreamServerDeps {
   logger: Logger;
@@ -50,9 +49,7 @@ const DEFAULT_PATH = "/stream";
 function resolveSenderDisplay(msg: Message): string {
   const name = msg.sender ? getContactName(msg.sender) : null;
   return (
-    name ??
-    (msg.sender ? msg.sender.split("@")[0] : null) ??
-    (msg.is_from_me ? "Me" : "Unknown")
+    name ?? (msg.sender ? msg.sender.split("@")[0] : null) ?? (msg.is_from_me ? "Me" : "Unknown")
   );
 }
 

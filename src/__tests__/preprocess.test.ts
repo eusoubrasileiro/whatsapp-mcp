@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
-import { toFlacMono16k, FfmpegError } from "../transcribe/preprocess.ts";
+import { describe, expect, it } from "vitest";
+import { FfmpegError, toFlacMono16k } from "../transcribe/preprocess.ts";
 
 function makeSineWav(durationSec: number, sampleRate = 44100, freq = 440): Buffer {
   const numSamples = durationSec * sampleRate;
@@ -14,8 +14,8 @@ function makeSineWav(durationSec: number, sampleRate = 44100, freq = 440): Buffe
   // fmt chunk
   buf.write("fmt ", 12);
   buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20);         // PCM
-  buf.writeUInt16LE(1, 22);         // mono
+  buf.writeUInt16LE(1, 20); // PCM
+  buf.writeUInt16LE(1, 22); // mono
   buf.writeUInt32LE(sampleRate, 24);
   buf.writeUInt32LE(sampleRate * 2, 28);
   buf.writeUInt16LE(2, 32);
@@ -25,21 +25,31 @@ function makeSineWav(durationSec: number, sampleRate = 44100, freq = 440): Buffe
   buf.writeUInt32LE(dataSize, 40);
 
   for (let i = 0; i < numSamples; i++) {
-    const sample = Math.floor(Math.sin((2 * Math.PI * freq * i) / sampleRate) * 0x3FFF);
+    const sample = Math.floor(Math.sin((2 * Math.PI * freq * i) / sampleRate) * 0x3fff);
     buf.writeInt16LE(sample, 44 + i * 2);
   }
   return buf;
 }
 
-async function ffprobe(buf: Buffer): Promise<{ codec: string; sampleRate: number; channels: number }> {
+async function ffprobe(
+  buf: Buffer,
+): Promise<{ codec: string; sampleRate: number; channels: number }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("ffprobe", [
-      "-v", "error",
-      "-select_streams", "a:0",
-      "-show_entries", "stream=codec_name,sample_rate,channels",
-      "-of", "default=noprint_wrappers=1",
-      "pipe:0",
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_name,sample_rate,channels",
+        "-of",
+        "default=noprint_wrappers=1",
+        "pipe:0",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
     const out: Buffer[] = [];
     proc.stdout.on("data", (c) => out.push(c));
     proc.on("close", (code) => {
@@ -51,7 +61,9 @@ async function ffprobe(buf: Buffer): Promise<{ codec: string; sampleRate: number
       resolve({ codec, sampleRate: sr, channels: ch });
     });
     proc.on("error", reject);
-    proc.stdin.on("error", () => { /* ffprobe may close stdin early once it has the header */ });
+    proc.stdin.on("error", () => {
+      /* ffprobe may close stdin early once it has the header */
+    });
     proc.stdin.end(buf);
   });
 }
@@ -74,17 +86,31 @@ describe("toFlacMono16k", () => {
   it("downmixes stereo 44.1 kHz to mono 16 kHz", async () => {
     // ffmpeg-generated stereo input via a brief pipeline-only fixture.
     const stereoWav = await new Promise<Buffer>((resolve, reject) => {
-      const proc = spawn("ffmpeg", [
-        "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi",
-        "-i", "sine=frequency=440:duration=1:sample_rate=44100",
-        "-ac", "2",
-        "-f", "wav",
-        "pipe:1",
-      ], { stdio: ["ignore", "pipe", "pipe"] });
+      const proc = spawn(
+        "ffmpeg",
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "sine=frequency=440:duration=1:sample_rate=44100",
+          "-ac",
+          "2",
+          "-f",
+          "wav",
+          "pipe:1",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
       const out: Buffer[] = [];
       proc.stdout.on("data", (c) => out.push(c));
-      proc.on("close", (code) => code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(`ffmpeg fixture exited ${code}`)));
+      proc.on("close", (code) =>
+        code === 0
+          ? resolve(Buffer.concat(out))
+          : reject(new Error(`ffmpeg fixture exited ${code}`)),
+      );
       proc.on("error", reject);
     });
 
@@ -117,18 +143,31 @@ describe("toFlacMono16k", () => {
       // seek-on-moov-at-end failure. A tiny <100 KB fixture is buffered whole and
       // hides the bug.
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn("ffmpeg", [
-          "-hide_banner", "-loglevel", "error",
-          "-f", "lavfi",
-          "-i", "sine=frequency=440:duration=90:sample_rate=44100",
-          "-c:a", "aac",
-          "-b:a", "128k",
-          // No -movflags +faststart → moov atom stays at end of file (default)
-          "-f", "mp4",
-          "-y",
-          m4aPath,
-        ], { stdio: ["ignore", "ignore", "pipe"] });
-        proc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`m4a fixture exited ${code}`)));
+        const proc = spawn(
+          "ffmpeg",
+          [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=90:sample_rate=44100",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            // No -movflags +faststart → moov atom stays at end of file (default)
+            "-f",
+            "mp4",
+            "-y",
+            m4aPath,
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        );
+        proc.on("close", (code) =>
+          code === 0 ? resolve() : reject(new Error(`m4a fixture exited ${code}`)),
+        );
         proc.on("error", reject);
       });
 

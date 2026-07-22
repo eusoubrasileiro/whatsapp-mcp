@@ -1,43 +1,42 @@
+import fs from "node:fs";
+import path from "node:path";
 import {
-  startConnection,
-  parseMessage,
-  sendTextMessage,
-  sendMediaMessage,
-  downloadMedia as baileysDownloadMedia,
-  mimetypeToExtension,
-  makeLidResolver,
-  normalizeJid,
-  type ConnectionState,
-  type SocketState,
   type BaileysClientConfig,
+  downloadMedia as baileysDownloadMedia,
+  type ConnectionState,
   type DownloadMediaParams,
   type MediaType,
+  makeLidResolver,
+  mimetypeToExtension,
+  normalizeJid,
   type ParsedMessage,
+  parseMessage,
+  type SocketState,
+  sendMediaMessage,
+  sendTextMessage,
+  startConnection,
 } from "@amiticia/baileys-client";
 import pLimit from "p-limit";
 import type P from "pino";
 import { logAckErrors } from "./ack-errors.ts";
-import path from "node:path";
-import fs from "node:fs";
-
+import { createConnectionNotifier } from "./connection-notifier.ts";
 import {
-  storeMessage,
-  storeChat,
-  storeContact,
+  getMetaValue,
+  listPnChatJids,
   recordJidMapping,
   recordJidPair,
-  getMetaValue,
   setMetaValue,
-  listPnChatJids,
+  storeChat,
+  storeContact,
+  storeMessage,
 } from "./database.ts";
-import { createNtfy, type NtfyConfig } from "./ntfy.ts";
-import { createConnectionNotifier } from "./connection-notifier.ts";
-import { resolveMediaInput, assertMimeForType } from "./media-input.ts";
-import { dispatchInbound } from "./webhooks/delivery.ts";
-import { markSentByUs } from "./webhooks/sent-tracker.ts";
 import { emitInbound } from "./inbound-bus.ts";
+import { assertMimeForType, resolveMediaInput } from "./media-input.ts";
+import { createNtfy, type NtfyConfig } from "./ntfy.ts";
 import { toFlacMono16k } from "./transcribe/preprocess.ts";
 import { transcribeAudio } from "./transcribe/whisper.ts";
+import { dispatchInbound } from "./webhooks/delivery.ts";
+import { markSentByUs } from "./webhooks/sent-tracker.ts";
 
 /**
  * Base directory for auth_info.
@@ -132,9 +131,7 @@ let connectionPromise: Promise<void> | null = null;
 // Limits parallel media downloads to prevent overwhelming the WhatsApp socket
 const downloadLimit = pLimit(2);
 
-export async function startWhatsAppConnection(
-  logger: P.Logger,
-): Promise<void> {
+export async function startWhatsAppConnection(logger: P.Logger): Promise<void> {
   if (connectionPromise) {
     logger.info("Connection attempt already in progress, waiting for it...");
     return connectionPromise;
@@ -469,8 +466,20 @@ type DownloadMediaWrapperParams = {
   fromMe: boolean;
 };
 
-export async function downloadMedia(params: DownloadMediaWrapperParams): Promise<{ buffer: Buffer; mimetype: string; ext: string }> {
-  const { logger, mediaKey, directPath, mediaUrl, mediaType, mimetype, chatJid, messageId, fromMe } = params;
+export async function downloadMedia(
+  params: DownloadMediaWrapperParams,
+): Promise<{ buffer: Buffer; mimetype: string; ext: string }> {
+  const {
+    logger,
+    mediaKey,
+    directPath,
+    mediaUrl,
+    mediaType,
+    mimetype,
+    chatJid,
+    messageId,
+    fromMe,
+  } = params;
 
   return downloadLimit(async () => {
     const sock = socketState.socket;

@@ -7,7 +7,7 @@
  * persistence layer and the transport layer explicit.
  */
 
-import { getContactName, type Message as DbMessage, type Chat as DbChat } from "./database.ts";
+import { type Chat as DbChat, type Message as DbMessage, getContactName } from "./database.ts";
 
 export function formatDbMessageForJson(msg: DbMessage) {
   const contactName = msg.sender ? getContactName(msg.sender) : null;
@@ -16,9 +16,10 @@ export function formatDbMessageForJson(msg: DbMessage) {
     chat_jid: msg.chat_jid,
     chat_name: msg.chat_name ?? "Unknown Chat",
     sender_jid: msg.sender ?? null,
-    sender_display: contactName
-      ?? (msg.sender ? msg.sender.split("@")[0] : null)
-      ?? (msg.is_from_me ? "Me" : "Unknown"),
+    sender_display:
+      contactName ??
+      (msg.sender ? msg.sender.split("@")[0] : null) ??
+      (msg.is_from_me ? "Me" : "Unknown"),
     content: msg.content,
     timestamp: msg.timestamp.toISOString(),
     is_from_me: msg.is_from_me,
@@ -46,9 +47,10 @@ export function formatDbChatForJson(chat: DbChat) {
     last_message_time: chat.last_message_time?.toISOString() ?? null,
     last_message_preview: chat.last_message ?? null,
     last_sender_jid: chat.last_sender ?? null,
-    last_sender_display: lastSenderName
-      ?? (chat.last_sender ? chat.last_sender.split("@")[0] : null)
-      ?? (chat.last_is_from_me ? "Me" : null),
+    last_sender_display:
+      lastSenderName ??
+      (chat.last_sender ? chat.last_sender.split("@")[0] : null) ??
+      (chat.last_is_from_me ? "Me" : null),
     last_is_from_me: chat.last_is_from_me ?? null,
   };
 }

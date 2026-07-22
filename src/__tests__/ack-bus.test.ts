@@ -1,11 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  emitAckError,
-  waitForAckError,
-  resetAckBus,
-  ackListenerCount,
-} from "../ack-bus.ts";
+import { ackListenerCount, emitAckError, resetAckBus, waitForAckError } from "../ack-bus.ts";
 import type { AckError } from "../ack-errors.ts";
 
 // The rejection ack lands ~40ms after the send resolves (measured 2026-07-22:

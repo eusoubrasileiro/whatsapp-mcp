@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   initializeDatabase,
+  type Message,
   resetDatabase,
   storeChat,
   storeMessage,
-  type Message,
 } from "../database.ts";
-import { getNewMessagesCore, waitForMessagesCore } from "../monitoring.ts";
 import { emitInbound, resetInboundBus } from "../inbound-bus.ts";
+import { getNewMessagesCore, waitForMessagesCore } from "../monitoring.ts";
 import { markSentByUs, resetSentTracker } from "../webhooks/sent-tracker.ts";
 
 function makeMsg(o: Partial<Message> & { id: string; chat_jid: string; content: string }): Message {
@@ -37,8 +37,22 @@ describe("monitoring core", () => {
 
   describe("getNewMessagesCore", () => {
     it("returns only messages at/after the cursor, ascending, with next_since", () => {
-      storeMessage(makeMsg({ id: "a", chat_jid: "c1@s.whatsapp.net", content: "A", timestamp: new Date("2025-06-01T10:00:00Z") }));
-      storeMessage(makeMsg({ id: "b", chat_jid: "c1@s.whatsapp.net", content: "B", timestamp: new Date("2025-06-01T11:00:00Z") }));
+      storeMessage(
+        makeMsg({
+          id: "a",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "A",
+          timestamp: new Date("2025-06-01T10:00:00Z"),
+        }),
+      );
+      storeMessage(
+        makeMsg({
+          id: "b",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "B",
+          timestamp: new Date("2025-06-01T11:00:00Z"),
+        }),
+      );
 
       const res = getNewMessagesCore({ since: "2025-06-01T10:30:00.000Z" });
       expect(res.messages.map((m) => m.id)).toEqual(["b"]);
@@ -53,7 +67,14 @@ describe("monitoring core", () => {
       // Regression for the observed duplicate: the old inclusive `gte` cursor
       // re-delivered the last message ("Amei." arrived twice). The rowid cursor
       // is exclusive, so a rolling loop sees each message exactly once.
-      storeMessage(makeMsg({ id: "amei", chat_jid: "c1@s.whatsapp.net", content: "Amei.", timestamp: new Date("2025-06-01T11:00:00Z") }));
+      storeMessage(
+        makeMsg({
+          id: "amei",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "Amei.",
+          timestamp: new Date("2025-06-01T11:00:00Z"),
+        }),
+      );
 
       const first = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z" });
       expect(first.messages.map((m) => m.id)).toEqual(["amei"]);
@@ -67,18 +88,29 @@ describe("monitoring core", () => {
       // exclusive `gt timestamp` cursor would drop the second. The rowid cursor
       // keeps them distinct.
       const t = new Date("2025-06-01T11:00:00Z");
-      storeMessage(makeMsg({ id: "m1", chat_jid: "c1@s.whatsapp.net", content: "one", timestamp: t }));
+      storeMessage(
+        makeMsg({ id: "m1", chat_jid: "c1@s.whatsapp.net", content: "one", timestamp: t }),
+      );
 
       const first = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z" });
       expect(first.messages.map((m) => m.id)).toEqual(["m1"]);
 
-      storeMessage(makeMsg({ id: "m2", chat_jid: "c1@s.whatsapp.net", content: "two", timestamp: t }));
+      storeMessage(
+        makeMsg({ id: "m2", chat_jid: "c1@s.whatsapp.net", content: "two", timestamp: t }),
+      );
       const second = getNewMessagesCore({ since: first.next_since });
       expect(second.messages.map((m) => m.id)).toEqual(["m2"]);
     });
 
     it("with no `since`, starts from now: no backfill, then sees the next message", () => {
-      storeMessage(makeMsg({ id: "old", chat_jid: "c1@s.whatsapp.net", content: "old", timestamp: new Date("2025-06-01T09:00:00Z") }));
+      storeMessage(
+        makeMsg({
+          id: "old",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "old",
+          timestamp: new Date("2025-06-01T09:00:00Z"),
+        }),
+      );
 
       const boot = getNewMessagesCore({});
       expect(boot.messages).toEqual([]); // established a high-water mark, no history
@@ -92,7 +124,10 @@ describe("monitoring core", () => {
     it("filters to the given chats", () => {
       storeMessage(makeMsg({ id: "a", chat_jid: "c1@s.whatsapp.net", content: "A" }));
       storeMessage(makeMsg({ id: "b", chat_jid: "c2@s.whatsapp.net", content: "B" }));
-      const res = getNewMessagesCore({ chatJids: ["c1@s.whatsapp.net"], since: "2025-06-01T00:00:00.000Z" });
+      const res = getNewMessagesCore({
+        chatJids: ["c1@s.whatsapp.net"],
+        since: "2025-06-01T00:00:00.000Z",
+      });
       expect(res.messages.map((m) => m.id)).toEqual(["a"]);
     });
 
@@ -104,20 +139,38 @@ describe("monitoring core", () => {
     });
 
     it("excludes the agent's own sends (loop guard)", () => {
-      storeMessage(makeMsg({ id: "mine", chat_jid: "c1@s.whatsapp.net", content: "agent reply", is_from_me: true }));
+      storeMessage(
+        makeMsg({
+          id: "mine",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "agent reply",
+          is_from_me: true,
+        }),
+      );
       markSentByUs("mine");
       const res = getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z", includeFromMe: true });
       expect(res.messages).toHaveLength(0);
       // ...but the cursor still advances past it (rowid of the filtered row) so
       // we never re-scan it.
       expect(res.next_since).toMatch(/^row:\d+$/);
-      expect(getNewMessagesCore({ since: res.next_since, includeFromMe: true }).messages).toEqual([]);
+      expect(getNewMessagesCore({ since: res.next_since, includeFromMe: true }).messages).toEqual(
+        [],
+      );
     });
 
     it("excludes is_from_me by default and includes it when asked", () => {
-      storeMessage(makeMsg({ id: "me", chat_jid: "c1@s.whatsapp.net", content: "me typing", is_from_me: true }));
+      storeMessage(
+        makeMsg({
+          id: "me",
+          chat_jid: "c1@s.whatsapp.net",
+          content: "me typing",
+          is_from_me: true,
+        }),
+      );
       expect(getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z" }).messages).toHaveLength(0);
-      expect(getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z", includeFromMe: true }).messages).toHaveLength(1);
+      expect(
+        getNewMessagesCore({ since: "2025-06-01T00:00:00.000Z", includeFromMe: true }).messages,
+      ).toHaveLength(1);
     });
 
     it("echoes the cursor when there is nothing new", () => {
@@ -138,7 +191,9 @@ describe("monitoring core", () => {
       const since = "2025-06-01T00:00:00.000Z";
       const p = waitForMessagesCore({ chatJids: ["c1@s.whatsapp.net"], since, timeoutMs: 5000 });
       // Persist, then wake — mirrors whatsapp.ts (store before emit).
-      storeMessage(makeMsg({ id: "reply", chat_jid: "c1@s.whatsapp.net", content: "we have an opening" }));
+      storeMessage(
+        makeMsg({ id: "reply", chat_jid: "c1@s.whatsapp.net", content: "we have an opening" }),
+      );
       emitInbound({ id: "reply", chat_jid: "c1@s.whatsapp.net", is_from_me: false });
       const res = await p;
       expect(res.messages.map((m) => m.id)).toEqual(["reply"]);
@@ -171,7 +226,8 @@ describe("monitoring core", () => {
         since: "2025-06-01T00:00:00.000Z",
         timeoutMs: 40,
         heartbeatMs: 5,
-        onHeartbeat: () => emitInbound({ id: "echo", chat_jid: "c1@s.whatsapp.net", is_from_me: true }),
+        onHeartbeat: () =>
+          emitInbound({ id: "echo", chat_jid: "c1@s.whatsapp.net", is_from_me: true }),
       });
       expect(res.messages).toEqual([]);
     });

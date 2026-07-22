@@ -34,12 +34,7 @@ type Signature = {
 const SIGNATURES: readonly Signature[] = [
   // PNG: 89 50 4E 47
   {
-    test: (b) =>
-      b.length >= 4 &&
-      b[0] === 0x89 &&
-      b[1] === 0x50 &&
-      b[2] === 0x4e &&
-      b[3] === 0x47,
+    test: (b) => b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
     mimetype: () => "image/png",
   },
   // JPEG: FF D8 FF
@@ -49,12 +44,7 @@ const SIGNATURES: readonly Signature[] = [
   },
   // GIF: "GIF8"
   {
-    test: (b) =>
-      b.length >= 4 &&
-      b[0] === 0x47 &&
-      b[1] === 0x49 &&
-      b[2] === 0x46 &&
-      b[3] === 0x38,
+    test: (b) => b.length >= 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38,
     mimetype: () => "image/gif",
   },
   // WebP: "RIFF"....\"WEBP"
@@ -73,22 +63,12 @@ const SIGNATURES: readonly Signature[] = [
   },
   // PDF: "%PDF"
   {
-    test: (b) =>
-      b.length >= 4 &&
-      b[0] === 0x25 &&
-      b[1] === 0x50 &&
-      b[2] === 0x44 &&
-      b[3] === 0x46,
+    test: (b) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46,
     mimetype: () => "application/pdf",
   },
   // ISO Base Media (MP4/M4A/MOV/3GP) — bytes 4..8 = "ftyp", brand at 8..12
   {
-    test: (b) =>
-      b.length >= 12 &&
-      b[4] === 0x66 &&
-      b[5] === 0x74 &&
-      b[6] === 0x79 &&
-      b[7] === 0x70,
+    test: (b) => b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70,
     mimetype: (b) => {
       const brand = b.slice(8, 12).toString("ascii");
       if (brand === "M4A ") return "audio/mp4";
@@ -99,12 +79,7 @@ const SIGNATURES: readonly Signature[] = [
   },
   // OGG: "OggS"
   {
-    test: (b) =>
-      b.length >= 4 &&
-      b[0] === 0x4f &&
-      b[1] === 0x67 &&
-      b[2] === 0x67 &&
-      b[3] === 0x53,
+    test: (b) => b.length >= 4 && b[0] === 0x4f && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53,
     mimetype: () => "audio/ogg",
   },
   // WAV: "RIFF"...."WAVE"

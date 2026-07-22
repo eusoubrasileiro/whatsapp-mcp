@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const groqCreate = vi.fn();
 const openaiCreate = vi.fn();
@@ -19,7 +19,7 @@ vi.mock("openai/uploads", () => ({
   toFile: vi.fn(async (buf: Buffer, name: string) => ({ __fakeFile: true, buf, name })),
 }));
 
-import { transcribeAudio, TranscribeError } from "../transcribe/whisper.ts";
+import { TranscribeError, transcribeAudio } from "../transcribe/whisper.ts";
 
 describe("transcribeAudio", () => {
   beforeEach(() => {
@@ -49,7 +49,12 @@ describe("transcribeAudio", () => {
       response_format: "verbose_json",
     });
     expect(openaiCreate).not.toHaveBeenCalled();
-    expect(result).toEqual({ text: "olá mundo", model: "whisper-large-v3-turbo", provider: "groq", duration_s: 12.5 });
+    expect(result).toEqual({
+      text: "olá mundo",
+      model: "whisper-large-v3-turbo",
+      provider: "groq",
+      duration_s: 12.5,
+    });
   });
 
   it("honors WHISPER_MODEL override", async () => {
@@ -71,11 +76,18 @@ describe("transcribeAudio", () => {
     expect(openaiCreate).toHaveBeenCalledOnce();
     expect(openaiCreate.mock.calls[0][0]).toMatchObject({ model: "whisper-1", language: "pt" });
     expect(groqCreate).not.toHaveBeenCalled();
-    expect(result).toEqual({ text: "hello", model: "whisper-1", provider: "openai", duration_s: 5 });
+    expect(result).toEqual({
+      text: "hello",
+      model: "whisper-1",
+      provider: "openai",
+      duration_s: 5,
+    });
   });
 
   it("throws when neither key is set", async () => {
-    await expect(transcribeAudio({ buffer: Buffer.from("f") })).rejects.toThrow(/GROQ_API_KEY.*OPENAI_API_KEY/);
+    await expect(transcribeAudio({ buffer: Buffer.from("f") })).rejects.toThrow(
+      /GROQ_API_KEY.*OPENAI_API_KEY/,
+    );
   });
 
   it("wraps Groq SDK error with TranscribeError", async () => {

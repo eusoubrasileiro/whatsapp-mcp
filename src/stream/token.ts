@@ -90,7 +90,5 @@ export function createStreamTokenStore(opts: StreamTokenStoreOpts = {}): StreamT
 
 /** Process-wide store used by the running server (the tool issues, the WS verifies). */
 export const streamTokens: StreamTokenStore = createStreamTokenStore({
-  ttlMs: process.env.STREAM_TOKEN_TTL_S
-    ? Number(process.env.STREAM_TOKEN_TTL_S) * 1000
-    : undefined,
+  ttlMs: process.env.STREAM_TOKEN_TTL_S ? Number(process.env.STREAM_TOKEN_TTL_S) * 1000 : undefined,
 });

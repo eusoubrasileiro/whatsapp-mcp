@@ -17,12 +17,12 @@
 
 import {
   getMessagesDelta,
-  resolveCanonicalJid,
-  type MessagesDeltaCursor,
   type Message,
+  type MessagesDeltaCursor,
+  resolveCanonicalJid,
 } from "./database.ts";
+import { type InboundBusMessage, waitForInbound } from "./inbound-bus.ts";
 import { wasSentByUs } from "./webhooks/sent-tracker.ts";
-import { waitForInbound, type InboundBusMessage } from "./inbound-bus.ts";
 
 export interface GetNewMessagesOpts {
   /** Chats to watch. Omit, empty, or `["*"]` = all chats. */
@@ -94,8 +94,7 @@ export function getNewMessagesCore(opts: GetNewMessagesOpts): NewMessagesResult 
 
   // Advance to the fetched high-water rowid; if there was nothing to advance to
   // (empty ISO backfill), hold the caller's original cursor.
-  const next_since =
-    delta.cursor != null ? encodeCursor(delta.cursor) : (opts.since ?? "");
+  const next_since = delta.cursor != null ? encodeCursor(delta.cursor) : (opts.since ?? "");
 
   return { messages, next_since };
 }
@@ -139,9 +138,7 @@ export async function waitForMessagesCore(opts: WaitForMessagesOpts): Promise<Ne
 
   const includeFromMe = opts.includeFromMe ?? false;
   const chatJids = normalizeChatJids(opts.chatJids);
-  const canonicalAllowed = chatJids
-    ? new Set(chatJids.map(resolveCanonicalJid))
-    : null;
+  const canonicalAllowed = chatJids ? new Set(chatJids.map(resolveCanonicalJid)) : null;
 
   const predicate = (m: InboundBusMessage): boolean => {
     if (wasSentByUs(m.id)) return false;

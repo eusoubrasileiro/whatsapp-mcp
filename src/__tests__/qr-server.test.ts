@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import pino, { type Logger } from "pino";
-import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { ConnectionState } from "@amiticia/baileys-client";
+import pino, { type Logger } from "pino";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createQrServer } from "../qr-server.ts";
 
 function makeSilentLogger(): Logger {
@@ -55,7 +55,7 @@ describe("createQrServer", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const body = await res.text();
-    expect(body).toContain("<meta http-equiv=\"refresh\"");
+    expect(body).toContain('<meta http-equiv="refresh"');
     expect(body).toContain("disconnected");
   });
 
@@ -90,10 +90,16 @@ describe("createQrServer", () => {
 
   it("POST /repair calls onRepair and redirects to /", async () => {
     let repaired = false;
-    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
-    server = createQrServer(makeSilentLogger(), () => state, async () => {
-      repaired = true;
-    });
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    server = createQrServer(
+      makeSilentLogger(),
+      () => state,
+      async () => {
+        repaired = true;
+      },
+    );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 

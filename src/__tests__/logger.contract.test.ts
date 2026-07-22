@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import pino from "pino";
+import { describe, expect, it } from "vitest";
 
 // Contract test pinning the pino API surface consumed by src/main.ts.
 // Must stay green across pino 9 → 10.

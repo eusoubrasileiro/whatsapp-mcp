@@ -10,8 +10,8 @@ import { registerMediaTools } from "./mcp/tools/media.ts";
 import { registerMessagesTools } from "./mcp/tools/messages.ts";
 import { registerMonitoringTools } from "./mcp/tools/monitoring.ts";
 import { registerSendingTools } from "./mcp/tools/sending.ts";
-import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
 import type { ToolDeps } from "./mcp/tools/types.ts";
+import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
 
 /**
  * Server-level routing hint surfaced to clients under "MCP Server Instructions".
@@ -35,10 +35,7 @@ Do NOT loop wait_for_messages to "stay present" — each empty return wastes a t
 blocks all other work. For standing presence use follow_chat.
 `.trim();
 
-export async function startMcpServer(
-  mcpLogger: Logger,
-  waLogger: Logger,
-): Promise<void> {
+export async function startMcpServer(mcpLogger: Logger, waLogger: Logger): Promise<void> {
   mcpLogger.info("Initializing FastMCP server...");
 
   const authToken = process.env.MCP_AUTH_TOKEN;
@@ -110,9 +107,9 @@ TABLE webhook_subscriptions (
   allowed_jids TEXT, transcribe INTEGER, include_from_me INTEGER, label TEXT, active INTEGER,
   created_at TEXT, updated_at TEXT
 )
-        `.trim()
+        `.trim(),
       };
-    }
+    },
   });
 
   const transport = (process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();

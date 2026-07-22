@@ -64,10 +64,7 @@ export async function resolveRecipient(
     results = (await socket.onWhatsApp(jid)) as typeof results;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    logger.warn(
-      { jid, reason },
-      "recipient existence check failed — sending to the JID as given",
-    );
+    logger.warn({ jid, reason }, "recipient existence check failed — sending to the JID as given");
     return jid;
   }
 

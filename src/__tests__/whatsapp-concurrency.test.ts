@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ConnectionState, SocketState } from "@amiticia/baileys-client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -35,12 +35,12 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-import { startConnection, downloadMedia as baileysDownloadMedia } from "@amiticia/baileys-client";
+import { downloadMedia as baileysDownloadMedia, startConnection } from "@amiticia/baileys-client";
 import {
-  startWhatsAppConnection,
-  downloadMedia,
   connectionState,
+  downloadMedia,
   socketState,
+  startWhatsAppConnection,
 } from "../whatsapp.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -66,7 +66,11 @@ const mockLogger = {
   level: "info",
 } as any;
 
-function mockStartConnectionResult(): { connectionState: ConnectionState; socketState: SocketState; socket: any } {
+function mockStartConnectionResult(): {
+  connectionState: ConnectionState;
+  socketState: SocketState;
+  socket: any;
+} {
   return {
     socket: { ev: { process: vi.fn() } },
     connectionState: {
@@ -174,9 +178,7 @@ describe("downloadMedia concurrency", () => {
       return buf;
     });
 
-    const promises = deferreds.map((_, i) =>
-      downloadMedia(makeDownloadParams(`msg${i}`)),
-    );
+    const promises = deferreds.map((_, i) => downloadMedia(makeDownloadParams(`msg${i}`)));
 
     // Let the first 2 start, resolve them, then the next batch
     await vi.waitFor(() => expect(currentConcurrent).toBe(2));

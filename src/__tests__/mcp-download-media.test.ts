@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Module mocks (hoisted before imports) ────────────────────────────
 
@@ -61,19 +61,23 @@ vi.mock("fastmcp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fastmcp")>();
   return {
     ...actual,
-    imageContent: vi.fn().mockResolvedValue({ type: "image", data: "base64img", mimeType: "image/jpeg" }),
-    audioContent: vi.fn().mockResolvedValue({ type: "audio", data: "base64aud", mimeType: "audio/ogg" }),
+    imageContent: vi
+      .fn()
+      .mockResolvedValue({ type: "image", data: "base64img", mimeType: "image/jpeg" }),
+    audioContent: vi
+      .fn()
+      .mockResolvedValue({ type: "audio", data: "base64aud", mimeType: "audio/ogg" }),
   };
 });
 
+import pino from "pino";
 import { executeDownloadMedia } from "../actions.ts";
 import { getMessageById, updateMessageMediaObjectKey } from "../database.ts";
-import { downloadMedia } from "../whatsapp.ts";
-import { putMedia, publicUrlFor, getMediaBytes } from "../storage.ts";
+import { describeImage } from "../describe/vision.ts";
+import { getMediaBytes, publicUrlFor, putMedia } from "../storage.ts";
 import { toFlacMono16k } from "../transcribe/preprocess.ts";
 import { transcribeAudio } from "../transcribe/whisper.ts";
-import { describeImage } from "../describe/vision.ts";
-import pino from "pino";
+import { downloadMedia } from "../whatsapp.ts";
 
 const logger = pino({ level: "silent" });
 
@@ -128,11 +132,18 @@ describe("executeDownloadMedia", () => {
 
     expect(result.content).toHaveLength(3);
     expect(result.content[0]).toMatchObject({ type: "image" });
-    expect(result.content[1]).toMatchObject({ type: "resource_link", uri: expect.stringContaining("media.example.com") });
+    expect(result.content[1]).toMatchObject({
+      type: "resource_link",
+      uri: expect.stringContaining("media.example.com"),
+    });
     expect(result.content[2]).toMatchObject({ type: "text" });
     expect(downloadMedia).toHaveBeenCalledOnce();
     expect(putMedia).toHaveBeenCalledOnce();
-    expect(updateMessageMediaObjectKey).toHaveBeenCalledWith("msg-001", "5511@s.whatsapp.net", "t/default/5511@s.whatsapp.net/msg-001.jpg");
+    expect(updateMessageMediaObjectKey).toHaveBeenCalledWith(
+      "msg-001",
+      "5511@s.whatsapp.net",
+      "t/default/5511@s.whatsapp.net/msg-001.jpg",
+    );
   });
 
   // Test 5: PDF returns resource_link only, no inline content
@@ -146,7 +157,11 @@ describe("executeDownloadMedia", () => {
       key: "t/default/5511@s.whatsapp.net/msg-001.pdf",
       url: "https://media.example.com/t/default/5511@s.whatsapp.net/msg-001.pdf",
     });
-    const msg = makeMediaMessage({ mimetype: "application/pdf", media_type: "document", file_length: 50_000 });
+    const msg = makeMediaMessage({
+      mimetype: "application/pdf",
+      media_type: "document",
+      file_length: 50_000,
+    });
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
@@ -176,7 +191,10 @@ describe("executeDownloadMedia", () => {
     expect(putMedia).not.toHaveBeenCalled();
     expect(result.content).toHaveLength(2);
     expect(result.content[0]).toMatchObject({ type: "resource_link" });
-    expect(result.content[1]).toMatchObject({ type: "text", text: expect.stringContaining("cached") });
+    expect(result.content[1]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("cached"),
+    });
     expect(publicUrlFor).toHaveBeenCalledWith("t/default/5511@s.whatsapp.net/msg-001.jpg");
   });
 
@@ -239,7 +257,8 @@ describe("executeDownloadMedia", () => {
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
-      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
     });
     expect(result.content).toHaveLength(2);
     expect(result.content[0]).toMatchObject({ type: "resource_link" });
@@ -262,7 +281,8 @@ describe("executeDownloadMedia", () => {
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
-      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
     });
     expect(result.content).toHaveLength(2);
     expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
@@ -321,7 +341,11 @@ describe("executeDownloadMedia", () => {
       model: "whisper-large-v3-turbo",
       provider: "groq",
     });
-    const msg = makeMediaMessage({ mimetype: "audio/ogg; codecs=opus", media_type: "ptt", file_length: 200 });
+    const msg = makeMediaMessage({
+      mimetype: "audio/ogg; codecs=opus",
+      media_type: "ptt",
+      file_length: 200,
+    });
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
@@ -345,7 +369,11 @@ describe("executeDownloadMedia", () => {
       text: "Cardápio de pizzaria com 12 sabores.",
       model: "gemini-2.5-flash",
     });
-    const msg = makeMediaMessage({ mimetype: "image/jpeg", media_type: "image", file_length: 1024 });
+    const msg = makeMediaMessage({
+      mimetype: "image/jpeg",
+      media_type: "image",
+      file_length: 1024,
+    });
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
@@ -371,7 +399,11 @@ describe("executeDownloadMedia", () => {
       key: "t/default/5511@s.whatsapp.net/msg-001.jpg",
       url: "https://media.example.com/x.jpg",
     });
-    const msg = makeMediaMessage({ mimetype: "image/jpeg", media_type: "image", file_length: 1024 });
+    const msg = makeMediaMessage({
+      mimetype: "image/jpeg",
+      media_type: "image",
+      file_length: 1024,
+    });
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
@@ -393,7 +425,11 @@ describe("executeDownloadMedia", () => {
       key: "t/default/5511@s.whatsapp.net/msg-001.pdf",
       url: "https://media.example.com/x.pdf",
     });
-    const msg = makeMediaMessage({ mimetype: "application/pdf", media_type: "document", file_length: 50_000 });
+    const msg = makeMediaMessage({
+      mimetype: "application/pdf",
+      media_type: "document",
+      file_length: 50_000,
+    });
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
@@ -452,7 +488,8 @@ describe("executeDownloadMedia", () => {
     vi.mocked(getMessageById).mockReturnValue(msg as any);
 
     const result = await executeDownloadMedia(logger, {
-      message_id: "msg-001", chat_jid: "5511@s.whatsapp.net",
+      message_id: "msg-001",
+      chat_jid: "5511@s.whatsapp.net",
     });
     expect(result.content.every((c: any) => c.type !== "image")).toBe(true);
   });

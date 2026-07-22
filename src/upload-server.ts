@@ -1,7 +1,7 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Logger } from "pino";
-import { MAX_MEDIA_BYTES, extFromMime, sniffMimetype } from "./media-input.ts";
 import { createRouter, type Route } from "./http-router.ts";
+import { extFromMime, MAX_MEDIA_BYTES, sniffMimetype } from "./media-input.ts";
 
 export interface UploadServerOptions {
   /**
@@ -35,10 +35,7 @@ export interface UploadServerOptions {
  * media bucket. WABA-specific MIME gating still happens at send time in
  * `assertMimeForType`, so this is a coarser first-pass filter.
  */
-export function createUploadServer(
-  logger: Logger,
-  options: UploadServerOptions,
-): Server {
+export function createUploadServer(logger: Logger, options: UploadServerOptions): Server {
   const maxBytes = options.maxBytes ?? MAX_MEDIA_BYTES;
 
   const routes: Route[] = [
@@ -93,9 +90,7 @@ export function createUploadServer(
     },
   ];
 
-  return http.createServer(
-    createRouter(routes, { logger, bearerToken: options.authToken }),
-  );
+  return http.createServer(createRouter(routes, { logger, bearerToken: options.authToken }));
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {

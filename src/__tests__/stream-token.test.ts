@@ -1,11 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createStreamTokenStore } from "../stream/token.ts";
 
 describe("stream token store", () => {
   function fixedClock(start = 1_000_000) {
     let t = start;
-    return { now: () => t, advance: (ms: number) => { t += ms; } };
+    return {
+      now: () => t,
+      advance: (ms: number) => {
+        t += ms;
+      },
+    };
   }
 
   it("issues an opaque token that verifies back to the same scope", () => {

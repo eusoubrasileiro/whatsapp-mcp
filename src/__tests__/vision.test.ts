@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const generateContent = vi.fn();
 
@@ -9,7 +9,7 @@ vi.mock("@google/genai", () => ({
   },
 }));
 
-import { describeImage, DescribeError } from "../describe/vision.ts";
+import { DescribeError, describeImage } from "../describe/vision.ts";
 
 describe("describeImage", () => {
   beforeEach(() => {
@@ -84,9 +84,7 @@ describe("describeImage", () => {
   it("falls back to extracting candidates[].content.parts[].text when top-level .text is missing", async () => {
     process.env.GEMINI_API_KEY = "g_test";
     generateContent.mockResolvedValue({
-      candidates: [
-        { content: { parts: [{ text: "Parte 1." }, { text: " Parte 2." }] } },
-      ],
+      candidates: [{ content: { parts: [{ text: "Parte 1." }, { text: " Parte 2." }] } }],
     });
 
     const result = await describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" });

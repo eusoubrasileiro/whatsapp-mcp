@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import pino, { type Logger } from "pino";
-import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import pino, { type Logger } from "pino";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUploadServer, type UploadServerOptions } from "../upload-server.ts";
 
 type PutUploadFn = UploadServerOptions["putUpload"];

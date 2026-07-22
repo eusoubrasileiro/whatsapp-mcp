@@ -1,7 +1,7 @@
 import http, { type Server } from "node:http";
+import type { ConnectionState } from "@amiticia/baileys-client";
 import type { Logger } from "pino";
 import QRCode from "qrcode";
-import type { ConnectionState } from "@amiticia/baileys-client";
 import { createRouter, type Route } from "./http-router.ts";
 
 function renderHtml(state: ConnectionState): string {
@@ -47,12 +47,18 @@ ${body}
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => {
     switch (c) {
-      case "&": return "&amp;";
-      case "<": return "&lt;";
-      case ">": return "&gt;";
-      case "\"": return "&quot;";
-      case "'": return "&#39;";
-      default: return c;
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return c;
     }
   });
 }

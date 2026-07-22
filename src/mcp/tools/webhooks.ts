@@ -19,16 +19,22 @@ export function registerWebhooksTools(server: ToolRegistrar, deps: ToolDeps): vo
       allowed_jids: z
         .array(z.string())
         .min(1)
-        .describe('Chats (person/group JIDs) allowed to wake this subscription. Use ["*"] for all chats.'),
+        .describe(
+          'Chats (person/group JIDs) allowed to wake this subscription. Use ["*"] for all chats.',
+        ),
       secret: z
         .string()
         .optional()
-        .describe("Shared secret used to sign deliveries (HMAC) or as a Bearer token. Recommended."),
+        .describe(
+          "Shared secret used to sign deliveries (HMAC) or as a Bearer token. Recommended.",
+        ),
       auth_mode: z
         .enum(["hmac", "bearer"])
         .optional()
         .default("hmac")
-        .describe("How the secret authenticates deliveries: 'hmac' signature header (default) or 'bearer' Authorization"),
+        .describe(
+          "How the secret authenticates deliveries: 'hmac' signature header (default) or 'bearer' Authorization",
+        ),
       transcribe: z
         .boolean()
         .optional()
@@ -38,14 +44,34 @@ export function registerWebhooksTools(server: ToolRegistrar, deps: ToolDeps): vo
         .boolean()
         .optional()
         .default(false)
-        .describe("Forward YOUR OWN messages (is_from_me) in a chat shared with OTHERS (a group/contact). NOT needed for a self-chat (allow-listing your own number) — those auto-forward your messages so talk-to-yourself works with zero config. The agent's own replies are always suppressed to prevent loops. Default false (a customer-facing bot only sees genuine inbound)."),
+        .describe(
+          "Forward YOUR OWN messages (is_from_me) in a chat shared with OTHERS (a group/contact). NOT needed for a self-chat (allow-listing your own number) — those auto-forward your messages so talk-to-yourself works with zero config. The agent's own replies are always suppressed to prevent loops. Default false (a customer-facing bot only sees genuine inbound).",
+        ),
       label: z.string().optional().describe("Human label for managing this subscription"),
     }),
-    execute: async ({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label }) => {
+    execute: async ({
+      target_url,
+      allowed_jids,
+      secret,
+      auth_mode,
+      transcribe,
+      include_from_me,
+      label,
+    }) => {
       // Redact any user:pass@ embedded in the URL before logging.
       const safeUrl = target_url.replace(/\/\/[^/@]*@/, "//[redacted]@");
-      mcpLogger.info(`[MCP Tool] Executing register_webhook for ${safeUrl} (${allowed_jids.length} jid(s), include_from_me=${include_from_me})`);
-      const result = executeRegisterWebhook({ target_url, allowed_jids, secret, auth_mode, transcribe, include_from_me, label });
+      mcpLogger.info(
+        `[MCP Tool] Executing register_webhook for ${safeUrl} (${allowed_jids.length} jid(s), include_from_me=${include_from_me})`,
+      );
+      const result = executeRegisterWebhook({
+        target_url,
+        allowed_jids,
+        secret,
+        auth_mode,
+        transcribe,
+        include_from_me,
+        label,
+      });
       return JSON.stringify(result, null, 2);
     },
   });

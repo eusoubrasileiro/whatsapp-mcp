@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   emitInbound,
-  waitForInbound,
-  resetInboundBus,
-  listenerCount,
   type InboundBusMessage,
+  listenerCount,
+  resetInboundBus,
+  waitForInbound,
 } from "../inbound-bus.ts";
 
 function msg(overrides: Partial<InboundBusMessage> = {}): InboundBusMessage {
