@@ -554,7 +554,7 @@ export function storeMessage(message: Message): void {
 function parseDateSafe(dateString: string | null | undefined): Date | null {
   if (!dateString) return null;
   const date = new Date(dateString);
-  return isNaN(date.getTime()) ? null : date;
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function rowToMessage(row: any): Message {

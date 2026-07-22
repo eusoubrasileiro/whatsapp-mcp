@@ -5,7 +5,6 @@ const generateContent = vi.fn();
 vi.mock("@google/genai", () => ({
   GoogleGenAI: class MockGenAI {
     models = { generateContent };
-    constructor(_opts: any) {}
   },
 }));
 

@@ -85,6 +85,6 @@ function pathOf(url: string): string {
 function authorizeBearer(req: IncomingMessage, token: string): boolean {
   const header = req.headers.authorization;
   const raw = Array.isArray(header) ? header[0] : header;
-  if (!raw || !raw.startsWith("Bearer ")) return false;
+  if (!raw?.startsWith("Bearer ")) return false;
   return raw.slice(7) === token;
 }

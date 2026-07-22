@@ -46,7 +46,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
       const target = await resolveTarget(socket, normalizedRecipient);
       const result = await sendWhatsAppMessage(waLogger, target, message);
 
-      if (result && result.key && result.key.id) {
+      if (result?.key?.id) {
         // sendMessage() resolving only means "written to the socket". Wait for a
         // possible refusal so we never report a phantom delivery.
         await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
@@ -92,7 +92,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
         throw new Error(`Failed to send ${type} to ${target}: ${reason}`);
       }
 
-      if (result && result.key && result.key.id) {
+      if (result?.key?.id) {
         await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
         return `${type.charAt(0).toUpperCase() + type.slice(1)} sent successfully to ${target} (ID: ${result.key.id}).`;
       } else {

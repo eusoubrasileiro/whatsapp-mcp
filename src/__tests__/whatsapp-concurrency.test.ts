@@ -172,7 +172,7 @@ describe("downloadMedia concurrency", () => {
     vi.mocked(baileysDownloadMedia).mockImplementation(async (_sock, params) => {
       currentConcurrent++;
       peakConcurrent = Math.max(peakConcurrent, currentConcurrent);
-      const idx = parseInt((params as any).messageId.replace("msg", ""));
+      const idx = parseInt((params as any).messageId.replace("msg", ""), 10);
       const buf = await deferreds[idx].promise;
       currentConcurrent--;
       return buf;
