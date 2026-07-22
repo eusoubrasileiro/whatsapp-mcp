@@ -7,8 +7,7 @@
 #
 # The LLM reviewer is deliberately NOT here: it lives on pre-push only, so a
 # Claude CLI outage can never block a local commit (ratified 2026-07-22).
-#
-# Stages 3-4 are armed once the quality-gate lands (its own commit); until
-# then this file stops after tsc.
 pnpm exec lint-staged
 pnpm exec tsc --noEmit
+pnpm test:coverage --silent
+pnpm quality-gate

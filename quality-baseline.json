@@ -1,0 +1,18 @@
+{
+  "maxFileLines": 1230,
+  "filesOver500": 2,
+  "complexityViolations": 0,
+  "unusedExports": 6,
+  "unusedTypes": 7,
+  "unusedFiles": 0,
+  "unusedDependencies": 3,
+  "jscpdClones": 67,
+  "jscpdPercentage": "4.79",
+  "anyCasts": 122,
+  "tsSuppressors": 0,
+  "testAssertions": 1510,
+  "coverageStatements": 76.65,
+  "coverageBranches": 73.5,
+  "coverageFunctions": 80.83,
+  "coverageLines": 76.63
+}

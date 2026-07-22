@@ -7,6 +7,9 @@ dist/
 # Vitest coverage output
 coverage/
 
+# Quality-gate run reports (the baseline itself IS committed; its reports are not)
+.quality-gate/
+
 # Logs
 *.log
 wa-logs.txt
