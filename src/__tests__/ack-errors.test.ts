@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { classifyAckError, logAckErrors } from "../ack-errors.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { classifyAckError, formatAckErrorForAgent, logAckErrors } from "../ack-errors.ts";
+import { resetAckBus, waitForAckError } from "../ack-bus.ts";
 
 // WhatsApp rejects a send *asynchronously*, in an ack that arrives long after
 // socket.sendMessage() already resolved. Baileys surfaces it on `messages.update`
@@ -116,5 +117,69 @@ describe("logAckErrors", () => {
     logAckErrors([ackError("463"), ackError("479")], logger as never);
 
     expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
+  // Logging alone is what let the 2026-07-22 incident run for hours: the
+  // rejection existed only in wa-logs.txt, so the agent kept believing its
+  // sends had landed.
+  it("publishes each rejection on the ack bus so the send path can surface it", async () => {
+    resetAckBus();
+
+    logAckErrors([ackError("463")], makeLogger() as never);
+
+    await expect(waitForAckError("3EB0DE3000E4B8E7FD1596", 0)).resolves.toMatchObject({
+      code: "463",
+    });
+  });
+});
+
+describe("formatAckErrorForAgent", () => {
+  beforeEach(() => {
+    resetAckBus();
+  });
+
+  function ack(code: string | null) {
+    return {
+      msgId: "3EB0600F8B4B7D29D6EA81",
+      chatJid: "5531912344567@s.whatsapp.net",
+      code,
+      reason: "whatever the classifier said",
+      detail: null,
+    };
+  }
+
+  it("states plainly that the message did not arrive", () => {
+    const text = formatAckErrorForAgent(ack("463"), "5531912344567@s.whatsapp.net");
+
+    expect(text).toMatch(/did NOT arrive/i);
+    expect(text).toContain("463");
+    expect(text).toContain("5531912344567@s.whatsapp.net");
+  });
+
+  // Throwing invites a retry, and every 463 retry is another reach-out.
+  it("forbids retrying, for every code", () => {
+    for (const code of ["463", "479", "500", null]) {
+      expect(formatAckErrorForAgent(ack(code), "x@s.whatsapp.net")).toMatch(/DO NOT RETRY/);
+    }
+  });
+
+  it("points a 463 at the JID/LID as the prime suspect", () => {
+    const text = formatAckErrorForAgent(ack("463"), "5531912344567@s.whatsapp.net");
+
+    expect(text).toMatch(/lid/i);
+    expect(text).toMatch(/search_contacts/);
+  });
+
+  it("points a 479 at the stale session rather than the JID", () => {
+    const text = formatAckErrorForAgent(ack("479"), "x@s.whatsapp.net");
+
+    expect(text).toMatch(/session/i);
+  });
+
+  it("still produces actionable text for an unknown code", () => {
+    const text = formatAckErrorForAgent(ack("999"), "x@s.whatsapp.net");
+
+    expect(text).toMatch(/did NOT arrive/i);
+    expect(text).toContain("999");
   });
 });

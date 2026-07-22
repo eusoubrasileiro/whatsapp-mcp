@@ -70,8 +70,9 @@ Remember to swap back to the HTTP entry afterwards.
 | `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
 | ntfy silent | `NTFY_TOPIC_URL` unset on VPS, or topic not subscribed in the ntfy app. Check `docker exec whatsapp-mcp grep ntfy /data/wa-logs.txt`. |
 | Container `unhealthy` | Healthcheck hits `http://127.0.0.1:39002/health`. If the QR web server failed to bind (port clash), container flaps. `docker logs whatsapp-mcp`. |
-| `send_message` reports success but the message never arrives | Look for `send rejected by server` in `wa-logs.txt` (`src/ack-errors.ts`). WhatsApp refuses sends **asynchronously**, in an ack that lands after `sendMessage()` already resolved, so the tool cannot surface it in its return value. Code `463` = no trusted-contact (tc) token for that chat, `479` = stale device session. **Never re-send on a 463** — each attempt counts as another "reach out" and worsens the restriction; Baileys issues the token and recovers on its own. |
-| `error 463` for one specific contact only | Expected, not an account ban. WhatsApp gates 1:1 sends behind a tc token; established chats already carry one, so a chat that can't be established gets refused while every other chat keeps working. **Check the recipient number is still live before debugging anything else** — a line deactivated by the carrier (unpaid bill, cancelled plan) can never mint a token, which is exactly what produced the 2026-07-22 463s against `5531991234567`. Confirm scope with `grep 'send rejected by server' /data/wa-logs.txt`: if every `chat_jid` is the same, it's the contact, not you. An actual account restriction hits every chat, including your own self-chat. |
+| `send_message` reports success but the message never arrives | **Should no longer happen** — the send guards make a refused send throw (see "Send guards"). If you see it: check `SEND_ACK_WAIT_MS` isn't `0`, then look for `send rejected by server` in `wa-logs.txt` (`src/ack-errors.ts`). A refusal landing *later* than the wait window would still slip through — raise `SEND_ACK_WAIT_MS` and file it, since the observed latency is ~40 ms. Code `463` = wrong JID or no trusted-contact token, `479` = stale device session. **Never re-send on a 463.** |
+| `error 463` for one specific contact only | Expected, not an account ban. WhatsApp gates 1:1 sends behind a tc token; established chats already carry one, so a chat that can't be established gets refused while every other chat keeps working. **First suspect is a wrong recipient JID, not a restriction** — a number that isn't on WhatsApp can never mint a token, so it 463s forever while every real chat keeps working. **Never hand-build a phone JID; look the contact up** (`search_contacts`, or `SELECT jid,name,phone_number FROM contacts`) and send to the `@lid` it returns. Confirm scope with `grep 'send rejected by server' /data/wa-logs.txt`: if every `chat_jid` is the same, it's that recipient, not you. An actual account restriction hits every chat, including your own self-chat. |
+| `error 463` against a Brazilian mobile you typed by hand | Almost always the **extra-9 trap**. BR mobiles are normally `55 DD 9XXXX-XXXX` (13 digits), so agents "helpfully" insert a 9 into a 12-digit number — producing a *different* number that isn't on WhatsApp. This is exactly what caused every 463 on 2026-07-22: the real test number is `553191234567` (12 digits), and sends to `5531912344567` / `5531991234567` were both rejected while the same account delivered fine to the correct JID seconds later. Do not normalize BR numbers; resolve them from the contacts table. |
 | `send_file` fails with "cannot read local file …" or "ENOENT" | The MCP server runs in a remote container — it can't see your host disk. Use `POST /upload` to publish the file first, then pass the returned URL to `send_file`. See "Sending host-disk files" above. |
 | `POST /upload` returns 401 | `MCP_AUTH_TOKEN` mismatch — same secret as the MCP endpoint. |
 | `POST /upload` returns 415 | Bytes didn't match any known magic header. Re-encode the file or check it's not truncated; `sniffMimetype` only recognises JPEG/PNG/GIF/WebP/PDF/MP4/3GP/MOV/M4A/OGG/WAV/MP3. |
@@ -177,8 +178,18 @@ src/
 ├── upload-server.ts       # Standalone HTTP server accepting host-disk uploads (:39003) — bridges
 │                          #   the gap when send_file's file_path can't reach the agent's filesystem
 ├── ack-errors.ts          # classifyAckError/logAckErrors: server rejections of our own sends,
-│                          #   which arrive async on messages.update (status=ERROR) long after
-│                          #   sendMessage() resolved. Decodes 463 (missing tctoken) / 479
+│                          #   which arrive async on messages.update (status=ERROR) ~40ms after
+│                          #   sendMessage() resolved. Decodes 463 (missing tctoken) / 479.
+│                          #   formatAckErrorForAgent builds the agent-facing failure text
+├── ack-bus.ts             # In-process bus + bounded ring buffer for those rejections.
+│                          #   The buffer is the correctness mechanism, not an optimisation:
+│                          #   a waiter can only register AFTER sendMessage() returns the id,
+│                          #   so it races an ack already in flight (see the module docblock)
+├── recipient.ts           # Pre-send resolution: onWhatsApp() existence check + PN→LID
+│                          #   upgrade, with a 6h positive cache. Throws for a number that
+│                          #   is not on WhatsApp so no reach-out is spent
+├── send-guard.ts          # Shared send-path policy: getSendAckWaitMs / isPresendCheckEnabled
+│                          #   / assertSendAccepted. Kept out of the FastMCP tool bodies
 ├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
 │                          #   waitForInbound backs the wait_for_messages long-poll
 ├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
@@ -246,8 +257,37 @@ src/
 ### Sending
 | Tool | Description |
 |------|-------------|
-| `send_message` | Send text message to contact or group |
-| `send_file` | Send image/video/document/audio file. Accepts http(s) URL, base64 data: URL, or a server-side absolute path. To send a file from the host disk when the MCP runs remotely, upload it to `/upload` first (see "Sending host-disk files" below) and pass the returned URL. |
+| `send_message` | Send text message to contact or group. **Guarded** — see "Send guards" below: the recipient is verified before sending (a number not on WhatsApp is refused outright, a phone JID is upgraded to its canonical `@lid`), and a server-refused send **throws** instead of reporting success. |
+| `send_file` | Send image/video/document/audio file. Accepts http(s) URL, base64 data: URL, or a server-side absolute path. To send a file from the host disk when the MCP runs remotely, upload it to `/upload` first (see "Sending host-disk files" below) and pass the returned URL. Same send guards as `send_message`. |
+
+### Send guards
+
+`sendMessage()` resolving means "written to the socket", not "accepted". WhatsApp refuses
+sends **asynchronously** — measured at ~40 ms after the send (2026-07-22: 19:13:40.525
+stored → 19:13:40.565 rejected). For a long time that refusal was logged and nothing more,
+so `send_message` returned *"Message sent successfully"* for messages that never existed to
+the recipient. An agent had no way to learn its send died, and concluded the MCP was broken.
+
+Two guards now sit on both sending tools:
+
+1. **Pre-send** (`src/recipient.ts`) — `onWhatsApp()` verifies the recipient. Not on
+   WhatsApp → throws *before* sending, so no reach-out is spent. Exists → the send is
+   addressed to the canonical `@lid` the server returns. Groups / LIDs / newsletters skip
+   the lookup. A lookup that itself fails logs a warning and falls through to the JID as
+   given — a flaky lookup must never block a legitimate send.
+2. **Post-send** (`src/ack-bus.ts` + `src/send-guard.ts`) — the tool waits up to
+   `SEND_ACK_WAIT_MS` for a rejection ack and **throws** if one arrives, with the code and
+   an explicit `DO NOT RETRY`. The retry ban is load-bearing: throwing invites agents to try
+   again, and each 463 retry is another reach-out.
+
+> **Why `ack-bus.ts` keeps a ring buffer.** The message id only exists *after*
+> `sendMessage()` resolves, so a waiter registers into a race it may already have lost.
+> Every rejection is buffered first and `waitForAckError` checks the buffer *before*
+> registering — same lost-wakeup shape as `gapCheck` in `monitoring.ts`. Listener-only
+> delivery would work roughly half the time.
+
+Both guards are env-switchable (`SEND_ACK_WAIT_MS=0`, `SEND_PRESEND_CHECK=false`) to
+restore the old fire-and-forget behavior without a redeploy.
 
 ### Message Actions
 | Tool | Description |
@@ -497,6 +537,8 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`). |
 | `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. Hardcoded until 2nd customer. |
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
+| `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
+| `SEND_PRESEND_CHECK` | `true` | Verify the recipient exists via `onWhatsApp()` before sending, and upgrade a phone JID to its canonical `@lid`. Set `false` to send to exactly the JID given, unverified. |
 | `GROQ_API_KEY` | _(unset)_ | Preferred provider for audio transcription via `download_media`'s `transcribe` flag. Uses `whisper-large-v3-turbo`. |
 | `OPENAI_API_KEY` | _(unset)_ | Fallback for audio transcription (`whisper-1`) when `GROQ_API_KEY` is unset. |
 | `WHISPER_MODEL` | `whisper-large-v3-turbo` | Override the Groq Whisper model. Ignored when falling back to OpenAI. |
