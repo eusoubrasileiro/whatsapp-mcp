@@ -16,6 +16,7 @@ import {
 } from "@amiticia/baileys-client";
 import pLimit from "p-limit";
 import type P from "pino";
+import { logAckErrors } from "./ack-errors.ts";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -264,6 +265,13 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
             });
           }
         }
+      },
+
+      // A send WhatsApp refuses is reported asynchronously, after
+      // socket.sendMessage() already resolved — so send_message would otherwise
+      // report success for a message that never landed. Surface it in the logs.
+      onMessagesUpdate: async (updates) => {
+        logAckErrors(updates, logger);
       },
 
       onMessageUpsert: async (messages, type) => {
