@@ -1,0 +1,5 @@
+# Backfills the just-made commit hash into the most recent "(staged)" review-log
+# entry so show-review-log.mjs can correlate by hash on push, then prints a
+# one-line quality-gate delta. Both are best-effort and never block a commit.
+node scripts/backfill-review-log-commit.mjs 2>/dev/null || true
+node scripts/print-quality-delta.mjs 2>/dev/null || true
