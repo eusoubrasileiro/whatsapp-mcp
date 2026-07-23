@@ -41,11 +41,19 @@ export PUSH_LOCAL_SHA PUSH_REMOTE_SHA PUSH_REMOTE_REF
 #   2. pnpm lint       — biome, zero tolerance
 #   3. test:coverage   — full suite + coverage for the quality gate
 #   4. quality-gate    — deterministic metrics ratchet   (armed in its commit)
-#   5. security-review — Sonnet LLM reviewer, fail-closed (armed in its commit)
+#   5. security-review — Sonnet LLM reviewer, fail-closed
 #   6. show-review-log — print every verdict in the pushed range for eyeballing
 #
-# Stages 4-6 are added as their scripts land. There is no e2e/Playwright block:
-# this is a single MCP server, not a web app.
+# There is no e2e/Playwright block: this is a single MCP server, not a web app.
 pnpm exec tsc --noEmit
+pnpm test:harness
 pnpm lint
 pnpm test:coverage
+pnpm quality-gate
+node scripts/security-review.mjs
+
+echo ""
+echo "=== Security review log (commits being pushed) ==="
+node scripts/show-review-log.mjs
+echo "==================================================="
+echo "Inspect above. Ctrl+C to abort if anything looks wrong."

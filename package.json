@@ -22,6 +22,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:harness": "node --test \"scripts/lib/*.test.mjs\"",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "quality-gate": "node scripts/quality-gate.mjs",
