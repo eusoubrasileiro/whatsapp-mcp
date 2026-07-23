@@ -26,6 +26,11 @@ data/
 .env.*
 !.env.example
 
+# Agent harness scratch space (settings.json IS committed; the rest is not)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/plans/
+
 # OS generated files
 .DS_Store
 Thumbs.db
