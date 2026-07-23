@@ -35,7 +35,7 @@ Verify:
 ```bash
 claude mcp list          # whatsapp: ✓ Connected
 # In a session:
-/mcp                     # expects the 20 whatsapp tools listed
+/mcp                     # expects the 23 whatsapp tools listed
 ```
 
 The same JSON shape works for Claude Desktop (`~/.config/Claude/claude_desktop_config.json`) and Cursor (`~/.cursor/mcp.json`). See `examples/mcp-clients.md` for all three.
@@ -130,14 +130,38 @@ Red-Green-Refactor is mandatory. Write a failing test FIRST, then implement, the
 - **Never mock the module under test.**
 - Priority: happy path → edge cases → guard clauses → error paths
 
-### Pre-commit checklist (MANDATORY)
+### Pre-Commit Stack (enforced by husky — standards §3)
 
-```bash
-pnpm test          # Must pass
-pnpm typecheck     # Must pass
-```
+As of the engineering-harness install (2026-07-22) the gates below are **git
+hooks**, not an honour-system checklist. `never skip hooks` now has teeth.
 
-**DO NOT COMMIT if any gate fails.** Fix the root cause, never skip hooks.
+**`pre-commit` (fast, ~15-30 s — runs on every commit):**
+
+1. `lint-staged` — biome auto-fix on staged files
+2. `pnpm exec tsc --noEmit` — full-project typecheck
+3. `pnpm test:coverage --silent` — full suite + coverage
+4. `pnpm quality-gate` — deterministic metrics ratchet vs `quality-baseline.json`
+
+**`commit-msg`:** commitlint (Conventional Commits). `bug:` / `hotfix:` are
+valid types and signal the reviewer to require a regression test.
+
+**`pre-push` (heavy — full safety net before the branch leaves the machine):**
+tsc → `pnpm test:harness` → `pnpm lint` → `pnpm test:coverage` →
+`pnpm quality-gate` → **`security-review.mjs`** (Sonnet LLM reviewer,
+fail-closed) → `show-review-log.mjs`.
+
+The LLM reviewer is **pre-push only** — the fast suite keeps commits
+interactive, and a Claude CLI outage can block a push (recoverable) but never
+a commit. Verdicts are logged to `.quality-gate/review-log.jsonl`.
+
+**Never** `git commit --no-verify` / `git push --no-verify` / `--force` — the
+`.claude/settings.json` `deny` tier blocks them outright. Fix the root cause.
+
+> **Bootstrap note.** The reviewer rejects any commit that touches its own
+> protected paths (`.husky/**`, `scripts/lib/**`, every `*.md`, …). The commits
+> that *installed* the harness necessarily do — so the harness-install branch
+> itself required human ratification to push. That is the fail-closed design
+> working, not a bug.
 
 ---
 
@@ -148,6 +172,13 @@ pnpm typecheck     # Must pass
 | `pnpm start` | Run TypeScript directly with Node |
 | `pnpm typecheck` | Type check with tsc |
 | `pnpm test` | Run tests with vitest |
+| `pnpm test:coverage` | Tests + coverage (feeds the quality gate) |
+| `pnpm test:harness` | `node --test` unit tests for the reviewer libs (`scripts/lib/*.test.mjs`) |
+| `pnpm lint` / `pnpm lint:fix` | Biome check / auto-fix |
+| `pnpm quality-gate` | Metrics ratchet vs `quality-baseline.json` (exit 1 on regression) |
+| `pnpm quality-gate:update` | Re-snapshot the baseline (locks in improvements; `ask`-tier file) |
+| `pnpm dispatch <slug>` | Materialise an isolated agent worktree (see Multi-Agent Dispatch) |
+| `pnpm dispatch:cleanup --slug <slug> [--force]` | Tear a dispatched worktree down |
 
 ### Known pre-existing test / typecheck failures
 
@@ -158,12 +189,65 @@ pnpm typecheck     # Must pass
 
 These failures are **not regressions** — they exist on `main` and every branch. Fix by running `pnpm install` inside the monorepo root that includes the sibling `baileys-client/` package (or by symlinking `../baileys-client` so workspace resolution finds it).
 
+## Critical Files (require human approval)
+
+The `ask` tier in `.claude/settings.json` — agents must get human approval before editing
+any of these, and the pre-push LLM reviewer independently flags edits to them. **Keep the
+three lists in sync**: this section, the `ask` tier, and the critical-paths block inside
+`scripts/security-review.mjs`. Drift between them makes the reviewer reject what settings
+allow (or worse, the reverse).
+
+| Group | Paths | Why |
+|---|---|---|
+| The harness itself | `.husky/**`, `.claude/settings.json`, `commitlint.config.cjs`, `biome.json`, `quality-baseline.json`, `scripts/quality-gate.mjs`, `scripts/security-review.mjs`, `scripts/lib/**`, `scripts/dispatch-worktree.sh`, `scripts/cleanup-worktrees.sh` | An agent that can edit the gate can delete the gate |
+| Send guards | `src/send-guard.ts`, `src/recipient.ts`, `src/ack-bus.ts`, `src/ack-errors.ts` | Weakening these re-opens the "success reported, message never sent" failure (2026-07-22) — and each bad retry is a real WhatsApp reach-out |
+| Data layer | `src/db/schema.ts`, `src/database.ts` | Schema/migration mistakes corrupt the production message store |
+| Operator scripts | `scripts/backup.sh`, `scripts/restore.sh`, `scripts/merge-db.sh` | Destructive against the live `/data` volume |
+| Build & test contract | `Dockerfile`, `vitest.config.ts` | Deploy artifact + coverage-threshold definitions |
+| All docs | `**/*.md` | Company-wide rule (ratified 2026-07-21): docs steer agents, so every `.md` is a critical file |
+
+## Multi-Agent Dispatch
+
+`pnpm dispatch <slug>` materialises an isolated git worktree at
+`.claude/worktrees/<slug>` on branch `agent/<slug>`, seeds the agent contract
+(`scripts/agent-prompt.md` → the worktree), and expects a task spec in
+`.claude/PLAN.md` — the dispatched agent aborts if the plan is missing.
+
+**Library-sized variant** (adapted from `libs/baileys-client`): no Postgres to clone, no
+port quartet to allocate. One repo-specific twist: the worktree gets a **symlinked
+`node_modules`** from the parent checkout instead of a fresh `pnpm install`, because the
+`link:../baileys-client` dependency cannot resolve from `.claude/worktrees/<slug>/`
+(the relative path breaks two directories down). Don't "fix" this with an install inside
+the worktree — it will fail.
+
+Teardown: `pnpm dispatch:cleanup --slug <slug>` (add `--force` to discard a dirty
+worktree or an unmerged branch). Worktrees and plan files are gitignored so concurrent
+leaders never dirty each other's trees.
+
+## What We Won't Build (deliberate deferrals)
+
+Recorded so a future agent reads these as decisions, not oversights:
+
+- **GitHub Actions CI** — deferred (ratified 2026-07-22). Blocked on a deploy key for the
+  private sibling `@amiticia/baileys-client`; until then the pre-push gate is the only
+  machine check, and nothing verifies a push from a hookless machine. Revisit when the
+  sibling is fetchable in CI.
+- **Fixing the sibling-package failure mode** — `pnpm test`/`pnpm typecheck` still fail in
+  checkouts without `../baileys-client` (see "Known pre-existing failures" above). Same
+  root cause as the CI deferral; fixed together or not at all.
+- **Splitting `src/database.ts` (~1 200 lines)** — the quality-gate ratchet freezes it at
+  today's size so it cannot grow; refactoring it is separate work with its own tests.
+- **Raising coverage thresholds** — the ratchet raises the floor automatically as coverage
+  improves; a deliberate jump in `vitest.config.ts` is its own decision.
+- **`REVIEW_BACKEND=deepseek` routing** — inert in the reviewer template; activated
+  workspace-wide when standards §5 says so, not per-repo.
+
 ## Architecture
 
 ```
 src/
 ├── main.ts                # Entry point, createAppLogger(), graceful shutdown, startup order
-├── mcp.ts                 # MCP server, tool registration (20 tools); delegates to actions.ts
+├── mcp.ts                 # MCP server, tool registration (23 tools); delegates to actions.ts
 ├── actions.ts             # Application-layer use cases (executeLogout, executeGetGroupInfo,
 │                          #   executeReactToMessage, executeDeleteMessage, executeDownloadMedia,
 │                          #   executeMarkChatRead, assertSocketActive). Testable without FastMCP.
