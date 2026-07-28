@@ -4,8 +4,27 @@ import { z } from "zod";
 import { assertSocketActive } from "../../actions.ts";
 import { resolveRecipient } from "../../recipient.ts";
 import { assertSendAccepted, getSendAckWaitMs, isPresendCheckEnabled } from "../../send-guard.ts";
+import { applySendPolicy } from "../../send-policy.ts";
 import { sendWhatsAppMedia, sendWhatsAppMessage } from "../../whatsapp.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
+
+const ALLOW_COLD_DESCRIPTION =
+  "Send even though this contact has never messaged this account (a cold first contact). " +
+  "Cold reach-outs are what get a WhatsApp account restricted, so use this ONLY when the " +
+  "person explicitly asked to be contacted — never to work around the refusal in bulk. " +
+  "Default false.";
+
+/**
+ * The account's own JIDs — phone-number (`user.id`) and LID (`user.lid`).
+ *
+ * Same source `whatsapp.ts` uses to detect the self-chat on the inbound side.
+ * Here it keeps the cold-contact guard from refusing a reply into your own
+ * self-chat, which by construction has no inbound history.
+ */
+function ownJidsOf(socket: ReturnType<typeof assertSocketActive>): string[] {
+  const user = socket.user as { id?: string; lid?: string } | undefined;
+  return [user?.id, user?.lid].filter((jid): jid is string => Boolean(jid)).map(normalizeJid);
+}
 
 export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger, waLogger } = deps;
@@ -27,14 +46,17 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
       "Send a text message to a contact or group. The recipient is verified before sending: " +
       "a number that is not on WhatsApp is rejected outright, and a phone JID is upgraded to " +
       "its canonical @lid. If the server refuses the message, this tool THROWS rather than " +
-      "reporting success — do not build phone JIDs by hand, resolve them with search_contacts.",
+      "reporting success — do not build phone JIDs by hand, resolve them with search_contacts. " +
+      "Sends are also paced and a contact who has never messaged this account is refused, " +
+      "because cold reach-outs get the number restricted.",
     parameters: z.object({
       recipient: z
         .string()
         .describe("Recipient JID (e.g., 'number@s.whatsapp.net' or 'group@g.us')"),
       message: z.string().min(1).describe("The text message to send"),
+      allow_cold_contact: z.boolean().optional().default(false).describe(ALLOW_COLD_DESCRIPTION),
     }),
-    execute: async ({ recipient, message }) => {
+    execute: async ({ recipient, message, allow_cold_contact }) => {
       mcpLogger.info(`[MCP Tool] Executing send_message to ${recipient}`);
       const socket = assertSocketActive();
 
@@ -44,6 +66,16 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
       }
 
       const target = await resolveTarget(socket, normalizedRecipient);
+      await applySendPolicy({
+        socket,
+        jid: target,
+        logger: waLogger,
+        isText: true,
+        text: message,
+        allowCold: allow_cold_contact,
+        ownJids: ownJidsOf(socket),
+      });
+
       const result = await sendWhatsAppMessage(waLogger, target, message);
 
       if (result?.key?.id) {
@@ -76,13 +108,23 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
         .describe(
           "Type of the media. For 'image': only JPEG/PNG bytes are accepted (WebP rejected — convert to PNG first). For 'video': MP4/3GPP only. For 'audio': AAC/AMR/MP3/M4A/OGG. (default: image)",
         ),
+      allow_cold_contact: z.boolean().optional().default(false).describe(ALLOW_COLD_DESCRIPTION),
     }),
-    execute: async ({ recipient, file_path, caption, type }) => {
+    execute: async ({ recipient, file_path, caption, type, allow_cold_contact }) => {
       mcpLogger.info(`[MCP Tool] Executing send_file to ${recipient}: ${file_path}`);
       const socket = assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);
       const target = await resolveTarget(socket, normalizedRecipient);
+      // isText: false — media has no plausible typing indicator, so none is faked.
+      await applySendPolicy({
+        socket,
+        jid: target,
+        logger: waLogger,
+        isText: false,
+        allowCold: allow_cold_contact,
+        ownJids: ownJidsOf(socket),
+      });
 
       let result: Awaited<ReturnType<typeof sendWhatsAppMedia>>;
       try {
