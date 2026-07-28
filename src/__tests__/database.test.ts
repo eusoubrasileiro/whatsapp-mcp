@@ -24,17 +24,7 @@ import {
   storeMessage,
   updateMessageMediaObjectKey,
 } from "../database.ts";
-
-function makeMsg(
-  overrides: Partial<Message> & { id: string; chat_jid: string; content: string },
-): Message {
-  return {
-    timestamp: new Date("2025-06-01T12:00:00Z"),
-    is_from_me: false,
-    sender: "5511999999999@s.whatsapp.net",
-    ...overrides,
-  };
-}
+import { makeMessage } from "./helpers/make-message.ts";
 
 describe("database", () => {
   beforeEach(() => {
@@ -73,8 +63,8 @@ describe("database", () => {
 
   describe("storeMessage / getMessages", () => {
     it("stores and retrieves messages", () => {
-      storeMessage(makeMsg({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Hello" }));
-      storeMessage(makeMsg({ id: "msg2", chat_jid: "chat1@s.whatsapp.net", content: "World" }));
+      storeMessage(makeMessage({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Hello" }));
+      storeMessage(makeMessage({ id: "msg2", chat_jid: "chat1@s.whatsapp.net", content: "World" }));
 
       const msgs = getMessages("chat1@s.whatsapp.net", 10, 0);
       expect(msgs).toHaveLength(2);
@@ -85,7 +75,7 @@ describe("database", () => {
     it("paginates correctly", () => {
       for (let i = 0; i < 5; i++) {
         storeMessage(
-          makeMsg({
+          makeMessage({
             id: `msg${i}`,
             chat_jid: "chat1@s.whatsapp.net",
             content: `Message ${i}`,
@@ -107,8 +97,12 @@ describe("database", () => {
     });
 
     it("upserts messages with same id+chat_jid", () => {
-      storeMessage(makeMsg({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Original" }));
-      storeMessage(makeMsg({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Updated" }));
+      storeMessage(
+        makeMessage({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Original" }),
+      );
+      storeMessage(
+        makeMessage({ id: "msg1", chat_jid: "chat1@s.whatsapp.net", content: "Updated" }),
+      );
       const msgs = getMessages("chat1@s.whatsapp.net", 10, 0);
       expect(msgs).toHaveLength(1);
       expect(msgs[0].content).toBe("Updated");
@@ -155,7 +149,7 @@ describe("database", () => {
 
     it("includes last message when requested", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "msg1",
           chat_jid: "chat1@s.whatsapp.net",
           content: "Last message content",
@@ -175,7 +169,7 @@ describe("database", () => {
     it("returns context around a target message", () => {
       for (let i = 0; i < 10; i++) {
         storeMessage(
-          makeMsg({
+          makeMessage({
             id: `msg${i}`,
             chat_jid: "chat@s.whatsapp.net",
             content: `Message ${i}`,
@@ -254,7 +248,7 @@ describe("database", () => {
   describe("getMessagesWithDateFilter", () => {
     beforeEach(() => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "jan",
           chat_jid: "chat@s.whatsapp.net",
           content: "January",
@@ -262,7 +256,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "mar",
           chat_jid: "chat@s.whatsapp.net",
           content: "March",
@@ -270,7 +264,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "jun",
           chat_jid: "chat@s.whatsapp.net",
           content: "June",
@@ -324,7 +318,7 @@ describe("database", () => {
 
     it("filters across all chats when chatJid is null", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "other",
           chat_jid: "other@s.whatsapp.net",
           content: "Other",
@@ -347,7 +341,7 @@ describe("database", () => {
   describe("getMessagesSince", () => {
     beforeEach(() => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "a",
           chat_jid: "c1@s.whatsapp.net",
           content: "A",
@@ -355,7 +349,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "b",
           chat_jid: "c1@s.whatsapp.net",
           content: "B",
@@ -363,7 +357,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "c",
           chat_jid: "c2@s.whatsapp.net",
           content: "C",
@@ -403,7 +397,7 @@ describe("database", () => {
       recordJidMapping(pn, lid);
       storeChat({ jid: lid, name: "Aliased" });
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "x",
           chat_jid: lid,
           content: "via lid",
@@ -422,7 +416,7 @@ describe("database", () => {
   describe("getMessagesDelta", () => {
     beforeEach(() => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "a",
           chat_jid: "c1@s.whatsapp.net",
           content: "A",
@@ -430,7 +424,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "b",
           chat_jid: "c1@s.whatsapp.net",
           content: "B",
@@ -438,7 +432,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "c",
           chat_jid: "c2@s.whatsapp.net",
           content: "C",
@@ -492,9 +486,15 @@ describe("database", () => {
 
   describe("searchMessages", () => {
     beforeEach(() => {
-      storeMessage(makeMsg({ id: "m1", chat_jid: "c1@s.whatsapp.net", content: "Hello world" }));
-      storeMessage(makeMsg({ id: "m2", chat_jid: "c1@s.whatsapp.net", content: "Goodbye world" }));
-      storeMessage(makeMsg({ id: "m3", chat_jid: "c2@s.whatsapp.net", content: "Hello again" }));
+      storeMessage(
+        makeMessage({ id: "m1", chat_jid: "c1@s.whatsapp.net", content: "Hello world" }),
+      );
+      storeMessage(
+        makeMessage({ id: "m2", chat_jid: "c1@s.whatsapp.net", content: "Goodbye world" }),
+      );
+      storeMessage(
+        makeMessage({ id: "m3", chat_jid: "c2@s.whatsapp.net", content: "Hello again" }),
+      );
     });
 
     it("searches across all chats", () => {
@@ -515,7 +515,7 @@ describe("database", () => {
 
     it("supports date filtering in search", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "m4",
           chat_jid: "c1@s.whatsapp.net",
           content: "Hello old",
@@ -532,7 +532,7 @@ describe("database", () => {
   describe("media metadata", () => {
     it("stores and retrieves media metadata", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "media1",
           chat_jid: "chat@s.whatsapp.net",
           content: "[Image] Nice photo",
@@ -558,7 +558,7 @@ describe("database", () => {
 
     it("preserves media metadata on upsert with COALESCE", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "media2",
           chat_jid: "chat@s.whatsapp.net",
           content: "[Image]",
@@ -570,7 +570,7 @@ describe("database", () => {
 
       // Re-store without media fields (simulating a text-only update)
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "media2",
           chat_jid: "chat@s.whatsapp.net",
           content: "[Image] Updated",
@@ -585,7 +585,7 @@ describe("database", () => {
 
     it("text messages have null media fields", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "text1",
           chat_jid: "chat@s.whatsapp.net",
           content: "Just text",
@@ -604,7 +604,7 @@ describe("database", () => {
   describe("getMessageById", () => {
     it("retrieves a specific message by id and chat_jid", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "specific1",
           chat_jid: "chat@s.whatsapp.net",
           content: "Find me",
@@ -626,7 +626,7 @@ describe("database", () => {
 
     it("returns null when id matches but chat_jid differs", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "msg_in_chat_a",
           chat_jid: "chatA@s.whatsapp.net",
           content: "In chat A",
@@ -643,7 +643,7 @@ describe("database", () => {
   describe("getMessagesAround across chats", () => {
     it("returns the row from the requested chat when the same message id exists in two chats", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "shared_id",
           chat_jid: "chatA@s.whatsapp.net",
           content: "From A",
@@ -651,7 +651,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "shared_id",
           chat_jid: "chatB@s.whatsapp.net",
           content: "From B",
@@ -659,7 +659,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "ctx_a_before",
           chat_jid: "chatA@s.whatsapp.net",
           content: "ctx-A-before",
@@ -667,7 +667,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "ctx_a_after",
           chat_jid: "chatA@s.whatsapp.net",
           content: "ctx-A-after",
@@ -691,7 +691,7 @@ describe("database", () => {
 
     it("returns null target when message id exists only in a different chat", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "only_in_a",
           chat_jid: "chatA@s.whatsapp.net",
           content: "x",
@@ -707,7 +707,7 @@ describe("database", () => {
   describe("getLatestMessage", () => {
     it("returns the most recent message of a chat", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "old",
           chat_jid: "c@s.whatsapp.net",
           content: "old",
@@ -715,7 +715,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "newest",
           chat_jid: "c@s.whatsapp.net",
           content: "newest",
@@ -723,7 +723,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "mid",
           chat_jid: "c@s.whatsapp.net",
           content: "mid",
@@ -772,7 +772,7 @@ describe("database", () => {
   describe("getChats last-message metadata", () => {
     it("returns last_is_from_me for the most recent message", () => {
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "m1",
           chat_jid: "c@s.whatsapp.net",
           content: "older",
@@ -782,7 +782,7 @@ describe("database", () => {
         }),
       );
       storeMessage(
-        makeMsg({
+        makeMessage({
           id: "m2",
           chat_jid: "c@s.whatsapp.net",
           content: "newest",
@@ -804,7 +804,7 @@ describe("database", () => {
     it("paginates results across two pages", () => {
       for (let i = 0; i < 5; i++) {
         storeMessage(
-          makeMsg({
+          makeMessage({
             id: `p${i}`,
             chat_jid: "c@s.whatsapp.net",
             content: `M${i}`,
@@ -865,7 +865,7 @@ describe("updateMessageMediaObjectKey", () => {
 
   it("persists media_object_key and getMessageById returns it", () => {
     storeMessage(
-      makeMsg({
+      makeMessage({
         id: "mok1",
         chat_jid: "chat@s.whatsapp.net",
         content: "photo",
@@ -881,8 +881,8 @@ describe("updateMessageMediaObjectKey", () => {
   });
 
   it("does not overwrite an unrelated message", () => {
-    storeMessage(makeMsg({ id: "mok1", chat_jid: "chat@s.whatsapp.net", content: "a" }));
-    storeMessage(makeMsg({ id: "mok2", chat_jid: "chat@s.whatsapp.net", content: "b" }));
+    storeMessage(makeMessage({ id: "mok1", chat_jid: "chat@s.whatsapp.net", content: "a" }));
+    storeMessage(makeMessage({ id: "mok2", chat_jid: "chat@s.whatsapp.net", content: "b" }));
 
     updateMessageMediaObjectKey("mok1", "chat@s.whatsapp.net", "t/default/jid/mok1.jpg");
 
