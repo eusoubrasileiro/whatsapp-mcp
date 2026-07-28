@@ -193,7 +193,7 @@ function buildPrompt(diff, report, files, commitMessage, whyParagraph) {
 - Source files changed but no test files changed AND the diff is NOT purely cosmetic (renames / comments / formatting / dead-code removal / pure simplification) → "source change requires test update; explain or add test".
 - Test assertion count decreased without a corresponding source-module deletion.
 - \`.skip(\`, \`.only(\`, \`xit(\`, or \`xdescribe(\` introduced.
-- \`.husky/**\`, \`.claude/settings.json\`, \`commitlint.config.cjs\`, \`biome.json\`, \`scripts/quality-gate.mjs\`, \`scripts/security-review.mjs\`, or \`scripts/lib/**\` modified — the harness must not weaken itself.
+- \`.husky/**\`, \`.claude/settings.json\`, \`commitlint.config.cjs\`, \`biome.json\`, \`scripts/quality-gate.mjs\`, \`scripts/security-review.mjs\`, \`scripts/lib/**\`, \`scripts/dispatch-worktree.sh\`, or \`scripts/cleanup-worktrees.sh\` modified — the harness must not weaken itself.
 - \`quality-baseline.json\` loosened with no visible source-level improvement explaining it.
 - Any of these critical paths modified — these require human approval, never unattended agent edits (they mirror the \`.claude/settings.json\` ask tier):
   - \`src/send-guard.ts\`, \`src/recipient.ts\`, \`src/ack-bus.ts\`, \`src/ack-errors.ts\` — the send-path guards that stop an agent believing a refused message was delivered.
@@ -391,7 +391,9 @@ function main() {
     commit: "(staged)",
     verdict: verdict.verdict,
     // Mirrors the .claude/settings.json ask tier + the critical-paths prompt
-    // block above. Keep the three in sync (standards §6).
+    // block above. Keep the three in sync (standards §6). Deliberately a
+    // SUPERSET of the settings.json ask tier: it additionally tags
+    // `src/__tests__/` so test edits get labeled in the review log.
     sensitiveFiles: pushedFiles.filter(
       (f) =>
         f.startsWith("src/__tests__/") ||
@@ -403,6 +405,8 @@ function main() {
         f === "quality-baseline.json" ||
         f === "scripts/quality-gate.mjs" ||
         f === "scripts/security-review.mjs" ||
+        f === "scripts/dispatch-worktree.sh" ||
+        f === "scripts/cleanup-worktrees.sh" ||
         f === "src/send-guard.ts" ||
         f === "src/recipient.ts" ||
         f === "src/ack-bus.ts" ||

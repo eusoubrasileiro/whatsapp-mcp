@@ -38,11 +38,12 @@ export PUSH_LOCAL_SHA PUSH_REMOTE_SHA PUSH_REMOTE_REF
 
 # Heavy gate (full safety net before code leaves the machine). Stages:
 #   1. tsc --noEmit    — full typecheck
-#   2. pnpm lint       — biome, zero tolerance
-#   3. test:coverage   — full suite + coverage for the quality gate
-#   4. quality-gate    — deterministic metrics ratchet   (armed in its commit)
-#   5. security-review — Sonnet LLM reviewer, fail-closed
-#   6. show-review-log — print every verdict in the pushed range for eyeballing
+#   2. test:harness    — node --test unit tests for the reviewer libs
+#   3. pnpm lint       — biome, zero tolerance
+#   4. test:coverage   — full suite + coverage for the quality gate
+#   5. quality-gate    — deterministic metrics ratchet   (armed in its commit)
+#   6. security-review — Sonnet LLM reviewer, fail-closed
+#   7. show-review-log — print every verdict in the pushed range for eyeballing
 #
 # There is no e2e/Playwright block: this is a single MCP server, not a web app.
 pnpm exec tsc --noEmit
