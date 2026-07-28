@@ -86,7 +86,7 @@ export type Message = {
 let sqliteInstance: Database.Database | null = null;
 let dbInstance: BetterSQLite3Database<typeof schema> | null = null;
 
-function getDb() {
+export function getDb() {
   if (!dbInstance) {
     throw new Error("Database not initialized. Call initializeDatabase() first.");
   }
