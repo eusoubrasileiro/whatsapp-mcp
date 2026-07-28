@@ -18,7 +18,8 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git show *)",
-      "Bash(curl -s http://127.0.0.1:* *)",
+      "Bash(curl -s http://127.0.0.1:*)",
+      "Bash(curl -sS http://127.0.0.1:*)",
       "mcp__plugin_context7_context7__resolve-library-id",
       "mcp__plugin_context7_context7__query-docs"
     ],
