@@ -30,6 +30,7 @@ import {
   storeContact,
   storeMessage,
 } from "./database.ts";
+import { readNonNegativeNumber } from "./env-config.ts";
 import { emitInbound } from "./inbound-bus.ts";
 import { assertMimeForType, resolveMediaInput } from "./media-input.ts";
 import { createNtfy, type NtfyConfig } from "./ntfy.ts";
@@ -128,6 +129,57 @@ async function reconcileLidBacklog(logger: P.Logger): Promise<void> {
 // Prevents concurrent startWhatsAppConnection() calls from racing
 let connectionPromise: Promise<void> | null = null;
 
+/**
+ * Monotonic id for connection attempts. A capped attempt keeps running after we
+ * stop waiting on it, so a hung `startConnection` that finally resolves must not
+ * clobber the socket a newer attempt already established.
+ */
+let connectionAttemptId = 0;
+
+/**
+ * Ceiling on a single connection attempt, in ms.
+ *
+ * Without a cap, a `startConnection` that never settles wedges the server for
+ * good: `connectionPromise` stays set, so every later caller — including the
+ * lazy reconnect behind `get_connection_status` — awaits a dead promise and the
+ * self-heal path is silently disabled (observed in production 2026-07-28, 21 h
+ * offline). `0` restores the uncapped behavior; junk reads as the default, so a
+ * typo can never disable the cap.
+ */
+export function getConnectTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  return readNonNegativeNumber(env.ENGINE_CONNECT_TIMEOUT_MS, 60_000);
+}
+
+/**
+ * Reject if `attempt` has not settled within `timeoutMs`. The attempt itself is
+ * NOT cancellable (Baileys owns the socket) — it keeps running, and the
+ * attempt-id guard in `doStartConnection` neutralises it if it lands late.
+ */
+function withConnectTimeout(attempt: Promise<void>, timeoutMs: number): Promise<void> {
+  if (timeoutMs <= 0) return attempt;
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `WhatsApp did not connect within ${timeoutMs} ms — connection attempt abandoned. ` +
+            "The next call starts a fresh attempt. " +
+            "Tune the cap with ENGINE_CONNECT_TIMEOUT_MS (0 disables it).",
+        ),
+      );
+    }, timeoutMs);
+    attempt.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 // Limits parallel media downloads to prevent overwhelming the WhatsApp socket
 const downloadLimit = pLimit(2);
 
@@ -143,15 +195,18 @@ export async function startWhatsAppConnection(logger: P.Logger): Promise<void> {
     return;
   }
 
-  connectionPromise = doStartConnection(logger);
+  const attemptId = ++connectionAttemptId;
+  const attempt = withConnectTimeout(doStartConnection(logger, attemptId), getConnectTimeoutMs());
+  connectionPromise = attempt;
   try {
-    await connectionPromise;
+    await attempt;
   } finally {
-    connectionPromise = null;
+    // Identity-guarded: only the attempt that owns the slot may clear it.
+    if (connectionPromise === attempt) connectionPromise = null;
   }
 }
 
-async function doStartConnection(logger: P.Logger): Promise<void> {
+async function doStartConnection(logger: P.Logger, attemptId: number): Promise<void> {
   const ntfyConfig: NtfyConfig | null = process.env.NTFY_TOPIC_URL
     ? {
         topicUrl: process.env.NTFY_TOPIC_URL,
@@ -347,6 +402,21 @@ async function doStartConnection(logger: P.Logger): Promise<void> {
   };
 
   const result = await startConnection(config);
+
+  // A timed-out attempt landing after a newer one took over must not install its
+  // socket — two live sockets on the same creds fight over the WhatsApp session.
+  if (attemptId !== connectionAttemptId) {
+    logger.warn(
+      { attemptId, currentAttempt: connectionAttemptId },
+      "Discarding a superseded connection attempt (it settled after the timeout).",
+    );
+    try {
+      result.socketState.socket?.end(undefined);
+    } catch (err) {
+      logger.warn({ err }, "Failed to close the superseded socket");
+    }
+    return;
+  }
 
   // Reassign module-level state so mcp.ts sees the live objects
   connectionState = result.connectionState;

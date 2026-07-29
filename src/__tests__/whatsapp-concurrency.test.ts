@@ -1,5 +1,5 @@
 import type { ConnectionState, SocketState } from "@amiticia/baileys-client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -39,6 +39,7 @@ import { downloadMedia as baileysDownloadMedia, startConnection } from "@amitici
 import {
   connectionState,
   downloadMedia,
+  getConnectTimeoutMs,
   socketState,
   startWhatsAppConnection,
 } from "../whatsapp.ts";
@@ -139,6 +140,132 @@ describe("startWhatsAppConnection guard", () => {
     socketState.socket = { fake: true } as any;
     await startWhatsAppConnection(mockLogger);
     expect(startConnection).not.toHaveBeenCalled();
+  });
+});
+
+type StartConnectionResult = Awaited<ReturnType<typeof startConnection>>;
+
+// ── Connection-attempt timeout (anti-wedge) ────────────────────────
+
+describe("getConnectTimeoutMs", () => {
+  it("defaults to 60 seconds when unset", () => {
+    expect(getConnectTimeoutMs({})).toBe(60_000);
+  });
+
+  it("reads an explicit value from ENGINE_CONNECT_TIMEOUT_MS", () => {
+    expect(getConnectTimeoutMs({ ENGINE_CONNECT_TIMEOUT_MS: "5000" })).toBe(5000);
+  });
+
+  it("treats 0 as 'no cap'", () => {
+    expect(getConnectTimeoutMs({ ENGINE_CONNECT_TIMEOUT_MS: "0" })).toBe(0);
+  });
+
+  it("falls back to the default for junk so a typo cannot disable the cap", () => {
+    expect(getConnectTimeoutMs({ ENGINE_CONNECT_TIMEOUT_MS: "banana" })).toBe(60_000);
+    expect(getConnectTimeoutMs({ ENGINE_CONNECT_TIMEOUT_MS: "-1" })).toBe(60_000);
+  });
+});
+
+describe("startWhatsAppConnection timeout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connectionState.status = "disconnected";
+    connectionState.qrCode = null;
+    connectionState.qrAscii = null;
+    connectionState.user = null;
+    socketState.socket = null;
+    process.env.ENGINE_CONNECT_TIMEOUT_MS = "20";
+  });
+
+  afterEach(() => {
+    delete process.env.ENGINE_CONNECT_TIMEOUT_MS;
+  });
+
+  /** A result whose socket is identity-checkable, so a test can tell which
+   *  attempt installed the live socket. */
+  function taggedResult(tag: string) {
+    const socket = { tag, end: vi.fn() };
+    const result = {
+      ...mockStartConnectionResult(),
+      socketState: { socket },
+    } as unknown as StartConnectionResult;
+    return { result, socket };
+  }
+
+  /** Identity assertion without widening the socket type. */
+  function expectLiveSocket(socket: object) {
+    expect<unknown>(socketState.socket).toBe(socket);
+  }
+
+  it("rejects with the env var named when the connection attempt hangs", async () => {
+    const hung = createDeferred<StartConnectionResult>();
+    vi.mocked(startConnection).mockReturnValue(hung.promise);
+
+    await expect(startWhatsAppConnection(mockLogger)).rejects.toThrow(/ENGINE_CONNECT_TIMEOUT_MS/);
+  });
+
+  it("starts a fresh attempt after a hang instead of awaiting the dead promise", async () => {
+    const hung = createDeferred<StartConnectionResult>();
+    vi.mocked(startConnection).mockReturnValueOnce(hung.promise);
+
+    await expect(startWhatsAppConnection(mockLogger)).rejects.toThrow(/did not connect/i);
+    expect(startConnection).toHaveBeenCalledTimes(1);
+
+    // The wedge: before the fix, connectionPromise stayed set forever and this
+    // call resolved off the dead promise without ever reconnecting.
+    const second = taggedResult("second");
+    vi.mocked(startConnection).mockResolvedValueOnce(second.result);
+    await startWhatsAppConnection(mockLogger);
+
+    expect(startConnection).toHaveBeenCalledTimes(2);
+    expectLiveSocket(second.socket);
+  });
+
+  it("discards a superseded attempt that settles late, keeping the live socket", async () => {
+    const hung = createDeferred<StartConnectionResult>();
+    vi.mocked(startConnection).mockReturnValueOnce(hung.promise);
+    await expect(startWhatsAppConnection(mockLogger)).rejects.toThrow(/did not connect/i);
+
+    const second = taggedResult("second");
+    vi.mocked(startConnection).mockResolvedValueOnce(second.result);
+    await startWhatsAppConnection(mockLogger);
+
+    // The hung attempt finally comes back — it must not clobber the live socket,
+    // and its orphan socket is closed so two sockets can't share the creds.
+    const late = taggedResult("late");
+    hung.resolve(late.result);
+    await vi.waitFor(() => expect(late.socket.end).toHaveBeenCalled());
+
+    expectLiveSocket(second.socket);
+  });
+
+  it("never times out when ENGINE_CONNECT_TIMEOUT_MS is 0", async () => {
+    process.env.ENGINE_CONNECT_TIMEOUT_MS = "0";
+    const hung = createDeferred<StartConnectionResult>();
+    vi.mocked(startConnection).mockReturnValue(hung.promise);
+
+    let settled = false;
+    const call = startWhatsAppConnection(mockLogger).then(() => {
+      settled = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 80));
+    expect(settled).toBe(false);
+
+    const uncapped = taggedResult("uncapped");
+    hung.resolve(uncapped.result);
+    await call;
+    expectLiveSocket(uncapped.socket);
+  });
+
+  it("leaves a connection that completes inside the window unaffected", async () => {
+    const fast = taggedResult("fast");
+    vi.mocked(startConnection).mockResolvedValue(fast.result);
+
+    await startWhatsAppConnection(mockLogger);
+
+    expect(startConnection).toHaveBeenCalledTimes(1);
+    expectLiveSocket(fast.socket);
   });
 });
 
