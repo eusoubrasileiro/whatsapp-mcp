@@ -14,3 +14,29 @@ export function readNonNegativeNumber(raw: string | undefined, fallback: number)
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
 }
+
+/**
+ * Parse one of a fixed set of words, falling back on anything unrecognised.
+ *
+ * Case- and whitespace-insensitive, because these values are typed by hand into
+ * a compose file. A typo reads as the documented default rather than as some
+ * other policy — the same rule `readNonNegativeNumber` follows.
+ */
+export function readEnumValue<T extends string>(
+  raw: string | undefined,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  const parsed = raw?.trim().toLowerCase();
+  if (!parsed) return fallback;
+  return allowed.find((value) => value === parsed) ?? fallback;
+}
+
+/** Split a comma-separated env list, trimming entries and dropping blanks. */
+export function readList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}

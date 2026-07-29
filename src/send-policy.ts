@@ -35,6 +35,8 @@ export type SendPolicyInput = {
   ownJids?: string[];
   env?: Env;
   hasInbound?: (chatJid: string) => boolean;
+  /** All JID forms of one identity — injected for tests; defaults to the alias table. */
+  aliasesOf?: (jid: string) => string[];
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -49,6 +51,7 @@ export async function applySendPolicy(input: SendPolicyInput): Promise<void> {
     allowCold: input.allowCold,
     ownJids: input.ownJids,
     hasInbound: input.hasInbound,
+    aliasesOf: input.aliasesOf,
   });
 
   await applySendPacing({ env, sleep, random, now: input.now });
