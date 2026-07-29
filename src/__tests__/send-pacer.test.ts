@@ -31,7 +31,7 @@ describe("isSendRateLimitEnabled", () => {
 });
 
 describe("getSendRateLimitConfig", () => {
-  it("defaults to the human-paced OpenWA numbers", () => {
+  it("defaults to the conservative human-paced numbers", () => {
     expect(getSendRateLimitConfig({})).toEqual(CONFIG);
   });
 

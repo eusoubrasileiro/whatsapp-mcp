@@ -12,7 +12,8 @@ const ALLOW_COLD_DESCRIPTION =
   "Send even though this contact has never messaged this account (a cold first contact). " +
   "Cold reach-outs are what get a WhatsApp account restricted, so use this ONLY when the " +
   "person explicitly asked to be contacted — never to work around the refusal in bulk. " +
-  "Default false.";
+  "On an instance configured with SEND_COLD_OVERRIDE=deny this parameter is IGNORED and " +
+  "the send is still refused; the refusal says so. Default false.";
 
 /**
  * The account's own JIDs — phone-number (`user.id`) and LID (`user.lid`).

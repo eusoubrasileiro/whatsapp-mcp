@@ -98,6 +98,32 @@ describe("applySendPolicy", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("ignores allowCold when the instance policy denies the override", async () => {
+    await expect(
+      applySendPolicy(
+        input({
+          hasInbound: () => false,
+          allowCold: true,
+          env: { SEND_COLD_OVERRIDE: "deny" },
+        }),
+      ),
+    ).rejects.toThrow(/disabled on this instance by policy/i);
+
+    expect(events).toEqual([]);
+  });
+
+  it("sends to an operator-allowlisted recipient with no inbound history", async () => {
+    await expect(
+      applySendPolicy(
+        input({
+          hasInbound: () => false,
+          env: { SEND_COLD_OVERRIDE: "deny", SEND_COLD_ALLOWED_JIDS: "553191234567" },
+          aliasesOf: () => [WARM],
+        }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("is fully inert when every guard is switched off", async () => {
     const off = {
       SEND_COLD_CONTACT_GUARD: "false",

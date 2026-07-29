@@ -2,9 +2,10 @@
  * Humanised text sends: a length-scaled "typing…" pause before the message.
  *
  * A stream of messages that appear with zero composing time is one of the
- * cheapest signals an automated sender leaves. OpenWA ships the same behaviour
- * (`SIMULATE_TYPING`) and applies it to text only — media has no plausible
- * typing indicator, so it is left alone here too.
+ * cheapest signals an automated sender leaves. Faking the pause is common
+ * practice across community WhatsApp automation tools; the delay maths below is
+ * our own. Text only — media has no plausible typing indicator, so it is left
+ * alone.
  *
  * The delay maths is pure so it is unit-tested without a socket, and a presence
  * failure is swallowed: the presence update is cosmetic, and a cosmetic failure

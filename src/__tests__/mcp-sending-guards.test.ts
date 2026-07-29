@@ -25,7 +25,9 @@ const { registerSendingTools } = await import("../mcp/tools/sending.ts");
 const { emitAckError, resetAckBus } = await import("../ack-bus.ts");
 const { resetRecipientCache } = await import("../recipient.ts");
 const { resetSendPacer } = await import("../send-pacer.ts");
-const { initializeDatabase, resetDatabase, storeMessage } = await import("../database.ts");
+const { initializeDatabase, recordJidMapping, resetDatabase, storeMessage } = await import(
+  "../database.ts"
+);
 const { makeMessage } = await import("./helpers/make-message.ts");
 
 /** Every env knob these tests touch, cleared between tests. */
@@ -33,6 +35,8 @@ const SEND_ENV = [
   "SEND_ACK_WAIT_MS",
   "SEND_PRESEND_CHECK",
   "SEND_COLD_CONTACT_GUARD",
+  "SEND_COLD_OVERRIDE",
+  "SEND_COLD_ALLOWED_JIDS",
   "SEND_RATE_LIMIT_ENABLED",
   "SEND_RATE_LIMIT_MIN_INTERVAL_MS",
   "SEND_RATE_LIMIT_PER_HOUR",
@@ -279,6 +283,41 @@ describe("anti-ban guards", () => {
         allow_cold_contact: true,
       } as never),
     ).resolves.toMatch(/sent successfully/i);
+  });
+
+  it("ignores allow_cold_contact when the instance denies the override", async () => {
+    // The personal-number deployment — any agent could pass the flag, so the
+    // escape hatch had to become an operator decision, not a per-call one.
+    process.env.SEND_COLD_OVERRIDE = "deny";
+
+    await expect(
+      tools().send_message!.execute({
+        recipient: "553191234567@s.whatsapp.net",
+        message: "olá",
+        allow_cold_contact: true,
+      } as never),
+    ).rejects.toThrow(/disabled on this instance by policy/i);
+
+    expect(sendWhatsAppMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends to an allowlisted number written in phone form after the LID upgrade", async () => {
+    // End-to-end proof that the real alias helper is wired: the operator lists the
+    // phone number, the send path resolves to the @lid, and the two must still be
+    // recognised as one identity.
+    initializeDatabase(":memory:");
+    recordJidMapping("553191234567@s.whatsapp.net", GOOD.lid);
+    process.env.SEND_COLD_OVERRIDE = "deny";
+    process.env.SEND_COLD_ALLOWED_JIDS = "553191234567";
+
+    await expect(
+      tools().send_message!.execute({
+        recipient: "553191234567@s.whatsapp.net",
+        message: "olá",
+      } as never),
+    ).resolves.toMatch(/sent successfully/i);
+
+    expect(sendWhatsAppMessage).toHaveBeenCalledWith(expect.anything(), GOOD.lid, "olá");
   });
 
   it("still replies into the account's own self-chat", async () => {

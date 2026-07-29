@@ -24,7 +24,13 @@ type Env = Record<string, string | undefined>;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
-/** OpenWA's shipped bulk-send defaults; conservative on purpose. */
+/**
+ * Conservative starting points, not a measured threshold: WhatsApp publishes no
+ * limit for a linked device, so these are the community's anti-ban folklore
+ * numbers for bulk senders (a few seconds between messages, low double-digit
+ * volume per minute). No code or configuration is taken from another project —
+ * the values are ours to tune against this account's own restriction history.
+ */
 const DEFAULTS = { minIntervalMs: 3000, jitterMs: 2000, perMinute: 10, perHour: 120 };
 
 export type SendRateLimitConfig = {
