@@ -1,8 +1,46 @@
 import http, { type Server } from "node:http";
-import type { ConnectionState } from "@amiticia/baileys-client";
+import type { ConnectionState, ConnectionStatus } from "@amiticia/baileys-client";
 import type { Logger } from "pino";
 import QRCode from "qrcode";
+import { readNonNegativeNumber } from "./env-config.ts";
 import { createRouter, type Route } from "./http-router.ts";
+
+/**
+ * Statuses in which the WhatsApp socket is actually usable. Anything else is
+ * reported as `degraded`, whatever the HTTP status ends up being.
+ */
+const LIVE_STATUSES = new Set<ConnectionStatus>(["connected", "syncing"]);
+
+/**
+ * Statuses that reset the degradation clock.
+ *
+ * `qr_pending` is deliberately included even though it is *not* live: it means
+ * the server is waiting on a human to scan, which no container restart can fix
+ * — a restart would destroy the very QR code the operator is looking at. So a
+ * pairing-needed container reports `degraded` with HTTP 200, forever, and the
+ * clock only starts once pairing moves on.
+ *
+ * `connecting` is deliberately *excluded*. The 2026-07-28 outage sat wedged for
+ * ~21h while `/health` answered 200; a reconnect loop that flaps
+ * disconnected→connecting→disconnected must accumulate downtime, or the grace
+ * window can never elapse and the container stays "healthy" through a wedge.
+ */
+const CLOCK_RESETTING_STATUSES = new Set<ConnectionStatus>([...LIVE_STATUSES, "qr_pending"]);
+
+function readGraceSeconds(): number {
+  return readNonNegativeNumber(process.env.HEALTH_DISCONNECTED_GRACE_S, 300);
+}
+
+export type QrServerOptions = {
+  /** Injectable clock in epoch milliseconds. Defaults to `Date.now`. */
+  now?: () => number;
+  /**
+   * Seconds the socket may stay non-live before `/health` answers 503.
+   * Defaults to `HEALTH_DISCONNECTED_GRACE_S` (300). `0` disables the 503
+   * entirely, so an operator can stop a restart loop without a redeploy.
+   */
+  disconnectedGraceS?: number;
+};
 
 function renderHtml(state: ConnectionState): string {
   const { status, user, qrCode } = state;
@@ -67,19 +105,48 @@ export function createQrServer(
   logger: Logger,
   getState: () => ConnectionState,
   onRepair?: () => Promise<void>,
+  options: QrServerOptions = {},
 ): Server {
+  const now = options.now ?? (() => Date.now());
+  const graceS = options.disconnectedGraceS ?? readGraceSeconds();
+
+  /**
+   * When the socket was last observed in a clock-resetting status. Sampled on
+   * each `/health` request — the endpoint Docker polls every 30s — rather than
+   * pushed from the connection hooks, because `connectionState` is an object
+   * owned and mutated by baileys-client, so there is no transition callback to
+   * hang a timestamp off. Sampling makes the reported downtime lag reality by
+   * at most one poll interval, and it lags in the safe direction: the last
+   * *observed* good moment is never later than the real one.
+   */
+  let lastLiveAt = now();
+
   const routes: Route[] = [
     {
       method: "GET",
       path: "/health",
       handler: async (_req, res) => {
         const state = getState();
+        if (CLOCK_RESETTING_STATUSES.has(state.status)) lastLiveAt = now();
+
+        const disconnectedForS = Math.max(0, Math.floor((now() - lastLiveAt) / 1000));
+        const wedged = graceS > 0 && disconnectedForS > graceS;
+
         const body = JSON.stringify({
+          // `status` stays the WhatsApp connection status — the deploy runbook
+          // and existing tests read it. The ok/degraded verdict is `health`.
           status: state.status,
+          health: LIVE_STATUSES.has(state.status) ? "ok" : "degraded",
           user: state.user,
           syncProgress: state.syncProgress,
+          disconnected_for_s: disconnectedForS,
+          grace_s: graceS,
         });
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        // 503 is what makes the Docker healthcheck fail, so the container is
+        // finally restarted instead of sitting "healthy" with a dead socket.
+        res.writeHead(wedged ? 503 : 200, {
+          "content-type": "application/json; charset=utf-8",
+        });
         res.end(body);
       },
     },
