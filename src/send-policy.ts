@@ -3,11 +3,15 @@
  *
  * Composes the anti-restriction guards in the only order that is safe:
  *
- *   1. cold-contact — the cheapest refusal, and the one that must not cost
- *      anything. Running it first means a send that is about to be refused never
+ *   1. blocklist — a recipient WhatsApp has already refused permanently. First
+ *      because it is the strongest fact available and the only guard that
+ *      remembers across sessions; unlike the cold check it cannot be waved
+ *      through per call.
+ *   2. cold-contact — the cheapest refusal, and the one that must not cost
+ *      anything. Running it early means a send that is about to be refused never
  *      burns a rate-limit slot or a typing pause.
- *   2. pacing — the account-wide gap and rolling caps.
- *   3. typing — cosmetic, text only, last so the "typing…" indicator is adjacent
+ *   3. pacing — the account-wide gap and rolling caps.
+ *   4. typing — cosmetic, text only, last so the "typing…" indicator is adjacent
  *      to the message rather than separated from it by a pacing wait.
  *
  * Keeping the composition here rather than in the FastMCP tool bodies is the
@@ -17,6 +21,7 @@
 import type { Logger } from "pino";
 
 import { assertNotColdContact } from "./cold-contact.ts";
+import { assertNotBlocked } from "./send-blocklist.ts";
 import { applySendPacing } from "./send-pacer.ts";
 import { type PresenceSocket, simulateTyping } from "./send-typing.ts";
 
@@ -45,6 +50,8 @@ export type SendPolicyInput = {
 /** Run every pre-send guard. Throws — and sends nothing — when one refuses. */
 export async function applySendPolicy(input: SendPolicyInput): Promise<void> {
   const { env, sleep, random } = input;
+
+  assertNotBlocked(input.jid, { env, aliasesOf: input.aliasesOf });
 
   assertNotColdContact(input.jid, {
     env,

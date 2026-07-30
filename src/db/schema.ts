@@ -60,6 +60,24 @@ export const schemaMeta = sqliteTable("schema_meta", {
 });
 
 /**
+ * Recipients WhatsApp has permanently refused (code 463 against a contact with
+ * no inbound history). Durable on purpose: the in-session "DO NOT RETRY" does
+ * not survive the process, and a fresh session re-attempting an already-refused
+ * recipient is what preceded the 2026-07-28 account restriction by 82 minutes.
+ * Keyed by canonical jid so PN and LID forms are one identity. Cleared only by a
+ * manual operator DELETE — see `src/send-blocklist.ts`.
+ */
+export const sendBlocklist = sqliteTable("send_blocklist", {
+  jid: text("jid").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  code: text("code"),
+  firstRefusedAt: text("first_refused_at").notNull(), // ISO string
+  lastRefusedAt: text("last_refused_at").notNull(), // ISO string
+  refusalCount: integer("refusal_count").notNull().default(1),
+  detail: text("detail"), // server-supplied text, kept for forensics
+});
+
+/**
  * Outbound webhook subscriptions. Each row is a delivery target that receives
  * inbound WhatsApp messages from a curated allow-list of chats, in real time.
  * Tenant-tagged for a future per-tenant SaaS (single `default` tenant today).

@@ -2,6 +2,7 @@ import type { WAMessageUpdate } from "@amiticia/baileys-client";
 import type { Logger } from "pino";
 
 import { emitAckError } from "./ack-bus.ts";
+import { recordSendRefusal } from "./send-blocklist.ts";
 
 /**
  * Server-side rejections of messages we sent.
@@ -126,6 +127,8 @@ export function logAckErrors(updates: WAMessageUpdate[], logger: Logger): void {
     if (!ackError) continue;
 
     emitAckError(ackError);
+    // Also catches refusals landing after the send path stopped waiting. Never throws.
+    recordSendRefusal({ jid: ackError.chatJid, code: ackError.code, detail: ackError.detail });
 
     logger.warn(
       {

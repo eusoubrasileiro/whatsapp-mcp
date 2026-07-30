@@ -42,6 +42,15 @@ type Env = Record<string, string | undefined>;
  */
 const PERSON_DOMAINS = ["@s.whatsapp.net", "@lid"];
 
+/**
+ * Whether this jid addresses one person, and a send to it is therefore a
+ * reach-out. Shared with the durable blocklist, which must record refusals for
+ * exactly the same address spaces this guard protects.
+ */
+export function isPersonJid(jid: string): boolean {
+  return PERSON_DOMAINS.some((domain) => jid.endsWith(domain));
+}
+
 /** Whether the per-call `allow_cold_contact` escape hatch is honoured at all. */
 export type ColdOverridePolicy = "allow" | "deny";
 
@@ -115,8 +124,18 @@ function resolveAliases(jid: string, aliasesOf: (jid: string) => string[]): stri
   }
 }
 
-/** Whether the operator has pre-approved this recipient, in any of its JID forms. */
-function isAllowlisted(jid: string, options: ColdContactOptions, env: Env): boolean {
+/**
+ * Whether the operator has pre-approved this recipient, in any of its JID forms.
+ *
+ * Exported because `SEND_COLD_ALLOWED_JIDS` is an operator statement about a
+ * recipient, not about one guard: the durable blocklist honours the same list,
+ * so a stale recorded refusal cannot lock out a number we own.
+ */
+export function isOperatorAllowlisted(
+  jid: string,
+  options: Pick<ColdContactOptions, "env" | "aliasesOf"> = {},
+): boolean {
+  const env = options.env ?? process.env;
   const allowed = allowedForms(env);
   // Nothing listed is the default, so the alias lookup is never even attempted.
   if (allowed.size === 0) return false;
@@ -202,7 +221,7 @@ export function assertNotColdContact(jid: string, options: ColdContactOptions = 
 
   // An operator-approved recipient is exempt under every policy: it is the
   // supported way to keep testing working once the override is denied.
-  if (isAllowlisted(jid, options, env)) return;
+  if (isOperatorAllowlisted(jid, { env, aliasesOf: options.aliasesOf })) return;
 
   // Talking to yourself is not a reach-out. It also reads as cold no matter how
   // long it has been used: a self-chat holds only is_from_me messages, so the
@@ -213,7 +232,7 @@ export function assertNotColdContact(jid: string, options: ColdContactOptions = 
   const policy = getColdOverridePolicy(env);
   if (options.allowCold && policy === "allow") return;
 
-  if (!PERSON_DOMAINS.some((domain) => jid.endsWith(domain))) return;
+  if (!isPersonJid(jid)) return;
 
   const hasInbound = options.hasInbound ?? hasInboundMessage;
   if (hasInbound(jid)) return;
