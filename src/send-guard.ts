@@ -8,6 +8,7 @@
 
 import { waitForAckError } from "./ack-bus.ts";
 import { formatAckErrorForAgent } from "./ack-errors.ts";
+import { recordSendRefusal } from "./send-blocklist.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -49,6 +50,9 @@ export async function assertSendAccepted(
 
   const ackError = await waitForAckError(msgId, waitMs);
   if (!ackError) return;
+
+  // Remember it, so a later session cannot re-attempt this recipient. Never throws.
+  recordSendRefusal({ jid: recipient, code: ackError.code, detail: ackError.detail });
 
   throw new Error(formatAckErrorForAgent(ackError, recipient));
 }
