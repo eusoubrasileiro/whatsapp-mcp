@@ -201,7 +201,8 @@ allow (or worse, the reverse).
 |---|---|---|
 | The harness itself | `.husky/**`, `.claude/settings.json`, `commitlint.config.cjs`, `biome.json`, `quality-baseline.json`, `scripts/quality-gate.mjs`, `scripts/security-review.mjs`, `scripts/lib/**`, `scripts/dispatch-worktree.sh`, `scripts/cleanup-worktrees.sh` | An agent that can edit the gate can delete the gate |
 | Send guards | `src/send-guard.ts`, `src/recipient.ts`, `src/ack-bus.ts`, `src/ack-errors.ts` | Weakening these re-opens the "success reported, message never sent" failure (2026-07-22) — and each bad retry is a real WhatsApp reach-out |
-| Data layer | `src/db/schema.ts`, `src/database.ts` | Schema/migration mistakes corrupt the production message store |
+| Anti-ban policy | `src/send-policy.ts`, `src/send-blocklist.ts`, `src/cold-contact.ts`, `src/send-pacer.ts` | These are what stand between an agent and another account restriction. Weakening one is a business risk, not a code change — see "Account restrictions" |
+| Data layer | `src/db/schema.ts`, `src/database.ts`, `src/db/ddl.ts` | Schema/migration mistakes corrupt the production message store |
 | Operator scripts | `scripts/backup.sh`, `scripts/restore.sh`, `scripts/merge-db.sh` | Destructive against the live `/data` volume |
 | Build & test contract | `Dockerfile`, `vitest.config.ts` | Deploy artifact + coverage-threshold definitions |
 | All docs | `**/*.md` | Company-wide rule (ratified 2026-07-21): docs steer agents, so every `.md` is a critical file |
@@ -252,7 +253,9 @@ src/
 │                          #   executeReactToMessage, executeDeleteMessage, executeDownloadMedia,
 │                          #   executeMarkChatRead, assertSocketActive). Testable without FastMCP.
 ├── whatsapp.ts            # Adapter over @amiticia/baileys-client: events → DB, media download
-├── database.ts            # Drizzle ORM + better-sqlite3 (chats, messages, contacts)
+├── database.ts            # Drizzle ORM + better-sqlite3 (chats, messages, contacts).
+│                          #   NEW DDL GOES IN src/db/ddl.ts, not here — this file sits at the
+│                          #   quality-gate maxFileLines ceiling
 ├── storage.ts             # S3/RustFS media plane: parseBoolEnv, getBucket, putMedia,
 │                          #   ensureBucketReady, publicUrlFor
 ├── formatters.ts          # DB-row → plain-JSON converters for MCP tool responses
@@ -275,6 +278,14 @@ src/
 │                          #   the lookup returns a lid (it often doesn't — see Send guards)
 ├── send-guard.ts          # Shared send-path policy: getSendAckWaitMs / isPresendCheckEnabled
 │                          #   / assertSendAccepted. Kept out of the FastMCP tool bodies
+├── send-policy.ts         # applySendPolicy — the anti-ban guard chain (order is load-bearing)
+├── send-blocklist.ts      # Durable memory of 463-refused cold recipients
+├── cold-contact.ts        # Refuses first contact; SEND_COLD_OVERRIDE / allowlist policy
+├── send-pacer.ts          # Account-wide pacing: interval + jitter, minute/hour caps
+├── send-typing.ts         # Presence simulation before a text send
+│                          #   ^ all five: see docs/account-restrictions.md
+├── env-config.ts          # Env parsers; a malformed value reads as the default, never as
+│                          #   "guard disabled"
 ├── inbound-bus.ts         # In-process wake-up bus: emitInbound on each live message;
 │                          #   waitForInbound backs the wait_for_messages long-poll
 ├── monitoring.ts          # Reactive-monitoring core (FastMCP-independent):
@@ -294,7 +305,13 @@ src/
 │   ├── sent-tracker.ts    #   loop guard: remembers our own sends so replies don't echo back
 │   └── actions.ts         #   executeRegisterWebhook / Deregister / List + resolveTenantId
 └── db/
-    └── schema.ts          # Drizzle table schemas (incl. webhook_subscriptions)
+    ├── schema.ts          # Drizzle table schemas (incl. webhook_subscriptions, send_blocklist)
+    ├── ddl.ts             # applySchemaDdl — the hand-written CREATE TABLE / CREATE INDEX
+    │                      #   statements. There is no drizzle-kit runner, so a new table must
+    │                      #   be declared in schema.ts AND created here, or it won't exist
+    │                      #   at runtime. Extracted from database.ts (2026-07-29)
+    ├── inbound-history.ts # hasInboundMessage — backs the cold-contact guard
+    └── send-blocklist-store.ts  # find/upsert for the send_blocklist table
 ```
 
 **Key dependency:** `@amiticia/baileys-client` handles Baileys connection, message parsing, QR code generation, and reconnection logic. This package keeps only a thin adapter layer in `whatsapp.ts` that bridges baileys-client events to database operations.
@@ -387,6 +404,17 @@ is not a bug to fix — WhatsApp gates first contact, and it can't be forced fro
 
 Both guards are env-switchable (`SEND_ACK_WAIT_MS=0`, `SEND_PRESEND_CHECK=false`) to
 restore the old fire-and-forget behavior without a redeploy.
+
+### Anti-ban guard chain
+
+A third guard layer sits above the two above: `applySendPolicy` (`src/send-policy.ts`) —
+blocklist → cold-contact → pacing → typing, in that order, on both sending tools. It exists
+because the linked number was restricted twice in July 2026 by agent-driven cold sends.
+
+**Before touching any send path, read [`docs/account-restrictions.md`](./docs/account-restrictions.md)**
+— the incident forensics, the guard chain, its env vars, and the per-instance policy
+(`SEND_COLD_OVERRIDE=deny` on the personal number; outreach goes to the `whatsapp-work`
+instance). Those thresholds are risk-owner settings, not engineering defaults.
 
 ### Message Actions
 | Tool | Description |
@@ -638,6 +666,8 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
 | `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
 | `SEND_PRESEND_CHECK` | `true` | Verify the recipient exists via `onWhatsApp()` before sending, and upgrade a phone JID to its canonical `@lid`. Set `false` to send to exactly the JID given, unverified. |
+| `SEND_BLOCKLIST_ENABLED`, `SEND_COLD_CONTACT_GUARD`, `SEND_COLD_OVERRIDE`, `SEND_COLD_ALLOWED_JIDS`, `SEND_RATE_LIMIT_*`, `SEND_SIMULATE_TYPING`, `SEND_TYPING_MAX_MS` | see doc | The anti-ban guard chain. Defaults, effects and the per-instance policy: **[`docs/account-restrictions.md`](./docs/account-restrictions.md)**. These are risk-owner settings — don't change one to make a send go through. |
+| `HEALTH_DISCONNECTED_GRACE_S` | `300` | How long the WhatsApp socket may be disconnected before `/health` returns 503. Guards against the failure where the container reported `healthy` through a 21-hour outage. |
 | `GROQ_API_KEY` | _(unset)_ | Preferred provider for audio transcription via `download_media`'s `transcribe` flag. Uses `whisper-large-v3-turbo`. |
 | `OPENAI_API_KEY` | _(unset)_ | Fallback for audio transcription (`whisper-1`) when `GROQ_API_KEY` is unset. |
 | `WHISPER_MODEL` | `whisper-large-v3-turbo` | Override the Groq Whisper model. Ignored when falling back to OpenAI. |
@@ -888,6 +918,19 @@ CREATE TABLE webhook_subscriptions (
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+-- Recipients WhatsApp refused with a 463 while cold. Durable across sessions —
+-- this is what stops a fresh session re-trying a dead recipient days later.
+-- Clearing an entry is a manual SQL delete, deliberately.
+CREATE TABLE send_blocklist (
+  jid TEXT PRIMARY KEY,          -- canonical (alias-group) recipient jid
+  tenant_id TEXT NOT NULL,
+  code TEXT,                     -- ack error code, e.g. '463'
+  first_refused_at TEXT NOT NULL,
+  last_refused_at TEXT NOT NULL,
+  refusal_count INTEGER NOT NULL DEFAULT 1,
+  detail TEXT
 );
 ```
 
