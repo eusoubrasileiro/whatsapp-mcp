@@ -58,9 +58,13 @@ ENV NODE_ENV=production \
 EXPOSE 39001 39002
 VOLUME ["/data"]
 
-# Health check hits the public QR server (no Bearer required).
+# Health check hits the public QR server (no Bearer required). /health now
+# observes the WhatsApp socket and answers 503 once it has been non-live past
+# HEALTH_DISCONNECTED_GRACE_S — GNU wget exits 8 on that, so the container goes
+# unhealthy. --content-on-error puts the degraded JSON in `docker inspect`'s
+# health log, which is the signal the 2026-07-28 21h outage completely lacked.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s \
-  CMD wget -qO- http://127.0.0.1:39002/health || exit 1
+  CMD wget -q --content-on-error -O- http://127.0.0.1:39002/health || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "--experimental-strip-types", "src/main.ts"]
