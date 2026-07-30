@@ -29,7 +29,7 @@
     "quality-gate:update": "node scripts/quality-gate.mjs --update-baseline",
     "dispatch": "bash scripts/dispatch-worktree.sh",
     "dispatch:cleanup": "bash scripts/cleanup-worktrees.sh",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@amiticia/baileys-client": "link:../baileys-client",
