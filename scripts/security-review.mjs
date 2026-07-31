@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { callClaudeStructured } from "./lib/claude-cli.mjs";
+import { isCriticalPath, renderCriticalPathsForPrompt } from "./lib/critical-paths.mjs";
 import { loadPlan, summarizeWhy, WHY_SENTINEL } from "./lib/intent.mjs";
 import { appendEntry } from "./lib/review-log.mjs";
 
@@ -193,14 +194,9 @@ function buildPrompt(diff, report, files, commitMessage, whyParagraph) {
 - Source files changed but no test files changed AND the diff is NOT purely cosmetic (renames / comments / formatting / dead-code removal / pure simplification) → "source change requires test update; explain or add test".
 - Test assertion count decreased without a corresponding source-module deletion.
 - \`.skip(\`, \`.only(\`, \`xit(\`, or \`xdescribe(\` introduced.
-- \`.husky/**\`, \`.claude/settings.json\`, \`commitlint.config.cjs\`, \`biome.json\`, \`scripts/quality-gate.mjs\`, \`scripts/security-review.mjs\`, \`scripts/lib/**\`, \`scripts/dispatch-worktree.sh\`, or \`scripts/cleanup-worktrees.sh\` modified — the harness must not weaken itself.
 - \`quality-baseline.json\` loosened with no visible source-level improvement explaining it.
-- Any of these critical paths modified — these require human approval, never unattended agent edits (they mirror the \`.claude/settings.json\` ask tier):
-  - \`src/send-guard.ts\`, \`src/recipient.ts\`, \`src/ack-bus.ts\`, \`src/ack-errors.ts\` — the send-path guards that stop an agent believing a refused message was delivered.
-  - \`src/db/schema.ts\`, \`src/database.ts\` — the SQLite schema and data layer.
-  - \`scripts/backup.sh\`, \`scripts/restore.sh\`, \`scripts/merge-db.sh\` — destructive data operators.
-  - \`Dockerfile\`, \`vitest.config.ts\` — build and test contract.
-  - any \`*.md\` — every markdown file is a critical file (ratified company-wide 2026-07-21).
+- Any of these critical paths modified — these require human approval, never unattended agent edits. This list is generated from \`scripts/lib/critical-paths.mjs\`, the same module that drives the reviewer's own file tagging, so it cannot drift from what the harness actually gates:
+${renderCriticalPathsForPrompt()}
 
 # Judgment notes
 - Be conservative on cosmetic vs behavioral. Renames, dead-code removal, simplification of existing logic, comment changes — NOT a reject for missing tests.
@@ -390,36 +386,12 @@ function main() {
     ts: new Date().toISOString(),
     commit: "(staged)",
     verdict: verdict.verdict,
-    // Mirrors the .claude/settings.json ask tier + the critical-paths prompt
-    // block above. Keep the three in sync (standards §6). Deliberately a
-    // SUPERSET of the settings.json ask tier: it additionally tags
-    // `src/__tests__/` so test edits get labeled in the review log.
-    sensitiveFiles: pushedFiles.filter(
-      (f) =>
-        f.startsWith("src/__tests__/") ||
-        f.startsWith(".husky/") ||
-        f.startsWith("scripts/lib/") ||
-        f === ".claude/settings.json" ||
-        f === "commitlint.config.cjs" ||
-        f === "biome.json" ||
-        f === "quality-baseline.json" ||
-        f === "scripts/quality-gate.mjs" ||
-        f === "scripts/security-review.mjs" ||
-        f === "scripts/dispatch-worktree.sh" ||
-        f === "scripts/cleanup-worktrees.sh" ||
-        f === "src/send-guard.ts" ||
-        f === "src/recipient.ts" ||
-        f === "src/ack-bus.ts" ||
-        f === "src/ack-errors.ts" ||
-        f === "src/db/schema.ts" ||
-        f === "src/database.ts" ||
-        f === "scripts/backup.sh" ||
-        f === "scripts/restore.sh" ||
-        f === "scripts/merge-db.sh" ||
-        f === "Dockerfile" ||
-        f === "vitest.config.ts" ||
-        f.endsWith(".md"),
-    ),
+    // Reads the critical-path contract from scripts/lib/critical-paths.mjs —
+    // the same module that renders the prompt block above, so the two faces
+    // cannot drift (standards §6). Deliberately a SUPERSET of that contract:
+    // it additionally tags `src/__tests__/` so test edits get labeled in the
+    // review log, without making tests require a ratification to edit.
+    sensitiveFiles: pushedFiles.filter((f) => f.startsWith("src/__tests__/") || isCriticalPath(f)),
     stagedFiles: pushedFiles,
     justification: verdict.justification ?? "",
     concerns: Array.isArray(verdict.concerns) ? verdict.concerns : [],
