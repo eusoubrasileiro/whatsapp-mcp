@@ -192,16 +192,25 @@ These failures are **not regressions** — they exist on `main` and every branch
 ## Critical Files (require human approval)
 
 The `ask` tier in `.claude/settings.json` — agents must get human approval before editing
-any of these, and the pre-push LLM reviewer independently flags edits to them. **Keep the
-three lists in sync**: this section, the `ask` tier, and the critical-paths block inside
-`scripts/security-review.mjs`. Drift between them makes the reviewer reject what settings
-allow (or worse, the reverse).
+any of these, and the pre-push LLM reviewer independently flags edits to them.
+
+**The contract has one source: [`scripts/lib/critical-paths.mjs`](./scripts/lib/critical-paths.mjs).**
+That module's `CRITICAL_PATH_GROUPS` feeds both reviewer faces — the prompt block it renders
+and the `sensitiveFiles` predicate — and `scripts/lib/critical-paths.test.mjs` asserts that
+`.claude/settings.json`'s `ask` tier gates every pattern in it. So three of the four faces are
+mechanically locked together; a path added to the module and not to the `ask` tier is a
+**test failure**, not a silent hole. The table below is the fourth face and the only one no
+test can enforce — when you change the module, change this table in the same commit.
+
+> This is not hypothetical: the anti-ban guards were listed in this table while absent from
+> the `ask` tier and from both reviewer lists, so an agent could have rewritten
+> `cold-contact.ts` with no approval prompt and no reviewer flag.
 
 | Group | Paths | Why |
 |---|---|---|
-| The harness itself | `.husky/**`, `.claude/settings.json`, `commitlint.config.cjs`, `biome.json`, `quality-baseline.json`, `scripts/quality-gate.mjs`, `scripts/security-review.mjs`, `scripts/lib/**`, `scripts/dispatch-worktree.sh`, `scripts/cleanup-worktrees.sh` | An agent that can edit the gate can delete the gate |
+| The harness itself | `.husky/**`, `.claude/settings.json`, `commitlint.config.cjs`, `biome.json`, `quality-baseline.json`, `scripts/quality-gate.mjs`, `scripts/security-review.mjs`, `scripts/lib/**`, `scripts/dispatch-worktree.sh`, `scripts/cleanup-worktrees.sh`, `.gitignore` | An agent that can edit the gate can delete the gate |
 | Send guards | `src/send-guard.ts`, `src/recipient.ts`, `src/ack-bus.ts`, `src/ack-errors.ts` | Weakening these re-opens the "success reported, message never sent" failure (2026-07-22) — and each bad retry is a real WhatsApp reach-out |
-| Anti-ban policy | `src/send-policy.ts`, `src/send-blocklist.ts`, `src/cold-contact.ts`, `src/send-pacer.ts` | These are what stand between an agent and another account restriction. Weakening one is a business risk, not a code change — see "Account restrictions" |
+| Anti-ban policy | `src/send-policy.ts`, `src/send-blocklist.ts`, `src/cold-contact.ts`, `src/send-pacer.ts`, `src/send-typing.ts`, `src/env-config.ts`, `src/db/inbound-history.ts`, `src/db/send-blocklist-store.ts` | These are what stand between an agent and another account restriction. Weakening one is a business risk, not a code change — see "Account restrictions". `env-config.ts` is in scope because a malformed value must read as the default, never as "guard disabled"; `inbound-history.ts` is the cold guard's oracle, and always-true there silently disables it |
 | Data layer | `src/db/schema.ts`, `src/database.ts`, `src/db/ddl.ts` | Schema/migration mistakes corrupt the production message store |
 | Operator scripts | `scripts/backup.sh`, `scripts/restore.sh`, `scripts/merge-db.sh` | Destructive against the live `/data` volume |
 | Build & test contract | `Dockerfile`, `vitest.config.ts` | Deploy artifact + coverage-threshold definitions |
