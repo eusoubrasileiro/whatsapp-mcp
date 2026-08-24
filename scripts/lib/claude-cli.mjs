@@ -19,9 +19,15 @@ import { tmpdir } from "node:os";
  * off the metered Anthropic credit. Routing is per-model: only models in
  * `DEEPSEEK_MODEL_MAP` move; everything else (the Haiku intent stage) stays on
  * Anthropic. Unset `REVIEW_BACKEND` => byte-identical legacy behaviour.
+ *
+ * The map is keyed on the exact string callers pass as `model`. Callers pass
+ * the CLI's *tier alias* ("sonnet"), never a pinned point release, so the
+ * reviewer follows the current Sonnet with no edit here. Keep this key equal
+ * to what the callers pass: a stale key silently disables routing rather than
+ * erroring.
  */
 const DEEPSEEK_ANTHROPIC_URL = "https://api.deepseek.com/anthropic";
-const DEEPSEEK_MODEL_MAP = { "claude-sonnet-4-6": "deepseek-v4-pro" };
+const DEEPSEEK_MODEL_MAP = { sonnet: "deepseek-v4-pro" };
 
 /**
  * Resolve which model + subprocess env a `claude -p` call should use.
@@ -64,7 +70,9 @@ export function resolveBackend(model, env = process.env) {
  * Call `claude -p` with server-side JSON schema enforcement.
  *
  * @param {object} opts
- * @param {string} opts.model     Model alias, e.g. "claude-sonnet-4-6".
+ * @param {string} opts.model     Model *tier alias* — "sonnet" or "haiku". The
+ *                                CLI resolves it to the current model of that
+ *                                tier; never pin a point release here.
  * @param {object} opts.schema    JSON Schema object passed to `--json-schema`.
  * @param {string} opts.input     Prompt text fed via stdin.
  * @param {number} [opts.maxBuffer=10485760]  spawnSync maxBuffer (default 10MB).
