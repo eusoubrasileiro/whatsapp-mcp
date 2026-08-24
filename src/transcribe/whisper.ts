@@ -1,26 +1,69 @@
 /**
- * Whisper transcription with Groq (primary) → OpenAI (fallback) providers.
+ * Whisper transcription via OpenRouter, with Groq/OpenAI kept as rollback lanes.
  *
- * Mirrors the per-product `whisper.ts` shape in agendazap/wahub/optizap but
- * takes raw bytes (already preprocessed to 16 kHz mono FLAC) instead of a
- * file path. Tuned for pt-BR.
+ * Takes raw bytes (already preprocessed to 16 kHz mono FLAC by `preprocess.ts`)
+ * rather than a file path, and is tuned for pt-BR.
  *
- * Cookbook: Groq's 25 MB silent-fail-at-30 MB ceiling is sidestepped by
- * preprocessing upstream; the sanity guard here just raises a clearer error
- * if the FLAC still exceeds 24 MB after preprocess.
+ * MIGRATED 2026-08-24. This used the `groq-sdk` and `openai` SDKs and picked
+ * between them by which key happened to be set. Both are gone:
+ *
+ *   - All three vendors expose the SAME OpenAI-shaped multipart
+ *     `POST {baseUrl}/audio/transcriptions`, so one plain `fetch` serves every
+ *     route and two SDKs no longer need to be in the image for one endpoint.
+ *     (wahub's client claims OpenRouter needs a JSON+base64 body instead. That
+ *     is wrong — OpenRouter documents both shapes, and patricia verified
+ *     multipart end-to-end against a real voice note on 2026-07-31. wahub's
+ *     tests mock `fetch`, so they never exercised the claim.)
+ *
+ *   - The route is chosen by `AUDIO_PROVIDER`, never by key presence. Choosing
+ *     by key presence is how a leftover `GROQ_API_KEY` silently keeps traffic
+ *     on the old vendor while the migration is reported as done — which matters
+ *     here because the Groq account is being closed.
+ *
+ * Ported from `products/patricia/backend/src/media/transcribe.ts`.
+ *
+ * Cookbook: the 25 MB provider ceiling is sidestepped by preprocessing
+ * upstream; the guard here just raises a clearer error if the FLAC still
+ * exceeds 24 MB after preprocess.
  */
 
-import Groq from "groq-sdk";
-import OpenAI from "openai";
-import { toFile } from "openai/uploads";
 import type { Logger } from "pino";
 
 const TWENTY_FOUR_MB = 24 * 1024 * 1024;
 
+/**
+ * Where each provider lives and what it calls Whisper Large v3. Only these
+ * three values differ between routes; the request below serves all of them.
+ *
+ * OpenRouter has no `-turbo` build — `openai/whisper-large-v3` is the same
+ * Whisper this used to hit on Groq, and OpenRouter may even route it back to
+ * Groq upstream. We simply no longer hold a Groq account.
+ */
+const AUDIO_ROUTES = {
+  openrouter: {
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/whisper-large-v3",
+    keyName: "OPENROUTER_API_KEY",
+  },
+  groq: {
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "whisper-large-v3",
+    keyName: "GROQ_API_KEY",
+  },
+  openai: {
+    baseUrl: "https://api.openai.com/v1",
+    model: "whisper-1",
+    keyName: "OPENAI_API_KEY",
+  },
+} as const;
+
+/** Not exported: nothing outside this module names a route. */
+type AudioProvider = keyof typeof AUDIO_ROUTES;
+
 export interface TranscribeResult {
   text: string;
   model: string;
-  provider: "groq" | "openai";
+  provider: AudioProvider;
   duration_s?: number;
 }
 
@@ -40,13 +83,48 @@ export class TranscribeError extends Error {
   }
 }
 
+function resolveProvider(): AudioProvider {
+  const raw = process.env.AUDIO_PROVIDER?.trim().toLowerCase();
+  if (!raw) return "openrouter";
+  if (raw in AUDIO_ROUTES) return raw as AudioProvider;
+  throw new TranscribeError(
+    `AUDIO_PROVIDER="${raw}" is not a known route (${Object.keys(AUDIO_ROUTES).join(", ")}).`,
+  );
+}
+
+/**
+ * Pull the transcript out of the response body.
+ *
+ * A body we do not recognise THROWS rather than being passed off as speech:
+ * handing `{"error":...}` to an agent as the sender's words fabricates what a
+ * human said, which is worse than failing. `whatsapp.ts` already catches and
+ * returns null, so a throw degrades to "no transcription", never to a lie.
+ */
+function readTranscript(body: string): { text: string; duration_s?: number } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // A provider that ignored response_format and replied with the bare string.
+    return { text: body.trim() };
+  }
+  if (typeof parsed === "object" && parsed !== null && "text" in parsed) {
+    const { text, duration } = parsed as { text?: unknown; duration?: unknown };
+    if (typeof text === "string") {
+      return {
+        text: text.trim(),
+        duration_s: typeof duration === "number" ? duration : undefined,
+      };
+    }
+  }
+  throw new TranscribeError("Transcription response was not in a recognised format.");
+}
+
 /**
  * Transcribe a preprocessed audio buffer.
  *
- * Provider selection:
- *   - GROQ_API_KEY set → Groq (whisper-large-v3-turbo by default).
- *   - else OPENAI_API_KEY set → OpenAI (whisper-1).
- *   - else throw.
+ * Route comes from `AUDIO_PROVIDER` (default `openrouter`); `WHISPER_MODEL`
+ * overrides the model on whichever route is active.
  */
 export async function transcribeAudio(opts: TranscribeOptions): Promise<TranscribeResult> {
   const { buffer, filename = "audio.flac", language = "pt", logger } = opts;
@@ -57,58 +135,51 @@ export async function transcribeAudio(opts: TranscribeOptions): Promise<Transcri
     );
   }
 
-  const groqKey = process.env.GROQ_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
-
-  if (!groqKey && !openaiKey) {
+  const provider = resolveProvider();
+  const route = AUDIO_ROUTES[provider];
+  const apiKey = process.env[route.keyName];
+  if (!apiKey) {
     throw new TranscribeError(
-      "Neither GROQ_API_KEY nor OPENAI_API_KEY is set — cannot transcribe audio.",
+      `${route.keyName} is not set — cannot transcribe audio via ${provider}.`,
     );
   }
+  const model = process.env.WHISPER_MODEL?.trim() || route.model;
 
-  if (groqKey) {
-    const model = process.env.WHISPER_MODEL ?? "whisper-large-v3-turbo";
-    logger?.debug({ provider: "groq", model, bytes: buffer.length }, "whisper.transcribe start");
-    try {
-      const groq = new Groq({ apiKey: groqKey });
-      const file = await toFile(buffer, filename);
-      const response = await groq.audio.transcriptions.create({
-        file,
-        model,
-        language,
-        response_format: "verbose_json",
-      });
-      const text = typeof response === "string" ? response : ((response as any).text ?? "");
-      const duration_s =
-        typeof response === "object" && response && "duration" in response
-          ? Number((response as any).duration)
-          : undefined;
-      logger?.debug({ provider: "groq", model, chars: text.length }, "whisper.transcribe done");
-      return { text, model, provider: "groq", duration_s };
-    } catch (err) {
-      throw new TranscribeError(`Groq Whisper request failed: ${(err as Error).message}`, err);
-    }
-  }
+  logger?.debug({ provider, model, bytes: buffer.length }, "whisper.transcribe start");
 
-  const model = "whisper-1";
-  logger?.debug({ provider: "openai", model, bytes: buffer.length }, "whisper.transcribe start");
+  const form = new FormData();
+  form.append("file", new File([new Uint8Array(buffer)], filename));
+  form.append("model", model);
+  // Fixed to Portuguese: guessing the language of a two-second voice note is
+  // how a transcript comes back in Spanish.
+  form.append("language", language);
+  // verbose_json (not "text") because `duration` feeds the duration_s attribute
+  // of the <transcription> envelope agents read. OpenRouter supports only
+  // json/verbose_json; Groq and OpenAI accept verbose_json too.
+  form.append("response_format", "verbose_json");
+
+  let res: Response;
   try {
-    const openai = new OpenAI({ apiKey: openaiKey! });
-    const file = await toFile(buffer, filename);
-    const response = await openai.audio.transcriptions.create({
-      file,
-      model,
-      language,
-      response_format: "verbose_json",
+    res = await fetch(`${route.baseUrl}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
     });
-    const text = typeof response === "string" ? response : ((response as any).text ?? "");
-    const duration_s =
-      typeof response === "object" && response && "duration" in response
-        ? Number((response as any).duration)
-        : undefined;
-    logger?.debug({ provider: "openai", model, chars: text.length }, "whisper.transcribe done");
-    return { text, model, provider: "openai", duration_s };
   } catch (err) {
-    throw new TranscribeError(`OpenAI Whisper request failed: ${(err as Error).message}`, err);
+    throw new TranscribeError(`${provider} Whisper request failed: ${(err as Error).message}`, err);
   }
+
+  const body = (await res.text()).trim();
+  if (!res.ok) {
+    throw new TranscribeError(`${provider} Whisper request failed: HTTP ${res.status} — ${body}`);
+  }
+
+  const { text, duration_s } = readTranscript(body);
+  if (!text) {
+    // Returning "" would let an agent answer confidently about audio nobody heard.
+    throw new TranscribeError(`${provider} Whisper returned an empty transcript.`);
+  }
+
+  logger?.debug({ provider, model, chars: text.length }, "whisper.transcribe done");
+  return { text, model, provider, duration_s };
 }

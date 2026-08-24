@@ -582,13 +582,13 @@ the MCP signs but can't enforce the window; the receiver must).
 
 | Param | Default | Behavior |
 |---|---|---|
-| `transcribe` | `true` for `audio`/`ptt` messages, ignored otherwise | Preprocess bytes with ffmpeg (16 kHz mono FLAC, ~10× smaller), call Groq Whisper `whisper-large-v3-turbo` (or OpenAI `whisper-1` fallback), return an `<transcription>` XML block instead of `audioContent`. |
+| `transcribe` | `true` for `audio`/`ptt` messages, ignored otherwise | Preprocess bytes with ffmpeg (16 kHz mono FLAC, ~10× smaller), call Whisper `openai/whisper-large-v3` via **OpenRouter**, return an `<transcription>` XML block instead of `audioContent`. Route is chosen by `AUDIO_PROVIDER` (`openrouter` default, `groq`/`openai` rollback lanes) — never by which key is set. |
 | `describe` | `false` always, ignored on non-image media | Send image bytes to Google Gemini `gemini-2.5-flash`, return an `<image_description>` XML block instead of `imageContent`. |
 
 Output shape (single `text` content block alongside the usual `resource_link` + JSON metadata):
 
 ```xml
-<transcription message_id="…" chat_jid="…" model="whisper-large-v3-turbo" duration_s="138">
+<transcription message_id="…" chat_jid="…" model="openai/whisper-large-v3" duration_s="138">
 Olá, queria saber se vocês fazem entrega no meu bairro…
 </transcription>
 ```
@@ -599,9 +599,9 @@ Captura de um cardápio com 12 sabores de pizza, preços R$ 35–58, promoção 
 </image_description>
 ```
 
-Required env vars: `GROQ_API_KEY` (preferred) or `OPENAI_API_KEY` (fallback) for transcription; `GEMINI_API_KEY` for image description. Optional `WHISPER_MODEL` / `VISION_MODEL` overrides. `ffmpeg` must be present on the host (already installed in the runtime image).
+Required env vars: `OPENROUTER_API_KEY` for transcription; `GEMINI_API_KEY` for image description. Optional `AUDIO_PROVIDER` / `WHISPER_MODEL` / `VISION_MODEL` overrides. `ffmpeg` must be present on the host (already installed in the runtime image).
 
-Long-audio note: a 24 MB FLAC ceiling guards the Groq request; typical WhatsApp voice notes up to ~25 min fit comfortably after preprocessing. Anything past that fails with a clear error — chunking + stitching is deferred to a follow-up PR per the Groq cookbook (600 s windows, 10 s overlap).
+Long-audio note: a 24 MB FLAC ceiling guards the request (OpenRouter's multipart cap is 25 MB); typical WhatsApp voice notes up to ~25 min fit comfortably after preprocessing. Anything past that fails with a clear error — chunking + stitching is deferred to a follow-up PR (600 s windows, 10 s overlap). `tools/amiticia-knowledge-engine/transcript.py` already implements ffmpeg segmentation if a reference is wanted.
 
 ## Sending host-disk files (the `/upload` endpoint)
 
@@ -677,9 +677,11 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `SEND_PRESEND_CHECK` | `true` | Verify the recipient exists via `onWhatsApp()` before sending, and upgrade a phone JID to its canonical `@lid`. Set `false` to send to exactly the JID given, unverified. |
 | `SEND_BLOCKLIST_ENABLED`, `SEND_COLD_CONTACT_GUARD`, `SEND_COLD_OVERRIDE`, `SEND_COLD_ALLOWED_JIDS`, `SEND_RATE_LIMIT_*`, `SEND_SIMULATE_TYPING`, `SEND_TYPING_MAX_MS` | see doc | The anti-ban guard chain. Defaults, effects and the per-instance policy: **[`docs/account-restrictions.md`](./docs/account-restrictions.md)**. These are risk-owner settings — don't change one to make a send go through. |
 | `HEALTH_DISCONNECTED_GRACE_S` | `300` | How long the WhatsApp socket may be disconnected before `/health` returns 503. Guards against the failure where the container reported `healthy` through a 21-hour outage. |
-| `GROQ_API_KEY` | _(unset)_ | Preferred provider for audio transcription via `download_media`'s `transcribe` flag. Uses `whisper-large-v3-turbo`. |
-| `OPENAI_API_KEY` | _(unset)_ | Fallback for audio transcription (`whisper-1`) when `GROQ_API_KEY` is unset. |
-| `WHISPER_MODEL` | `whisper-large-v3-turbo` | Override the Groq Whisper model. Ignored when falling back to OpenAI. |
+| `OPENROUTER_API_KEY` | _(unset)_ | Audio transcription via `download_media`'s `transcribe` flag. Uses `openai/whisper-large-v3`. The default and only provider unless `AUDIO_PROVIDER` says otherwise. |
+| `AUDIO_PROVIDER` | `openrouter` | Transcription route: `openrouter` \| `groq` \| `openai`. Rollback lanes kept deliberately; an unknown value throws rather than silently guessing. **Routing is never by key presence** — a leftover `GROQ_API_KEY` must not quietly keep traffic on a closed account. |
+| `GROQ_API_KEY` | _(unset)_ | Only used when `AUDIO_PROVIDER=groq` (rollback; `whisper-large-v3`). |
+| `OPENAI_API_KEY` | _(unset)_ | Only used when `AUDIO_PROVIDER=openai` (rollback; `whisper-1`). |
+| `WHISPER_MODEL` | _(per-route default)_ | Override the Whisper model on whichever route is active. |
 | `GEMINI_API_KEY` | _(unset)_ | Required for image description (`download_media`'s `describe` flag). Uses `gemini-2.5-flash`. |
 | `VISION_MODEL` | `gemini-2.5-flash` | Override the Gemini vision model. |
 | `FFMPEG_BIN` | `ffmpeg` | Path to the ffmpeg binary used for audio preprocessing before Whisper. |
