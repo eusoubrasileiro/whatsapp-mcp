@@ -35,9 +35,17 @@ const TWENTY_FOUR_MB = 24 * 1024 * 1024;
  * Where each provider lives and what it calls Whisper Large v3. Only these
  * three values differ between routes; the request below serves all of them.
  *
- * OpenRouter has no `-turbo` build — `openai/whisper-large-v3` is the same
- * Whisper this used to hit on Groq, and OpenRouter may even route it back to
- * Groq upstream. We simply no longer hold a Groq account.
+ * `openai/whisper-large-v3` is the same Whisper this used to hit on Groq, and
+ * OpenRouter may even route it back to Groq upstream. We simply no longer hold
+ * a Groq account.
+ *
+ * CORRECTION 2026-08-24: an earlier version of this comment claimed OpenRouter
+ * has no `-turbo` build. Wrong — `openai/whisper-large-v3-turbo` has been
+ * available since 2026-05-01, is ~6x faster (4 decoder layers vs 32) and is
+ * cheaper on every provider. Staying on large-v3 is a deliberate call, not a
+ * lack of options: the vendor concedes "minor quality degradation" and no
+ * pt-BR WER comparison exists to size it. `WHISPER_MODEL` trials it with no
+ * code change.
  */
 const AUDIO_ROUTES = {
   openrouter: {
