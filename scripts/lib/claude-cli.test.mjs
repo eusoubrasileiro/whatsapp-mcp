@@ -9,19 +9,19 @@ import { resolveBackend } from "./claude-cli.mjs";
 
 test("returns model unchanged and no note when REVIEW_BACKEND is unset", () => {
   const env = { ANTHROPIC_API_KEY: "sk-ant" };
-  const out = resolveBackend("claude-sonnet-4-6", env);
-  assert.equal(out.model, "claude-sonnet-4-6");
+  const out = resolveBackend("sonnet", env);
+  assert.equal(out.model, "sonnet");
   assert.equal(out.spawnEnv, env);
   assert.equal(out.note, null);
 });
 
-test("routes claude-sonnet-4-6 to deepseek-v4-pro when REVIEW_BACKEND=deepseek and key present", () => {
+test("routes sonnet to deepseek-v4-pro when REVIEW_BACKEND=deepseek and key present", () => {
   const env = {
     REVIEW_BACKEND: "deepseek",
     DEEPSEEK_API_KEY: "sk-ds",
     ANTHROPIC_API_KEY: "sk-ant",
   };
-  const out = resolveBackend("claude-sonnet-4-6", env);
+  const out = resolveBackend("sonnet", env);
   assert.equal(out.model, "deepseek-v4-pro");
   assert.equal(out.spawnEnv.ANTHROPIC_BASE_URL, "https://api.deepseek.com/anthropic");
   assert.equal(out.spawnEnv.ANTHROPIC_AUTH_TOKEN, "sk-ds");
@@ -35,16 +35,16 @@ test("routes claude-sonnet-4-6 to deepseek-v4-pro when REVIEW_BACKEND=deepseek a
 
 test("leaves unmapped models (e.g. Haiku intent stage) on Anthropic even when REVIEW_BACKEND=deepseek", () => {
   const env = { REVIEW_BACKEND: "deepseek", DEEPSEEK_API_KEY: "sk-ds" };
-  const out = resolveBackend("claude-haiku-4-5", env);
-  assert.equal(out.model, "claude-haiku-4-5");
+  const out = resolveBackend("haiku", env);
+  assert.equal(out.model, "haiku");
   assert.equal(out.spawnEnv, env);
   assert.equal(out.note, null);
 });
 
 test("falls back to Anthropic with a warning when REVIEW_BACKEND=deepseek but DEEPSEEK_API_KEY is missing", () => {
   const env = { REVIEW_BACKEND: "deepseek" };
-  const out = resolveBackend("claude-sonnet-4-6", env);
-  assert.equal(out.model, "claude-sonnet-4-6", "must not route without a key");
+  const out = resolveBackend("sonnet", env);
+  assert.equal(out.model, "sonnet", "must not route without a key");
   assert.equal(out.spawnEnv, env);
   assert.match(out.note, /DEEPSEEK_API_KEY/);
 });

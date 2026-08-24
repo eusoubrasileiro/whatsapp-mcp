@@ -4,7 +4,7 @@
  *
  * Final pre-push reviewer. Runs after lint, tsc, the full test suite, and
  * the deterministic quality-gate. Sends staged diff + commit message + the
- * quality-gate report to claude -p (Sonnet 4.6), appends the verdict to
+ * quality-gate report to claude -p (Sonnet tier), appends the verdict to
  * .quality-gate/review-log.jsonl, and blocks the push (exit 1) on reject.
  *
  * Verdict space: "approve" | "reject". The 3-strike retry cap for dispatched
@@ -337,7 +337,7 @@ function main() {
   const prompt = buildPrompt(diff, report, pushedFiles, commitMessage, whyParagraph);
 
   const claudeResult = callClaudeStructured({
-    model: "claude-sonnet-4-6",
+    model: "sonnet",
     schema: VERDICT_SCHEMA,
     input: prompt,
     cwd: repoRoot,

@@ -8,7 +8,7 @@
  * — see the plan-driven-dispatch design). Returns the trimmed body or null.
  *
  * `summarizeWhy({plan, prBody, commits, issueBodies, branch})` shells out to
- * `claude -p --model claude-haiku-4-5` with the system prompt at
+ * `claude -p --model haiku` with the system prompt at
  * `scripts/prompts/why-summarize.md`. Always runs; only the inputs change.
  * Returns a 2-3 sentence Portuguese paragraph, OR the literal sentinel
  * "Origem não clara — favor revisar manualmente" when no source carries a
@@ -103,7 +103,7 @@ export function summarizeWhy(inputs) {
   // sentinel is also returned when the model says origin is unclear or the
   // paragraph comes back empty.
   const result = callClaudeStructured({
-    model: "claude-haiku-4-5",
+    model: "haiku",
     schema: WHY_SCHEMA,
     input: fullPrompt,
   });
