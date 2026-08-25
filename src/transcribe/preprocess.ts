@@ -7,15 +7,26 @@
  * WhatsApp voice notes (and even 30-min ones) safely under the 25 MB
  * Groq request ceiling without needing chunking.
  *
- * Input is staged to a temp file before invoking ffmpeg so the demuxer can
- * seek. Non-streamable containers (MP4/M4A with moov atom at end of file —
- * the layout most mobile encoders emit) silently corrupt when fed via a
- * non-seekable stdin pipe: ffmpeg writes ~empty output and exits 0. See
- * GitHub issue #4.
+ * BOTH ends are staged to temp files, and for the same underlying reason:
+ * ffmpeg needs to seek, and a pipe cannot.
+ *
+ * Input (issue #4): non-streamable containers — MP4/M4A with the moov atom at
+ * end of file, the layout most mobile encoders emit — silently corrupt when fed
+ * via a non-seekable stdin pipe. ffmpeg writes ~empty output and exits 0.
+ *
+ * Output (2026-08-25): FLAC's STREAMINFO header carries total-samples, min/max
+ * frame size and an MD5 of the audio, none of which are known until the last
+ * frame is written. The muxer writes placeholder zeros and rewinds to patch
+ * them — impossible on `pipe:1`, so a piped FLAC ships with those fields zeroed.
+ * Every local tool accepts it (ffmpeg, ffprobe and any player just decode the
+ * frames), and so did Groq's Whisper. OpenRouter's upstream provider does not:
+ * it returns a bare `HTTP 400 — Provider returned 400`, deterministically. That
+ * broke every voice note the moment transcription moved to OpenRouter, with an
+ * error message pointing at the request rather than the file.
  */
 
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,20 +49,22 @@ export class FfmpegError extends Error {
 /**
  * Convert an audio buffer to 16 kHz mono FLAC.
  *
- * Stages the input to a temp file (deleted in a finally) so ffmpeg's demuxer
- * can seek — required for MP4/M4A containers with moov-at-end. Throws
- * FfmpegError on non-zero exit, missing binary, or a 0-exit that left
- * demux-error markers in stderr.
+ * Stages both the input and the output to temp files (the whole dir is removed
+ * in a finally) so ffmpeg's demuxer and muxer can seek — required for MP4/M4A
+ * containers with moov-at-end on the way in, and for a complete FLAC STREAMINFO
+ * on the way out. See the module docblock. Throws FfmpegError on non-zero exit,
+ * missing binary, or a 0-exit that left demux-error markers in stderr.
  */
 export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
   // Resolved per-call so tests (and operators) can switch FFMPEG_BIN at runtime.
   const ffmpegBin = process.env.FFMPEG_BIN ?? "ffmpeg";
   const stageDir = await mkdtemp(join(tmpdir(), "wa-flac-"));
   const inputPath = join(stageDir, "in");
+  const outputPath = join(stageDir, "out.flac");
   try {
     await writeFile(inputPath, input);
 
-    return await new Promise<Buffer>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const args = [
         "-hide_banner",
         "-loglevel",
@@ -66,15 +79,14 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
         "flac",
         "-f",
         "flac",
-        "pipe:1",
+        "-y",
+        outputPath,
       ];
 
-      const proc = spawn(ffmpegBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+      const proc = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
 
-      const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
 
-      proc.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
       proc.on("error", (err: NodeJS.ErrnoException) => {
@@ -109,9 +121,11 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
           );
           return;
         }
-        resolve(Buffer.concat(stdoutChunks));
+        resolve();
       });
     });
+
+    return await readFile(outputPath);
   } finally {
     await rm(stageDir, { recursive: true, force: true }).catch(() => {
       /* best effort */
