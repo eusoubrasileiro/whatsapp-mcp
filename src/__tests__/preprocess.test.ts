@@ -187,6 +187,35 @@ describe("toFlacMono16k", () => {
     }
   });
 
+  it("writes a complete STREAMINFO — total-samples and MD5 are filled in", async () => {
+    // REGRESSION (2026-08-25). The encoder wrote to `pipe:1`, which is not
+    // seekable, so ffmpeg could never rewind to patch STREAMINFO after the last
+    // frame: total-samples, min/max frame size and the MD5 signature all stayed
+    // zero. Groq's Whisper endpoint accepted that header. OpenRouter's upstream
+    // rejects it with a bare `HTTP 400 — Provider returned 400`, deterministically
+    // (4/4 vs 4/4 measured against a real voice note), so the OpenRouter cutover
+    // silently broke every voice note while the bytes themselves decoded fine
+    // in ffmpeg, ffprobe and every local player. Asserting on playability alone
+    // cannot catch this — only the header fields can.
+    const flac = await toFlacMono16k(makeSineWav(2));
+
+    expect(flac.subarray(0, 4).toString()).toBe("fLaC");
+    expect(flac[4] & 0x7f).toBe(0); // first metadata block is STREAMINFO
+    expect(flac.readUIntBE(5, 3)).toBe(34); // ...and it is the spec's 34 bytes
+
+    // STREAMINFO starts at byte 8. Total samples is a 36-bit field: the low
+    // nibble of byte 21 followed by bytes 22-25.
+    const totalSamples = (flac[21] & 0x0f) * 2 ** 32 + flac.readUInt32BE(22);
+    expect(totalSamples).toBe(2 * 16000); // 2 s at 16 kHz, exactly
+
+    // Bytes 26-41 are the MD5 of the unencoded audio. All-zero means "unknown",
+    // which is what a non-seekable write leaves behind.
+    expect(flac.subarray(26, 42).every((b) => b === 0)).toBe(false);
+
+    // Min/max frame size (bytes 12-17) are patched in the same rewind.
+    expect(flac.readUIntBE(15, 3)).toBeGreaterThan(0); // max frame size
+  });
+
   it("throws clear FfmpegError when ffmpeg binary missing", async () => {
     const prev = process.env.FFMPEG_BIN;
     process.env.FFMPEG_BIN = "/nonexistent/ffmpeg-binary-zzz";

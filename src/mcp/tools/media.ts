@@ -12,7 +12,7 @@ export function registerMediaTools(server: ToolRegistrar, deps: ToolDeps): void 
       "Download media (image, video, audio, document, sticker) from a WhatsApp message via S3-compatible storage.",
       "",
       "For audio messages (audio/ptt), `transcribe` defaults to true: the bytes are preprocessed (16 kHz mono FLAC)",
-      "and run through Whisper (Groq whisper-large-v3-turbo, falling back to OpenAI whisper-1). The response is an",
+      "and run through Whisper (`openai/whisper-large-v3` via OpenRouter). The response is an",
       "XML-wrapped <transcription> text block instead of the raw audio. Pass `transcribe: false` to get audio bytes.",
       "",
       "For image messages, `describe` is opt-in (default false). When true, the bytes are sent to Gemini 2.5 Flash",
