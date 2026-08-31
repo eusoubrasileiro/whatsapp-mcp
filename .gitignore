@@ -35,3 +35,6 @@ data/
 .DS_Store
 Thumbs.db
 .rooexamples/__pycache__/
+
+# host secrets — never commit
+deploy/.env
