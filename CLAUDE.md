@@ -64,7 +64,7 @@ Remember to swap back to the HTTP entry afterwards.
 
 | Symptom | Fix |
 |---------|-----|
-| `claude mcp list` shows whatsapp `✗ Failed to connect` | Check `curl -sS -o /dev/null -w '%{http_code}' https://mcp.amiticia.cc/health` — if not reachable, DNS or Traefik issue. See `systems/vps/stacks/whatsapp-mcp/README.md`. |
+| `claude mcp list` shows whatsapp `✗ Failed to connect` | Check `curl -sS -o /dev/null -w '%{http_code}' https://mcp.amiticia.cc/health` — if not reachable, DNS or Traefik issue. See `deploy/README.md`. |
 | `HTTP 401` from MCP endpoint | `MCP_AUTH_TOKEN` mismatch between `.env` on VPS and your `~/.claude.json`. Regenerate or re-sync. |
 | TLS cert failing (`SSL_ERROR_*`) | Let's Encrypt / Traefik didn't issue yet. Check CF DNS proxy is **off** (grey cloud) for `mcp`/`wa` records. |
 | `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
@@ -670,7 +670,7 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `S3_BUCKET` | `amiticia-media` | Bucket name. The `mc` init sidecar creates it on first boot. |
 | `S3_REGION` | `us-east-1` | Bucket region (cosmetic for RustFS; SDK still requires it). |
 | `S3_SKIP_POLICY` | `false` | Keep `false` — RustFS accepts `setBucketPolicy`, so the app sets the public-read policy at boot. |
-| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`). |
+| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `deploy/docker-compose.yaml`). |
 | `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. Hardcoded until 2nd customer. |
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
 | `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
@@ -757,7 +757,7 @@ scp /tmp/old-wa.db /tmp/old-wa-media.tar.gz <vps>:/tmp/
 
 # 2. on the VPS
 ssh <vps>
-cd /root/systems/vps/stacks/whatsapp-mcp
+cd /opt/amiticia/whatsapp-mcp/deploy
 # extract media first (tar -k keeps existing files on conflict):
 tar xzkf /tmp/old-wa-media.tar.gz -C /storage/whatsapp-mcp/data/
 docker compose stop
@@ -780,10 +780,10 @@ Backups are on the host side of the bind mount (`/storage/whatsapp-mcp/backups/`
 
 ## Deploy (Docker + Traefik on VPS)
 
-Full deploy / update / rotate-secrets / troubleshoot runbook: [`systems/vps/stacks/whatsapp-mcp/README.md`](../../infra/systems/vps/stacks/whatsapp-mcp/README.md) (branch `non-swarm`).
+Full deploy / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md).
 
 Production stack lives in the sibling `systems` repo at:
-`systems/vps/stacks/whatsapp-mcp/docker-compose.yaml`
+`deploy/docker-compose.yaml`
 
 Image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`.
 

@@ -17,7 +17,7 @@
 #   https://mcp.amiticia.cc/upload → port 39003 (host-disk file upload, Bearer auth enforced by the app)
 #   https://mcp.amiticia.cc/media/ → RustFS sidecar :9000 (public read, /media/* rewritten to /amiticia-media/*)
 #
-# Required env (set in /root/systems/vps/stacks/whatsapp-mcp/.env, chmod 600):
+# Required env (set in /opt/amiticia/whatsapp-mcp/deploy/.env, chmod 600):
 #   MCP_AUTH_TOKEN        shared secret for MCP clients (openssl rand -hex 32)
 #   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
 #   EXPECTED_WA_NUMBER    phone prefix that is allowed to pair, e.g. 5531

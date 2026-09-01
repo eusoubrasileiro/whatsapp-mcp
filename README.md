@@ -115,7 +115,7 @@ The server exposes 22 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 
 Full deploy / update / rotate-secrets / troubleshoot runbook lives in the sibling `systems` repo:
 
-`systems/vps/stacks/whatsapp-mcp/README.md` (branch `non-swarm`).
+`deploy/README.md`.
 
 The image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`. Build recipe (BuildKit, requires sibling `baileys-client/`):
 
