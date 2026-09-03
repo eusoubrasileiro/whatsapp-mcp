@@ -165,6 +165,26 @@ a commit. Verdicts are logged to `.quality-gate/review-log.jsonl`.
 
 ---
 
+## Behavioral probes
+
+Unit tests confirm the tool schemas and the connection state machine. They do
+not catch this server's characteristic failure — **`send_message` returns
+success and the message never arrives** — which is only observable against a
+really-running instance.
+
+| Probe | Tool | Allowed target |
+|---|---|---|
+| QR pairing page shows a live connection state, not a blank or stale one | `playwright` MCP or `curl` | the local `docker-compose.dev.yaml` stack — never `wa.amiticia.cc` |
+| `send_message` actually delivers and returns a real ack | this server's own `send_message`, driven against the local stack | **+55 31 9123-4567** (Amiticia 2, the coexistence test number) |
+| `POST /upload` returns a URL that `send_file` can resolve | `curl` | the local stack's upload endpoint — never `mcp.amiticia.cc` |
+
+Run them at the merge/done boundary, not in the commit gate.
+
+⚠️ The send probe **crosses into WhatsApp's live network** using a real account,
+so it stays attended — never an unattended gate — and targets only the test
+number above. **+55 51 8437-3737 is the live pilot: no probe ever touches it.**
+Full numbers table: the workspace `CLAUDE.md`.
+
 ## Scripts
 
 | Command | Description |
