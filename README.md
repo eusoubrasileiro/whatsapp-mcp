@@ -1,6 +1,6 @@
 # WhatsApp MCP Server
 
-WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTTPS with Bearer auth, and pushes [ntfy](https://ntfy.sh) notifications when your session needs attention (QR expired, connection dropped). Built on [Baileys](https://github.com/WhiskeySockets/Baileys) via the `@amiticia/baileys-client` wrapper.
+WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTTPS with Bearer auth, and pushes [ntfy](https://ntfy.sh) notifications when your session needs attention (QR expired, connection dropped). Built on [Baileys](https://github.com/WhiskeySockets/Baileys) via the [`@amiticia/baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) wrapper.
 
 ## Who this is for
 
@@ -13,7 +13,7 @@ You want your personal WhatsApp account reachable as a set of tools from **Claud
 - **Public QR web page** (protected by paired-number check) — tap the ntfy push and scan directly from your phone browser
 - **ntfy push** on: first QR after disconnect, every 2min while still waiting, connection drop, reconnect after drop, and unexpected pairings
 - **Bad-pairing protection** — if someone else scans the public QR, the app auto-logs out and purges credentials (`EXPECTED_WA_NUMBER`)
-- **22 MCP tools** — search contacts/messages, list chats, send text/media, react, delete, mark read, download media, plus webhook subscriptions for real-time inbound push (see table below)
+- **23 MCP tools** — search contacts/messages, list chats, send text/media, react, delete, mark read, download media, plus reactive monitoring (cursor delta, long-poll, a `follow_chat` WebSocket stream) and webhook subscriptions for real-time inbound push (see table below)
 - **Persistent SQLite** (chats/messages/contacts) and Baileys multi-file auth stored in a Docker volume
 
 ## Architecture
@@ -47,12 +47,10 @@ One container exposes two HTTP servers on different ports. Traefik terminates TL
 
 ## Quick start for MCP clients
 
-The canonical deployment exposes:
+A deployment exposes two hostnames of your choosing (`example.com` below — substitute your own):
 
-- `https://mcp.amiticia.cc/mcp` — MCP endpoint, requires `Authorization: Bearer <MCP_AUTH_TOKEN>`
-- `https://wa.amiticia.cc/` — QR web page
-
-If you run your own instance, replace hostnames accordingly.
+- `https://mcp.example.com/mcp` — MCP endpoint, requires `Authorization: Bearer <MCP_AUTH_TOKEN>`
+- `https://wa.example.com/` — QR web page
 
 ### Claude Code
 
@@ -61,7 +59,7 @@ Edit `~/.claude.json`, in the top-level `mcpServers` object:
 ```json
 "whatsapp": {
   "type": "http",
-  "url": "https://mcp.amiticia.cc/mcp",
+  "url": "https://mcp.example.com/mcp",
   "headers": {
     "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
   }
@@ -79,7 +77,7 @@ Export `MCP_AUTH_TOKEN` in your shell (or put the token literally — `~/.claude
   "mcpServers": {
     "whatsapp": {
       "type": "http",
-      "url": "https://mcp.amiticia.cc/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": { "Authorization": "Bearer your-token-here" }
     }
   }
@@ -96,14 +94,14 @@ See [`examples/`](./examples/) for a raw HTTPS JSON-RPC transcript (curl), a Pyt
 
 ## MCP tools
 
-The server exposes 22 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
+The server exposes 23 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 
 | Category | Tools |
 |----------|-------|
 | Connection / Auth | `get_connection_status`, `logout` |
 | Contacts | `search_contacts`, `list_contacts` |
 | Messages | `list_messages`, `get_messages_today`, `search_messages`, `get_message_context` |
-| Reactive monitoring | `get_new_messages` (cursor delta), `wait_for_messages` (long-poll — block until a reply lands; loop the cursor to cover hour-late replies cheaply) |
+| Reactive monitoring | `get_new_messages` (cursor delta), `wait_for_messages` (bounded long-poll for a reply expected within minutes), `follow_chat` (WebSocket presence stream — woken per inbound message while doing other work; see [`docs/agent-presence-stream-recipe.md`](./docs/agent-presence-stream-recipe.md)) |
 | Chats | `list_chats`, `get_chat` |
 | Groups | `get_group_info` |
 | Sending | `send_message`, `send_file` |
@@ -113,30 +111,32 @@ The server exposes 22 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 
 ## Deployment
 
-Full deploy / update / rotate-secrets / troubleshoot runbook lives in the sibling `systems` repo:
+Full deploy / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md). The production compose file is [`deploy/docker-compose.yaml`](./deploy/docker-compose.yaml); hostnames and the send policy come from `deploy/.env` (template: [`deploy/.env.example`](./deploy/.env.example)).
 
-`deploy/README.md`.
-
-The image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`. Build recipe (BuildKit, requires sibling `baileys-client/`):
+This repo depends on its sibling [`baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) (`link:../baileys-client`), so clone both side by side. Build recipe (BuildKit):
 
 ```bash
+git clone https://github.com/AmiticIA-AutoSys/baileys-client.git
+git clone https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git
+cd whatsapp-mcp
 DOCKER_BUILDKIT=1 docker build \
   --build-context baileys=../baileys-client \
-  -t ghcr.io/amiticia-autosys/whatsapp-mcp:latest .
+  -t whatsapp-mcp:latest .
 ```
 
 ## Local development
 
-For development without Docker, keep the default stdio transport:
+For development without Docker, keep the default stdio transport. Build the sibling `baileys-client` checkout first (see [Deployment](#deployment)):
 
 ```bash
+(cd ../baileys-client && pnpm install && pnpm build)
 pnpm install
 pnpm test       # vitest — must stay green before commits (extreme TDD)
 pnpm typecheck
 pnpm start      # node --experimental-strip-types src/main.ts
 ```
 
-Requires Node.js `>= 23.10.0` for `--experimental-strip-types` and native `better-sqlite3`.
+Requires Node.js 24 (`.nvmrc`; `engines` asks for `>= 24`) for `--experimental-strip-types` and native `better-sqlite3`.
 
 For local HTTP mode (same as production minus Traefik):
 
@@ -155,7 +155,7 @@ See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highligh
 |----------|---------|
 | `MCP_AUTH_TOKEN` | Bearer token required by the HTTP MCP endpoint (mandatory in production) |
 | `NTFY_TOPIC_URL` | Unset = no push notifications; set to enable |
-| `EXPECTED_WA_NUMBER` | Prefix allowed to pair; wrong scan → auto-logout + purge (strongly recommended when `wa.amiticia.cc` is public) |
+| `EXPECTED_WA_NUMBER` | Prefix allowed to pair; wrong scan → auto-logout + purge (strongly recommended whenever the QR page is public) |
 | `WHATSAPP_MCP_DATA_DIR` | Base dir for `auth_info/`, `data/`, and logs (defaults to `.`, Docker uses `/data`) |
 | `OPENROUTER_API_KEY` | Whisper provider for `download_media` audio transcription |
 | `AUDIO_PROVIDER` | Transcription route: `openrouter` (default) \| `groq` \| `openai`. Rollback lanes only — the route is chosen by this var, never by which key happens to be set |
@@ -165,8 +165,8 @@ See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highligh
 
 - **Credentials**: `WHATSAPP_MCP_DATA_DIR/auth_info/` (Baileys multi-file auth state)
 - **Messages / chats / contacts**: `WHATSAPP_MCP_DATA_DIR/data/whatsapp.db` (SQLite via Drizzle + `better-sqlite3`)
-- **Media**: served from a RustFS sidecar on the same VPS, behind Traefik at `https://mcp.amiticia.cc/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
-- **Audio → text**: by default, `download_media` on an audio/ptt message transcribes via OpenRouter Whisper (`openai/whisper-large-v3`) after preprocessing to 16 kHz mono FLAC. The response is wrapped in an `<transcription>` XML block. Pass `transcribe: false` to get raw audio bytes instead. Requires `OPENROUTER_API_KEY`. Groq and OpenAI remain as rollback routes via `AUDIO_PROVIDER`, but both accounts are scheduled for closure — once they are, those routes stop working and this line should say so.
+- **Media**: served from a RustFS sidecar on the same VPS, behind Traefik at `https://mcp.example.com/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
+- **Audio → text**: by default, `download_media` on an audio/ptt message transcribes via OpenRouter Whisper (`openai/whisper-large-v3`) after preprocessing to 16 kHz mono FLAC. The response is wrapped in an `<transcription>` XML block. Pass `transcribe: false` to get raw audio bytes instead. Requires `OPENROUTER_API_KEY`. Groq and OpenAI remain as rollback routes via `AUDIO_PROVIDER` (each needs its own key).
 - **Image → text**: opt-in via `download_media({ ..., describe: true })`. Sends bytes to Gemini 2.5 Flash; response wrapped in an `<image_description>` XML block. Requires `GEMINI_API_KEY`.
 - **Logs**: `WHATSAPP_MCP_DATA_DIR/{wa,mcp}-logs.txt` (pino JSON lines)
 
@@ -182,4 +182,6 @@ All data directories are `.gitignore`d. Treat them as sensitive — anyone with 
 
 ## License
 
-ISC — see `package.json`.
+MIT — see [`LICENSE`](./LICENSE), which also carries the ISC notice for the portions derived from `jlucaso1/whatsapp-mcp-ts`.
+
+Not affiliated with WhatsApp or Meta. Baileys is an unofficial WhatsApp Web client; automating a WhatsApp account can get it restricted — read [`docs/account-restrictions.md`](./docs/account-restrictions.md) before sending from a number you care about.
