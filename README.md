@@ -18,30 +18,27 @@ You want your personal WhatsApp account reachable as a set of tools from **Claud
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  subgraph clients[MCP clients]
+    CC[Claude Code / Desktop / Cursor / custom agents]
+  end
+  PB[Phone browser]
+  CC -- "https + Bearer" --> T[Traefik]
+  PB -- "https (public)" --> T
+  T -- ":39001" --> MCP[FastMCP httpStream]
+  T -- ":39002" --> QR[QR page]
+  subgraph container[whatsapp-mcp container]
+    MCP
+    QR
+    BA[Baileys]
+  end
+  MCP --> BA
+  QR --> BA
+  BA -- "WA Web API" --> WA[(WhatsApp servers)]
+  container -- "outbound POST" --> NT[ntfy.sh] -- push --> PH[Your phone]
 ```
-                    https (Bearer)
-  MCP clients  ───────────────────▶  Traefik  ──▶  :39001 (FastMCP httpStream)
-  (Claude Code, Desktop,                                │
-   Cursor, custom agents)                               │
-                                                        ▼
-                    https (public)                 whatsapp-mcp
-  Phone browser ───────────────▶  Traefik  ──▶  :39002 (QR page)
-                                                        │
-                                                        ▼
-                                                    Baileys
-                                                        │ WA Web API
-                                                        ▼
-                                                  WhatsApp servers
 
-                                                   outbound only ▲
-                                                        │
-                                                       POST
-                                                        │
-                                                     ntfy.sh
-                                                        │ push
-                                                        ▼
-                                                     Your phone
-```
 
 One container exposes two HTTP servers on different ports. Traefik terminates TLS (Let's Encrypt) and routes by hostname.
 
@@ -94,7 +91,7 @@ See [`examples/`](./examples/) for a raw HTTPS JSON-RPC transcript (curl), a Pyt
 
 ## MCP tools
 
-The server exposes 23 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
+The server exposes 23 tools. Full reference: [`docs/tools.md`](./docs/tools.md).
 
 | Category | Tools |
 |----------|-------|
@@ -131,7 +128,7 @@ For development without Docker, keep the default stdio transport. Build the sibl
 ```bash
 (cd ../baileys-client && pnpm install && pnpm build)
 pnpm install
-pnpm test       # vitest — must stay green before commits (extreme TDD)
+pnpm test       # vitest — git hooks enforce it on every commit
 pnpm typecheck
 pnpm start      # node --experimental-strip-types src/main.ts
 ```
@@ -145,11 +142,11 @@ MCP_TRANSPORT=httpstream MCP_AUTH_TOKEN=dev pnpm start
 # then: curl -H 'Authorization: Bearer dev' http://127.0.0.1:39001/mcp ...
 ```
 
-See [`scripts/smoke-test.sh`](./scripts/smoke-test.sh) for the auth matrix.
+See [`scripts/smoke-test.sh`](./scripts/smoke-test.sh) for the auth matrix, and [`docs/development.md`](./docs/development.md) for tests, hooks and conventions.
 
 ## Environment variables
 
-See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highlights:
+Full table: [`docs/configuration.md`](./docs/configuration.md). Highlights:
 
 | Variable | Purpose |
 |----------|---------|
@@ -157,17 +154,17 @@ See the full table in [`CLAUDE.md#environment-variables`](./CLAUDE.md). Highligh
 | `NTFY_TOPIC_URL` | Unset = no push notifications; set to enable |
 | `EXPECTED_WA_NUMBER` | Prefix allowed to pair; wrong scan → auto-logout + purge (strongly recommended whenever the QR page is public) |
 | `WHATSAPP_MCP_DATA_DIR` | Base dir for `auth_info/`, `data/`, and logs (defaults to `.`, Docker uses `/data`) |
-| `OPENROUTER_API_KEY` | Whisper provider for `download_media` audio transcription |
+| `OPENROUTER_API_KEY` | Powers `download_media` audio transcription (Whisper) and image description (vision model) |
 | `AUDIO_PROVIDER` | Transcription route: `openrouter` (default) \| `groq` \| `openai`. Rollback lanes only — the route is chosen by this var, never by which key happens to be set |
-| `GEMINI_API_KEY` | Required for `download_media({ describe: true })` image captioning via Gemini 2.5 Flash |
+| `VISION_MODEL` | OpenRouter model for image description (default `openai/gpt-6-luna`) |
 
 ## Data storage & privacy
 
 - **Credentials**: `WHATSAPP_MCP_DATA_DIR/auth_info/` (Baileys multi-file auth state)
 - **Messages / chats / contacts**: `WHATSAPP_MCP_DATA_DIR/data/whatsapp.db` (SQLite via Drizzle + `better-sqlite3`)
-- **Media**: served from a RustFS sidecar on the same VPS, behind Traefik at `https://mcp.example.com/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
+- **Media**: served from a RustFS sidecar in the same compose stack, behind Traefik at `https://mcp.example.com/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
 - **Audio → text**: by default, `download_media` on an audio/ptt message transcribes via OpenRouter Whisper (`openai/whisper-large-v3`) after preprocessing to 16 kHz mono FLAC. The response is wrapped in an `<transcription>` XML block. Pass `transcribe: false` to get raw audio bytes instead. Requires `OPENROUTER_API_KEY`. Groq and OpenAI remain as rollback routes via `AUDIO_PROVIDER` (each needs its own key).
-- **Image → text**: opt-in via `download_media({ ..., describe: true })`. Sends bytes to Gemini 2.5 Flash; response wrapped in an `<image_description>` XML block. Requires `GEMINI_API_KEY`.
+- **Image → text**: opt-in via `download_media({ ..., describe: true })`. Sends the image to an OpenRouter vision model (`VISION_MODEL`, default `openai/gpt-6-luna`); response wrapped in an `<image_description>` XML block. Requires `OPENROUTER_API_KEY`.
 - **Logs**: `WHATSAPP_MCP_DATA_DIR/{wa,mcp}-logs.txt` (pino JSON lines)
 
 Everything stays on the VPS (Docker bind mount in production, filesystem in dev). Data leaves the VPS only when an MCP client explicitly invokes a tool.
@@ -177,7 +174,7 @@ All data directories are `.gitignore`d. Treat them as sensitive — anyone with 
 ## Credits
 
 - Conceptual origin: [lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) (Go + Python).
-- Fork history: started from `jlucaso1/whatsapp-mcp-ts`, heavily rewritten for AmiticIA-AutoSys infrastructure.
+- Fork history: started from `jlucaso1/whatsapp-mcp-ts`, since heavily rewritten (HTTP transport, send guards, media plane, reactive monitoring).
 - Maintained by [eusoubrasileiro](https://github.com/eusoubrasileiro).
 
 ## License

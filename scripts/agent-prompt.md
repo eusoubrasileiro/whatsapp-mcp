@@ -30,7 +30,7 @@ it doesn't cover something, stop and report rather than guessing.
    - Make it pass (Green).
    - Refactor only with tests green.
    Existing tests must remain green throughout. The change-type → test-type
-   matrix in the root `CLAUDE.md` is binding.
+   matrix in `docs/development.md` is binding.
 
 5. **Critical files require human approval.** The `ask` tier in
    `.claude/settings.json` (send guards, data layer, operator scripts, the
