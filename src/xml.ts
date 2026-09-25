@@ -1,8 +1,7 @@
 /**
  * XML envelope renderers for MCP tool responses.
  *
- * Matches the Anthropic-style XML-tag convention used across AmiticIA's
- * Claude-based stack. Downstream agents
+ * Follows Anthropic's XML-tag prompting convention. Downstream agents
  * parse the wrapper tag (`<transcription>` / `<image_description>`) to
  * reliably separate model output from surrounding metadata.
  *

@@ -63,7 +63,7 @@ suite for the review tooling in `scripts/lib/`.
 | `pre-commit` | `lint-staged` (biome fix) → `tsc --noEmit` → `pnpm test:coverage` → `pnpm quality-gate` |
 | `commit-msg` | commitlint (Conventional Commits; `bug:` / `hotfix:` also accepted) |
 | `post-commit` | records the commit hash in the review log, prints the quality-gate delta (never blocks) |
-| `pre-push` | tsc → `test:harness` → lint → `test:coverage` → `quality-gate` → `scripts/security-review.mjs` (LLM reviewer via the Claude CLI, fail-closed) |
+| `pre-push` | tsc → `test:harness` → lint → `test:coverage` → `quality-gate` → `scripts/security-review.mjs` (LLM reviewer via the Claude CLI, fail-closed — without an authenticated `claude` on PATH the push is refused; outside contributors can open a PR instead) |
 
 `pnpm quality-gate` is a deterministic ratchet against `quality-baseline.json` (max file
 length, duplication, `any` casts, assertion count, coverage): metrics may improve, never
