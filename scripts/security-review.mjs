@@ -7,10 +7,9 @@
  * quality-gate report to claude -p (Sonnet tier), appends the verdict to
  * .quality-gate/review-log.jsonl, and blocks the push (exit 1) on reject.
  *
- * Verdict space: "approve" | "reject". The 3-strike retry cap for dispatched
- * sub-agents is enforced by the agent contract in scripts/agent-prompt.md
- * (item 7), not by this script — this reviewer is stateless and judges each
- * run independently.
+ * Verdict space: "approve" | "reject". The reviewer is stateless and judges
+ * each run independently; any retry limit for dispatched sub-agents belongs to
+ * the agent contract in scripts/agent-prompt.md, not to this script.
  */
 
 import { execSync } from "node:child_process";
