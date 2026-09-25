@@ -1,6 +1,6 @@
 # WhatsApp MCP Server
 
-WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTTPS with Bearer auth, and pushes [ntfy](https://ntfy.sh) notifications when your session needs attention (QR expired, connection dropped). Built on [Baileys](https://github.com/WhiskeySockets/Baileys) via the [`@amiticia/baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) wrapper.
+WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTTPS with Bearer auth, and pushes [ntfy](https://ntfy.sh) notifications when your session needs attention (QR expired, connection dropped). Built on [Baileys](https://github.com/WhiskeySockets/Baileys) via the [`@amiticia/baileys-client`](https://github.com/eusoubrasileiro/baileys-client) wrapper.
 
 ## Who this is for
 
@@ -113,11 +113,11 @@ The server exposes 23 tools. Full details are in [`CLAUDE.md`](./CLAUDE.md).
 
 Full deploy / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md). The production compose file is [`deploy/docker-compose.yaml`](./deploy/docker-compose.yaml); hostnames and the send policy come from `deploy/.env` (template: [`deploy/.env.example`](./deploy/.env.example)).
 
-This repo depends on its sibling [`baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) (`link:../baileys-client`), so clone both side by side. Build recipe (BuildKit):
+This repo depends on its sibling [`baileys-client`](https://github.com/eusoubrasileiro/baileys-client) (`link:../baileys-client`), so clone both side by side. Build recipe (BuildKit):
 
 ```bash
-git clone https://github.com/AmiticIA-AutoSys/baileys-client.git
-git clone https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git
+git clone https://github.com/eusoubrasileiro/baileys-client.git
+git clone https://github.com/eusoubrasileiro/whatsapp-mcp.git
 cd whatsapp-mcp
 DOCKER_BUILDKIT=1 docker build \
   --build-context baileys=../baileys-client \
@@ -178,7 +178,7 @@ All data directories are `.gitignore`d. Treat them as sensitive — anyone with 
 
 - Conceptual origin: [lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) (Go + Python).
 - Fork history: started from `jlucaso1/whatsapp-mcp-ts`, heavily rewritten for AmiticIA-AutoSys infrastructure.
-- Maintained by [AmiticIA-AutoSys](https://github.com/AmiticIA-AutoSys).
+- Maintained by [eusoubrasileiro](https://github.com/eusoubrasileiro).
 
 ## License
 

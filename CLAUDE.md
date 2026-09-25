@@ -1,6 +1,6 @@
 # WhatsApp MCP Server
 
-WhatsApp as an MCP server. Canonical deployment is a long-lived Docker daemon on a VPS behind Traefik, exposed as `https://mcp.example.com/mcp` (Bearer auth) with a public QR page at `https://wa.example.com/` — substitute your own hostnames throughout this file. Built on [`@amiticia/baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client).
+WhatsApp as an MCP server. Canonical deployment is a long-lived Docker daemon on a VPS behind Traefik, exposed as `https://mcp.example.com/mcp` (Bearer auth) with a public QR page at `https://wa.example.com/` — substitute your own hostnames throughout this file. Built on [`@amiticia/baileys-client`](https://github.com/eusoubrasileiro/baileys-client).
 
 User-facing overview lives in [`README.md`](./README.md). This file is the internal contributor / operator reference.
 
@@ -175,7 +175,7 @@ really-running instance.
 | Probe | Tool | Allowed target |
 |---|---|---|
 | QR pairing page shows a live connection state, not a blank or stale one | `playwright` MCP or `curl` | the local `docker-compose.dev.yaml` stack — never `wa.amiticia.cc` |
-| `send_message` actually delivers and returns a real ack | this server's own `send_message`, driven against the local stack | **+55 31 9123-4567** (Amiticia 2, the coexistence test number) |
+| `send_message` actually delivers and returns a real ack | this server's own `send_message`, driven against the local stack | a dedicated test number you own — never the live one |
 | `POST /upload` returns a URL that `send_file` can resolve | `curl` | the local stack's upload endpoint — never `mcp.amiticia.cc` |
 
 Run them at the merge/done boundary, not in the commit gate.
@@ -207,7 +207,7 @@ Full numbers table: the workspace `CLAUDE.md`.
 - `pnpm test` — 2 test suites fail (`message-parsing.test.ts`, `whatsapp-concurrency.test.ts`); 4 tests are skipped.
 - `pnpm typecheck` — several `error TS2307: Cannot find module '@amiticia/baileys-client'` errors, plus downstream implicit-`any` errors in `whatsapp.ts`.
 
-These failures are **not regressions** — they exist on `main` and every branch. Fix by cloning [`baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) next to this repo, running `pnpm install && pnpm build` there, then `pnpm install` here.
+These failures are **not regressions** — they exist on `main` and every branch. Fix by cloning [`baileys-client`](https://github.com/eusoubrasileiro/baileys-client) next to this repo, running `pnpm install && pnpm build` there, then `pnpm install` here.
 
 ## Critical Files (require human approval)
 
