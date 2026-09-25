@@ -3,8 +3,8 @@
  *
  * Messaging someone who has never messaged you is a *reach-out*, and a burst of
  * reach-outs is the single most reliable way to get a WhatsApp account
- * restricted. That is not theoretical here: the linked number was restricted for
- * five days on 2026-07-28 — still able to reach saved contacts, unable to reach
+ * restricted. That is not theoretical: a number linked to this server was
+ * restricted for five days — still able to reach saved contacts, unable to reach
  * strangers — after a run of sends to hand-built JIDs.
  *
  * So an outbound to a phone JID with no inbound history is refused by default.
@@ -13,11 +13,11 @@
  *
  * Two **operator** policies sit on top of that check, because the per-call escape
  * hatch alone is not trustworthy — any agent can pass `allow_cold_contact: true`,
- * which on the personal-number deployment — an account one strike from a
- * permanent ban — leaves the guard advisory.
+ * which on a number that cannot afford another restriction leaves the guard
+ * advisory.
  *
  *   - `SEND_COLD_OVERRIDE=deny` makes the escape hatch inert: the parameter is
- *     ignored and the refusal names the work instance, whose job outreach is.
+ *     ignored and the refusal sends outreach to a separate instance instead.
  *   - `SEND_COLD_ALLOWED_JIDS` pre-approves specific recipients (numbers we own),
  *     which stay sendable under either policy — so testing needs no override.
  */
@@ -157,15 +157,14 @@ const SHARED_NEXT_STEPS = [
 
 /** Tail of the refusal when the per-call override is still available. */
 const OVERRIDE_ALLOWED_TAIL = [
-  "Cold reach-outs are what WhatsApp's anti-abuse system restricts accounts for.",
-  "This number was already restricted once (2026-07-28) and a restriction cannot",
-  "be appealed — it takes the account offline for days.",
+  "Cold reach-outs are what WhatsApp's anti-abuse system restricts accounts for,",
+  "and a restriction cannot be appealed — it takes the account offline for days.",
   "",
   ...SHARED_NEXT_STEPS,
   "  3. ONLY IF THE CONTACT ASKED TO BE REACHED — someone who gave you the number",
   "     and is expecting the message — re-send with allow_cold_contact: true. Do",
   "     not use it to work around this refusal in bulk; that is exactly the",
-  "     pattern that caused the restriction.",
+  "     pattern that gets accounts restricted.",
   "",
   "An operator can disable the guard entirely with SEND_COLD_CONTACT_GUARD=false.",
 ];
@@ -182,15 +181,15 @@ const OVERRIDE_DENIED_TAIL = [
   "(SEND_COLD_OVERRIDE=deny), so allow_cold_contact was IGNORED. Sending it again",
   "changes nothing — on this instance that is not a per-call decision.",
   "",
-  "This number has already been restricted for cold reach-outs, and a restriction",
-  "cannot be appealed — it takes the account offline for days. Outreach and",
-  "first-contact sends belong on the work instance: use the whatsapp-work MCP for",
-  "them.",
+  "The operator reserved this number for existing relationships: a restriction for",
+  "cold reach-outs cannot be appealed and takes the account offline for days.",
+  "Outreach and first-contact sends belong on a separate instance whose number is",
+  "meant to reach strangers — never on this one.",
   "",
   ...SHARED_NEXT_STEPS,
-  "  3. SEND IT FROM THE WORK INSTANCE. First contact is that account's job — the",
-  "     whatsapp-work MCP exposes the same send tools against a number that is",
-  "     meant to reach strangers.",
+  "  3. SEND IT FROM THAT OTHER INSTANCE, if your operator runs one: it exposes",
+  "     the same send tools against a number meant for first contact. If none is",
+  "     configured for you, report the refusal to the user instead of retrying.",
   "",
   "Only an operator can change this: an approved recipient goes in",
   "SEND_COLD_ALLOWED_JIDS, and the override itself returns with SEND_COLD_OVERRIDE=allow.",
