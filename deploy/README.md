@@ -25,8 +25,8 @@ ssh <vps>
 
 # 1. clone both repos side by side
 cd /opt
-git clone https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git
-git clone https://github.com/AmiticIA-AutoSys/baileys-client.git
+git clone https://github.com/eusoubrasileiro/whatsapp-mcp.git
+git clone https://github.com/eusoubrasileiro/baileys-client.git
 
 # 2. build image (baileys-client is linked via BuildKit --build-context)
 cd /opt
@@ -350,7 +350,7 @@ borg create \
 
 ## Related
 
-- Image source: `github.com/AmiticIA-AutoSys/whatsapp-mcp` (branch `main`)
-- Shared client lib: `github.com/AmiticIA-AutoSys/baileys-client` (branch `main`)
+- Image source: `github.com/eusoubrasileiro/whatsapp-mcp` (branch `main`)
+- Shared client lib: `github.com/eusoubrasileiro/baileys-client` (branch `main`)
 - User docs: see the whatsapp-mcp repo's `README.md` and `CLAUDE.md`
 - This runbook lives in this repo at `deploy/README.md` — the product owns its own deployment config

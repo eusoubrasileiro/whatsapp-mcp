@@ -9,12 +9,12 @@
     "baileys",
     "claude"
   ],
-  "author": "AmiticIA-AutoSys",
+  "author": "eusoubrasileiro",
   "license": "MIT",
   "description": "WhatsApp MCP server using Baileys for Claude/Cursor integration",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git"
+    "url": "git+https://github.com/eusoubrasileiro/whatsapp-mcp.git"
   },
   "scripts": {
     "start": "node --experimental-strip-types src/main.ts",
