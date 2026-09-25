@@ -1,29 +1,35 @@
-# Deployed from this repo: /opt/amiticia/whatsapp-mcp/deploy/ on the VPS.
+# whatsapp-mcp production stack: one VPS, Traefik v3 in front, deployed from
+# this directory with `docker compose up -d`.
 #
-# This file was the production definition living in infra/systems/vps/stacks/,
-# a leftover of the abandoned Portainer/Swarm setup. Products own their own
-# deployment config, so it moved here verbatim on 2026-08-31. Nothing about the
-# running service changed.
+# Everything deployment-specific — secrets, hostnames, the per-instance send
+# policy — comes from deploy/.env (chmod 600, gitignored; template in
+# .env.example). Nothing here names a real host or number.
 #
-# Secrets stay OUT of git: deploy/.env (chmod 600) on the host supplies the
-# ${...} values documented below.
+# Assumes an existing Traefik attached to the external `network_public` network,
+# with a `websecure` entrypoint and a certresolver named `myresolver`. Adjust the
+# labels if yours differ.
 #
-# whatsapp-mcp stack for the VPS (AmiticIA-AutoSys).
-#
-# Image published as ghcr.io/amiticia-autosys/whatsapp-mcp:latest (private).
+# Image: build it from this repo plus the sibling baileys-client (README.md →
+# Deployment). The maintainers publish ghcr.io/amiticia-autosys/whatsapp-mcp
+# (private); retag your own build to the same name or change `image:` below.
 # Routes:
-#   https://wa.amiticia.cc/        → port 39002 (public QR page + /health)
-#   https://mcp.amiticia.cc/mcp    → port 39001 (Bearer auth enforced by the app)
-#   https://mcp.amiticia.cc/upload → port 39003 (host-disk file upload, Bearer auth enforced by the app)
-#   https://mcp.amiticia.cc/media/ → RustFS sidecar :9000 (public read, /media/* rewritten to /amiticia-media/*)
+#   https://${QR_DOMAIN}/          → port 39002 (public QR page + /health)
+#   https://${MCP_DOMAIN}/mcp      → port 39001 (Bearer auth enforced by the app)
+#   https://${MCP_DOMAIN}/upload   → port 39003 (host-disk file upload, Bearer auth enforced by the app)
+#   https://${MCP_DOMAIN}/stream   → port 39004 (follow_chat WebSocket stream, token-gated by the app)
+#   https://${MCP_DOMAIN}/media/   → RustFS sidecar :9000 (public read, /media/* rewritten to /amiticia-media/*)
 #
-# Required env (set in /opt/amiticia/whatsapp-mcp/deploy/.env, chmod 600):
+# Required env (deploy/.env, chmod 600):
+#   MCP_DOMAIN            public hostname for the MCP, upload, stream and media routes
+#   QR_DOMAIN             public hostname for the QR page
 #   MCP_AUTH_TOKEN        shared secret for MCP clients (openssl rand -hex 32)
 #   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
 #   EXPECTED_WA_NUMBER    phone prefix that is allowed to pair, e.g. 5531
 #   MINIO_ROOT_USER       S3 root login (RustFS; env name kept for compat)
 #   MINIO_ROOT_PASSWORD   S3 root secret (RustFS; env name kept for compat)
 # Optional:
+#   SEND_COLD_OVERRIDE    anti-ban policy for this number: deny (default) | allow
+#   SEND_COLD_ALLOWED_JIDS  numbers you own that may always be messaged (comma list)
 #   NTFY_TOKEN            only if the ntfy topic is protected
 #   OPENROUTER_API_KEY    enables download_media transcribe=true via Whisper Large v3
 #   AUDIO_PROVIDER        transcription route: openrouter (default) | groq | openai.
@@ -42,7 +48,7 @@ services:
       RUSTFS_ROOT_USER: ${MINIO_ROOT_USER}
       RUSTFS_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
-      # Bind mount mirrors the whatsapp-mcp pattern. Borg backup just adds this dir.
+      # Bind mount mirrors the whatsapp-mcp pattern; an offsite backup just adds this dir.
       - /storage/whatsapp-mcp/minio:/data
     networks:
       - network_public
@@ -54,9 +60,9 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=network_public"
-      # Public media route: mcp.amiticia.cc/media/<key> → minio:9000/amiticia-media/<key>
+      # Public media route: ${MCP_DOMAIN}/media/<key> → minio:9000/amiticia-media/<key>
       # Higher priority than the catch-all wa-mcp router so /media/* wins.
-      - "traefik.http.routers.wa-media.rule=Host(`mcp.amiticia.cc`) && PathPrefix(`/media/`)"
+      - "traefik.http.routers.wa-media.rule=Host(`${MCP_DOMAIN}`) && PathPrefix(`/media/`)"
       - "traefik.http.routers.wa-media.entrypoints=websecure"
       - "traefik.http.routers.wa-media.tls.certresolver=myresolver"
       - "traefik.http.routers.wa-media.priority=100"
@@ -104,28 +110,24 @@ services:
       UPLOAD_SERVER_PORT: "39003"
       STREAM_SERVER_HOST: 0.0.0.0
       STREAM_SERVER_PORT: "39004"
-      STREAM_PUBLIC_URL: wss://mcp.amiticia.cc/stream
+      STREAM_PUBLIC_URL: wss://${MCP_DOMAIN:?set MCP_DOMAIN in deploy/.env}/stream
       WHATSAPP_MCP_DATA_DIR: /data
       LOG_LEVEL: info
-      PUBLIC_QR_URL: https://wa.amiticia.cc/
+      PUBLIC_QR_URL: https://${QR_DOMAIN:?set QR_DOMAIN in deploy/.env}/
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
       NTFY_TOPIC_URL: ${NTFY_TOPIC_URL}
       NTFY_TOKEN: ${NTFY_TOKEN:-}
       EXPECTED_WA_NUMBER: ${EXPECTED_WA_NUMBER}
-      # ── Anti-ban policy (THIS is the personal number) ──────────────
-      # This number was restricted twice in July 2026 by agent-driven cold
-      # sends; a third strike likely loses it permanently. deny makes the
-      # allow_cold_contact tool param inert, so no agent can talk its way
-      # past the cold-contact guard here. Outreach belongs on whatsapp-mcp-2.
-      # Everything else (blocklist, pacer, typing) is on by default.
-      # See libs/whatsapp-mcp/docs/account-restrictions.md — risk-owner setting.
-      SEND_COLD_OVERRIDE: deny
-      # Pre-approved by Alice (risk owner) 2026-08-26: the AmiticIA-owned wahub
-      # test/demo WABA number +55 31 9123-4567 (PRV Demo tenant). Both digit
-      # forms are listed because the allowlist matches exact strings. OVERRIDE
-      # stays `deny`: this pre-approves ONE number we own and does NOT reopen
-      # outreach — every other cold recipient is still refused.
-      SEND_COLD_ALLOWED_JIDS: "553191234567,5531991234567"
+      # ── Anti-ban policy (risk-owner settings, per instance) ───────────
+      # deny makes the allow_cold_contact tool param inert, so no agent can
+      # talk its way past the cold-contact guard. It is the default here: an
+      # instance accepts cold contact only when its operator sets `allow` in
+      # deploy/.env, and that belongs on an outreach number only. The
+      # allowlist pre-approves numbers you own; it matches exact strings, so
+      # list every digit form you send to. Everything else (blocklist, pacer,
+      # typing) is on by default. See docs/account-restrictions.md.
+      SEND_COLD_OVERRIDE: ${SEND_COLD_OVERRIDE:-deny}
+      SEND_COLD_ALLOWED_JIDS: ${SEND_COLD_ALLOWED_JIDS:-}
       # ── S3 media plane (RustFS sidecar above) ──────────────────────
       S3_ENABLED: "true"
       S3_ENDPOINT: minio
@@ -136,7 +138,7 @@ services:
       S3_BUCKET: amiticia-media
       S3_REGION: us-east-1
       S3_SKIP_POLICY: "false"
-      MEDIA_PUBLIC_BASE_URL: https://mcp.amiticia.cc/media
+      MEDIA_PUBLIC_BASE_URL: https://${MCP_DOMAIN}/media
       TENANT_ID: default
       # ── Audio transcription + image description (download_media flags) ──
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
@@ -145,9 +147,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}  # only read when AUDIO_PROVIDER=openai
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
-      # Bind mount (mirrors the chatwoot stack pattern at /storage/<stack>).
+      # Bind mount at /storage/<stack>.
       # Host side holds auth_info/, data/whatsapp.db, data/media/, backups/, logs.
-      # Lets host cron + Borg touch files directly without `docker volume inspect` gymnastics.
+      # Lets host cron + offsite backups touch files directly without `docker volume inspect` gymnastics.
       - /storage/whatsapp-mcp:/data
     networks:
       - network_public
@@ -155,16 +157,16 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=network_public"
       # MCP endpoint — Bearer auth enforced inside the app.
-      # No PathPrefix here: this router catches every path on mcp.amiticia.cc that
+      # No PathPrefix here: this router catches every path on ${MCP_DOMAIN} that
       # isn't already claimed by wa-media or wa-upload (both higher priority).
-      - "traefik.http.routers.wa-mcp.rule=Host(`mcp.amiticia.cc`)"
+      - "traefik.http.routers.wa-mcp.rule=Host(`${MCP_DOMAIN}`)"
       - "traefik.http.routers.wa-mcp.entrypoints=websecure"
       - "traefik.http.routers.wa-mcp.tls.certresolver=myresolver"
       - "traefik.http.routers.wa-mcp.service=wa-mcp-svc"
       - "traefik.http.services.wa-mcp-svc.loadbalancer.server.port=39001"
       # Upload endpoint — Bearer auth enforced inside the app (same MCP_AUTH_TOKEN).
       # Higher priority than the catch-all wa-mcp so /upload doesn't get routed to FastMCP.
-      - "traefik.http.routers.wa-upload.rule=Host(`mcp.amiticia.cc`) && PathPrefix(`/upload`)"
+      - "traefik.http.routers.wa-upload.rule=Host(`${MCP_DOMAIN}`) && PathPrefix(`/upload`)"
       - "traefik.http.routers.wa-upload.entrypoints=websecure"
       - "traefik.http.routers.wa-upload.tls.certresolver=myresolver"
       - "traefik.http.routers.wa-upload.priority=100"
@@ -174,14 +176,14 @@ services:
       # enforced inside the app. Higher priority than the catch-all wa-mcp so
       # /stream upgrades don't get routed to FastMCP. Traefik forwards the
       # Upgrade/Connection headers, so no extra config is needed for the ws handshake.
-      - "traefik.http.routers.wa-stream.rule=Host(`mcp.amiticia.cc`) && PathPrefix(`/stream`)"
+      - "traefik.http.routers.wa-stream.rule=Host(`${MCP_DOMAIN}`) && PathPrefix(`/stream`)"
       - "traefik.http.routers.wa-stream.entrypoints=websecure"
       - "traefik.http.routers.wa-stream.tls.certresolver=myresolver"
       - "traefik.http.routers.wa-stream.priority=100"
       - "traefik.http.routers.wa-stream.service=wa-stream-svc"
       - "traefik.http.services.wa-stream-svc.loadbalancer.server.port=39004"
       # QR page — public; bad-pairing mitigated by EXPECTED_WA_NUMBER check
-      - "traefik.http.routers.wa-qr.rule=Host(`wa.amiticia.cc`)"
+      - "traefik.http.routers.wa-qr.rule=Host(`${QR_DOMAIN}`)"
       - "traefik.http.routers.wa-qr.entrypoints=websecure"
       - "traefik.http.routers.wa-qr.tls.certresolver=myresolver"
       - "traefik.http.routers.wa-qr.service=wa-qr-svc"
