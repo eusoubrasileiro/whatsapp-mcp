@@ -33,7 +33,6 @@
   },
   "dependencies": {
     "@amiticia/baileys-client": "link:../baileys-client",
-    "@google/genai": "^2.6.0",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "better-sqlite3": "^12.9.0",
     "drizzle-orm": "^0.45.2",

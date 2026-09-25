@@ -15,7 +15,7 @@ export function registerMediaTools(server: ToolRegistrar, deps: ToolDeps): void 
       "and run through Whisper (`openai/whisper-large-v3` via OpenRouter). The response is an",
       "XML-wrapped <transcription> text block instead of the raw audio. Pass `transcribe: false` to get audio bytes.",
       "",
-      "For image messages, `describe` is opt-in (default false). When true, the bytes are sent to Gemini 2.5 Flash",
+      "For image messages, `describe` is opt-in (default false). When true, the bytes are sent to a vision model via OpenRouter (default `openai/gpt-6-luna`, override with VISION_MODEL)",
       "and the response is an XML-wrapped <image_description> text block instead of the inline image.",
       "",
       "For non-audio/non-image media (documents, video, stickers), both flags are no-ops and the tool returns the",
@@ -34,7 +34,7 @@ export function registerMediaTools(server: ToolRegistrar, deps: ToolDeps): void 
         .boolean()
         .optional()
         .describe(
-          "Image only: caption via Gemini 2.5 Flash (default false). Set true to receive an <image_description> text block instead of the inline image.",
+          "Image only: caption via an OpenRouter vision model (default false). Set true to receive an <image_description> text block instead of the inline image.",
         ),
     }),
     execute: executeDownloadMedia.bind(null, waLogger),

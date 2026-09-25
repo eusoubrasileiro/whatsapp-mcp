@@ -63,7 +63,7 @@ export interface DownloadMediaParams {
    */
   transcribe?: boolean;
   /**
-   * For image messages: when true, run Gemini vision and return an XML-wrapped
+   * For image messages: when true, run the OpenRouter vision model and return an XML-wrapped
    * description instead of the inline image. Default false (Claude consumers see
    * the image bytes directly via imageContent). No-op for non-image media.
    */

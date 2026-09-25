@@ -124,12 +124,12 @@ describe("renderImageDescription", () => {
     const out = renderImageDescription({
       message_id: "msg-2",
       chat_jid: "5511@s.whatsapp.net",
-      model: "gemini-2.5-flash",
+      model: "openai/gpt-6-luna",
       text: "Foto de um cardápio de pizzaria.",
     });
 
     expect(out).toBe(
-      `<image_description message_id="msg-2" chat_jid="5511@s.whatsapp.net" model="gemini-2.5-flash">\nFoto de um cardápio de pizzaria.\n</image_description>`,
+      `<image_description message_id="msg-2" chat_jid="5511@s.whatsapp.net" model="openai/gpt-6-luna">\nFoto de um cardápio de pizzaria.\n</image_description>`,
     );
   });
 
@@ -137,7 +137,7 @@ describe("renderImageDescription", () => {
     const out = renderImageDescription({
       message_id: "m&1",
       chat_jid: "j",
-      model: "gemini-2.5-flash",
+      model: "openai/gpt-6-luna",
       text: "x < y & z > 0",
     });
     expect(out).toContain('message_id="m&amp;1"');

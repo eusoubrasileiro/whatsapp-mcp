@@ -367,7 +367,7 @@ describe("executeDownloadMedia", () => {
     });
     vi.mocked(describeImage).mockResolvedValue({
       text: "Cardápio de pizzaria com 12 sabores.",
-      model: "gemini-2.5-flash",
+      model: "openai/gpt-6-luna",
     });
     const msg = makeMediaMessage({
       mimetype: "image/jpeg",
