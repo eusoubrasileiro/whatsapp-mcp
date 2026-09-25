@@ -107,7 +107,7 @@ export class ConnectionFSM {
       if (this.phase !== "qr_pending") return;
       void this.config.sendNtfy({
         title: "WhatsApp - QR ainda aguardando",
-        message: "Escaneie o QR em wa.amiticia.cc para concluir o pareamento.",
+        message: `Escaneie o QR em ${this.config.publicQrUrl} para concluir o pareamento.`,
         priority: 4,
         tags: ["hourglass_flowing_sand"],
         click: this.config.publicQrUrl,

@@ -19,7 +19,7 @@ import {
 import pLimit from "p-limit";
 import type P from "pino";
 import { logAckErrors } from "./ack-errors.ts";
-import { createConnectionNotifier } from "./connection-notifier.ts";
+import { createConnectionNotifier, resolvePublicQrUrl } from "./connection-notifier.ts";
 import {
   getMetaValue,
   listPnChatJids,
@@ -223,7 +223,7 @@ async function doStartConnection(logger: P.Logger, attemptId: number): Promise<v
 
   const notifier = createConnectionNotifier(logger, {
     sendNtfy,
-    publicQrUrl: process.env.PUBLIC_QR_URL ?? "https://wa.amiticia.cc/",
+    publicQrUrl: resolvePublicQrUrl(),
     expectedWaNumber: process.env.EXPECTED_WA_NUMBER ?? null,
     onBadPairing: async () => {
       const sock = socketState.socket;

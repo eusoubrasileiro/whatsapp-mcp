@@ -1,7 +1,7 @@
 import pino from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionFSM } from "../connection-fsm.ts";
-import { createConnectionNotifier } from "../connection-notifier.ts";
+import { createConnectionNotifier, resolvePublicQrUrl } from "../connection-notifier.ts";
 import type { NtfyMessage, SendNtfy } from "../ntfy.ts";
 
 function makeFakeTimer() {
@@ -88,6 +88,21 @@ describe("createConnectionNotifier", () => {
     expect(sent).toHaveLength(2);
     expect(sent[1].title).toContain("aguardando");
     expect(t.setTimer).toHaveBeenCalledTimes(2);
+  });
+
+  it("reminder text points at the configured QR page, not a hard-coded host", async () => {
+    const t = makeFakeTimer();
+    const n = createConnectionNotifier(pino({ level: "silent" }), {
+      sendNtfy,
+      publicQrUrl: "https://qr.self-hosted.test/",
+      expectedWaNumber: null,
+      setTimer: t.setTimer,
+    });
+    await n.onQrCode("qr", "a");
+    t.fire();
+    await new Promise((r) => setImmediate(r));
+    expect(sent[1].message).toContain("https://qr.self-hosted.test/");
+    expect(sent[1].click).toBe("https://qr.self-hosted.test/");
   });
 
   it("cancels reminder on connecting", async () => {
@@ -463,5 +478,36 @@ describe("ConnectionFSM (explicit state machine)", () => {
       expect.stringContaining("Escaneie"),
     ]);
     expect(fsm.phase).toBe("qr_pending");
+  });
+});
+
+describe("resolvePublicQrUrl", () => {
+  it("returns PUBLIC_QR_URL verbatim when set", () => {
+    expect(resolvePublicQrUrl({ PUBLIC_QR_URL: "https://qr.example.com/" })).toBe(
+      "https://qr.example.com/",
+    );
+  });
+
+  it("falls back to this instance's own QR server, never a hosted deployment's page", () => {
+    expect(resolvePublicQrUrl({})).toBe("http://127.0.0.1:39002/");
+  });
+
+  it("treats an empty PUBLIC_QR_URL as unset", () => {
+    expect(resolvePublicQrUrl({ PUBLIC_QR_URL: "" })).toBe("http://127.0.0.1:39002/");
+  });
+
+  it("follows QR_SERVER_HOST and QR_SERVER_PORT in the fallback", () => {
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "192.0.2.10", QR_SERVER_PORT: "8080" })).toBe(
+      "http://192.0.2.10:8080/",
+    );
+  });
+
+  it("maps a wildcard bind address to localhost", () => {
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "0.0.0.0" })).toBe("http://localhost:39002/");
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::" })).toBe("http://localhost:39002/");
+  });
+
+  it("brackets an IPv6 bind address", () => {
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::1" })).toBe("http://[::1]:39002/");
   });
 });
