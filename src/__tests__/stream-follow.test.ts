@@ -4,7 +4,7 @@ import { executeFollowChat } from "../stream/follow.ts";
 import { createStreamTokenStore } from "../stream/token.ts";
 
 function deps(ttlMs = 60_000) {
-  return { tokens: createStreamTokenStore({ ttlMs }), baseUrl: "wss://mcp.amiticia.cc/stream" };
+  return { tokens: createStreamTokenStore({ ttlMs }), baseUrl: "wss://mcp.example.com/stream" };
 }
 
 describe("executeFollowChat", () => {

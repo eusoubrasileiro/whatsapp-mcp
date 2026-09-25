@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetRecipientCache, resolveRecipient } from "../recipient.ts";
 
 // Root cause of the 2026-07-22 "MCP isn't delivering" incident: agents built a
-// phone JID by hand. The real test number is 553191234567 (12 digits); BR
-// mobiles are usually 13 (55 DD 9XXXX-XXXX), so an inserted "9" produces
-// 5531912344567 — a different number, not on WhatsApp, which can never mint a
-// trusted-contact token and therefore 463s forever.
+// phone JID by hand. The owned test number is 553191234567 (12 digits); BR
+// mobiles are usually 13 (55 DD 9XXXX-XXXX), so agents "fixed" it, and a retyped
+// variant like 5531912344567 is a different number, not on WhatsApp, which can
+// never mint a trusted-contact token and therefore 463s forever.
 
 function makeLogger() {
   return { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() };

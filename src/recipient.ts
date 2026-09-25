@@ -2,13 +2,14 @@
  * Pre-send recipient resolution.
  *
  * Motivating incident (2026-07-22): the MCP appeared to stop delivering. It
- * hadn't — agents were hand-building phone JIDs. The AmiticIA 2 test number is
+ * hadn't — agents were hand-building phone JIDs. An owned test number is
  * `553191234567` (12 digits), but Brazilian mobiles are normally 13
- * (`55 DD 9XXXX-XXXX`), so an inserted `9` yields `5531912344567` — a different
- * number that isn't on WhatsApp. A number that isn't on WhatsApp can never mint
- * a trusted-contact token, so every send to it is refused with 463 while the
- * same account keeps delivering everywhere else. Hours were spent suspecting an
- * account restriction and a deactivated carrier line.
+ * (`55 DD 9XXXX-XXXX`), so agents "fixed" it — and a retyped variant such as
+ * `5531912344567` is a different number that isn't on WhatsApp. A number that
+ * isn't on WhatsApp can never mint a trusted-contact token, so every send to it
+ * is refused with 463 while the same account keeps delivering everywhere else.
+ * Hours were spent suspecting an account restriction and a deactivated carrier
+ * line.
  *
  * So: ask the server before sending. A bad number fails *before* a reach-out is
  * spent, and a good one is upgraded to its canonical `@lid` — the addressing
@@ -77,7 +78,7 @@ export async function resolveRecipient(
         `Do not retype the number: resolve it instead.\n` +
         `  search_contacts("<name>") -> send to the @lid it returns.\n\n` +
         `Common cause: a Brazilian mobile written with an extra "9". ` +
-        `55 31 9123-4567 is 553191234567 (12 digits), NOT 5531912344567.`,
+        `55 31 9123-4567 is 553191234567 (12 digits), NOT 5531991234567.`,
     );
   }
 

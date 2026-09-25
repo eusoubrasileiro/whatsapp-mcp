@@ -229,8 +229,8 @@ describe("storage", () => {
 
     it("is independent of S3_ENDPOINT", () => {
       process.env.S3_ENDPOINT = "internal.minio:9000";
-      process.env.MEDIA_PUBLIC_BASE_URL = "https://media.amiticia.cc";
-      expect(publicUrlFor("some/key.jpg")).toBe("https://media.amiticia.cc/some/key.jpg");
+      process.env.MEDIA_PUBLIC_BASE_URL = "https://media.example.com";
+      expect(publicUrlFor("some/key.jpg")).toBe("https://media.example.com/some/key.jpg");
     });
   });
 

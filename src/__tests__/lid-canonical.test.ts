@@ -93,7 +93,7 @@ describe("LID/phone-number canonicalization", () => {
     });
   });
 
-  describe("read-side dedup (regression: Carol Example)", () => {
+  describe("read-side dedup (regression: one contact split across PN and LID)", () => {
     it("returns the LID twin's recent messages when querying the stale PN JID", () => {
       // Old history filed under the phone-number JID, before migration.
       storeMessage(

@@ -9,7 +9,7 @@ function msg(o: Partial<Message> & { id: string; content: string }): Message {
     timestamp: new Date("2026-07-02T14:58:20.000Z"),
     is_from_me: false,
     sender: "5511999999999@s.whatsapp.net",
-    chat_name: "AmiticIA AutoSys",
+    chat_name: "Project Group",
     ...o,
   };
 }

@@ -7,7 +7,7 @@ function msg(o: Partial<Message> & { id: string; chat_jid: string; content: stri
     timestamp: new Date("2026-07-02T14:58:20.000Z"),
     is_from_me: false,
     sender: "5511999999999@s.whatsapp.net",
-    chat_name: "AmiticIA AutoSys",
+    chat_name: "Project Group",
     ...o,
   };
 }
@@ -24,7 +24,7 @@ describe("buildStreamFrame", () => {
       seq: 12,
       id: "A577AE",
       chat_jid: "1203@g.us",
-      chat_name: "AmiticIA AutoSys",
+      chat_name: "Project Group",
       sender_jid: "5511999999999@s.whatsapp.net",
       sender_display: "Beatriz A. Example",
       is_from_me: false,
