@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # @amiticia/baileys-client is `link:../baileys-client`, so both repos are
+      # checked out side by side, as in local dev and the Docker build.
+      - uses: actions/checkout@v7
+        with:
+          path: whatsapp-mcp
+      - uses: actions/checkout@v7
+        with:
+          repository: eusoubrasileiro/baileys-client
+          path: baileys-client
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: whatsapp-mcp/package.json
+          cache: true
+          cache_dependency_path: |
+            whatsapp-mcp/pnpm-lock.yaml
+            baileys-client/pnpm-lock.yaml
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: whatsapp-mcp/.nvmrc
+      # Audio transcription tests shell out to ffmpeg, which the runtime image
+      # also installs via apt.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Build baileys-client
+        working-directory: baileys-client
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install
+        working-directory: whatsapp-mcp
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: whatsapp-mcp
+        run: pnpm typecheck
+      - name: Lint
+        working-directory: whatsapp-mcp
+        run: pnpm lint
+      - name: Harness tests
+        working-directory: whatsapp-mcp
+        run: pnpm test:harness
+      - name: Tests with coverage
+        working-directory: whatsapp-mcp
+        run: pnpm test:coverage
+      - name: Quality gate
+        working-directory: whatsapp-mcp
+        run: pnpm quality-gate
