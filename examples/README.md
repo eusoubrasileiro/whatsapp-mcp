@@ -1,9 +1,9 @@
 # Integration examples
 
-Talking to the deployed `whatsapp-mcp` from different runtimes. The canonical endpoint is:
+Talking to a deployed `whatsapp-mcp` from different runtimes. Replace `mcp.example.com` with your own host. The endpoint is:
 
 ```
-https://mcp.amiticia.cc/mcp
+https://mcp.example.com/mcp
 Authorization: Bearer <MCP_AUTH_TOKEN>
 Content-Type:  application/json
 Accept:        application/json, text/event-stream
@@ -26,7 +26,7 @@ The MCP `httpStream` transport is JSON-RPC 2.0 over HTTP with an SSE-style `Acce
 ```bash
 export TOKEN="<your-MCP_AUTH_TOKEN>"
 
-curl -sS -X POST https://mcp.amiticia.cc/mcp \
+curl -sS -X POST https://mcp.example.com/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -47,7 +47,7 @@ Expected: HTTP 200 with a JSON-RPC result and a `Mcp-Session-Id` header. Capture
 ### 2. List tools
 
 ```bash
-curl -sS -X POST https://mcp.amiticia.cc/mcp \
+curl -sS -X POST https://mcp.example.com/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Mcp-Session-Id: <from-initialize>" \
   -H "Content-Type: application/json" \
@@ -58,7 +58,7 @@ curl -sS -X POST https://mcp.amiticia.cc/mcp \
 ### 3. Call a tool
 
 ```bash
-curl -sS -X POST https://mcp.amiticia.cc/mcp \
+curl -sS -X POST https://mcp.example.com/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Mcp-Session-Id: <from-initialize>" \
   -H "Content-Type: application/json" \
@@ -80,7 +80,7 @@ See [`../scripts/smoke-test.sh`](../scripts/smoke-test.sh) — runs the no-beare
 
 ## Notes
 
-- **Errors as results**: the send tools (`send_message`, `send_file`) return `{ success, messageId?, error? }` — they never throw. Check `success` in your glue code.
-- **Rate limiting**: this server has none. Don't use it for bulk send — that's what `bulk-messages` is for.
+- **Errors**: the send tools (`send_message`, `send_file`) return a text confirmation (`… sent successfully … (ID: …)`) on success and fail with an MCP tool error (`isError: true`) otherwise — unknown recipient, server rejection, or a local policy refusal. Check `isError` in your glue code, and never auto-retry a refused send (the error text says `DO NOT RETRY` when it matters).
+- **Rate limiting**: sends are paced account-wide and first-contact sends are refused by default — see [`../docs/account-restrictions.md`](../docs/account-restrictions.md). This is not a bulk sender.
 - **Session lifetime**: the session id from `initialize` is kept server-side. Drop it after ~5 min of inactivity and re-initialize.
 - **Streaming**: tool responses come back as a single JSON body for most tools. A few (search, list_messages with large pages) may stream — honour `text/event-stream` framing if you see `data:` prefixes.

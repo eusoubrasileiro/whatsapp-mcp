@@ -17,7 +17,7 @@ export interface FollowChatParams {
 
 export interface FollowChatDeps {
   tokens: StreamTokenStore;
-  /** Public base URL of the stream endpoint, e.g. `wss://mcp.amiticia.cc/stream`. */
+  /** Public base URL of the stream endpoint, e.g. `wss://mcp.example.com/stream`. */
   baseUrl: string;
 }
 

@@ -10,17 +10,17 @@
  *   - All three vendors expose the SAME OpenAI-shaped multipart
  *     `POST {baseUrl}/audio/transcriptions`, so one plain `fetch` serves every
  *     route and two SDKs no longer need to be in the image for one endpoint.
- *     (wahub's client claims OpenRouter needs a JSON+base64 body instead. That
- *     is wrong — OpenRouter documents both shapes, and patricia verified
- *     multipart end-to-end against a real voice note on 2026-07-31. wahub's
- *     tests mock `fetch`, so they never exercised the claim.)
+ *     (Another client of ours claimed OpenRouter needs a JSON+base64 body
+ *     instead. That is wrong — OpenRouter documents both shapes, and multipart
+ *     was verified end-to-end against a real voice note on 2026-07-31. That
+ *     client's tests mocked `fetch`, so they never exercised the claim.)
  *
  *   - The route is chosen by `AUDIO_PROVIDER`, never by key presence. Choosing
  *     by key presence is how a leftover `GROQ_API_KEY` silently keeps traffic
  *     on the old vendor while the migration is reported as done — which matters
  *     here because the Groq account is being closed.
  *
- * Ported from `products/patricia/backend/src/media/transcribe.ts`.
+ * Ported from an internal sibling project's transcription client.
  *
  * Cookbook: the 25 MB provider ceiling is sidestepped by preprocessing
  * upstream; the guard here just raises a clearer error if the FLAC still

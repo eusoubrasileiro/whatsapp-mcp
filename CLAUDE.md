@@ -1,6 +1,6 @@
 # WhatsApp MCP Server
 
-WhatsApp as an MCP server. Canonical deployment is a long-lived Docker daemon on the VPS, exposed as `https://mcp.amiticia.cc/mcp` (Bearer auth) with a public QR page at `https://wa.amiticia.cc/`. Built on `@amiticia/baileys-client`.
+WhatsApp as an MCP server. Canonical deployment is a long-lived Docker daemon on a VPS behind Traefik, exposed as `https://mcp.example.com/mcp` (Bearer auth) with a public QR page at `https://wa.example.com/` — substitute your own hostnames throughout this file. Built on [`@amiticia/baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client).
 
 User-facing overview lives in [`README.md`](./README.md). This file is the internal contributor / operator reference.
 
@@ -21,7 +21,7 @@ Edit `~/.claude.json`. Inside the top-level `mcpServers` object:
 ```json
 "whatsapp": {
   "type": "http",
-  "url": "https://mcp.amiticia.cc/mcp",
+  "url": "https://mcp.example.com/mcp",
   "headers": {
     "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
   }
@@ -64,15 +64,15 @@ Remember to swap back to the HTTP entry afterwards.
 
 | Symptom | Fix |
 |---------|-----|
-| `claude mcp list` shows whatsapp `✗ Failed to connect` | Check `curl -sS -o /dev/null -w '%{http_code}' https://mcp.amiticia.cc/health` — if not reachable, DNS or Traefik issue. See `deploy/README.md`. |
+| `claude mcp list` shows whatsapp `✗ Failed to connect` | Check `curl -sS -o /dev/null -w '%{http_code}' https://mcp.example.com/health` — if not reachable, DNS or Traefik issue. See `deploy/README.md`. |
 | `HTTP 401` from MCP endpoint | `MCP_AUTH_TOKEN` mismatch between `.env` on VPS and your `~/.claude.json`. Regenerate or re-sync. |
-| TLS cert failing (`SSL_ERROR_*`) | Let's Encrypt / Traefik didn't issue yet. Check CF DNS proxy is **off** (grey cloud) for `mcp`/`wa` records. |
-| `wa.amiticia.cc` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
+| TLS cert failing (`SSL_ERROR_*`) | Let's Encrypt / Traefik didn't issue yet. If the `mcp`/`wa` records sit behind a proxying CDN (e.g. Cloudflare's orange cloud), switch them to DNS-only — Traefik's TLS-ALPN challenge can't pass through the proxy. |
+| `wa.example.com` 404 | Traefik label typo or `certresolver` name mismatch with the running Traefik config (should be `myresolver`). |
 | ntfy silent | `NTFY_TOPIC_URL` unset on VPS, or topic not subscribed in the ntfy app. Check `docker exec whatsapp-mcp grep ntfy /data/wa-logs.txt`. |
 | Container `unhealthy` | Healthcheck hits `http://127.0.0.1:39002/health`. If the QR web server failed to bind (port clash), container flaps. `docker logs whatsapp-mcp`. |
 | `send_message` reports success but the message never arrives | **Should no longer happen** — the send guards make a refused send throw (see "Send guards"). If you see it: check `SEND_ACK_WAIT_MS` isn't `0`, then look for `send rejected by server` in `wa-logs.txt` (`src/ack-errors.ts`). A refusal landing *later* than the wait window would still slip through — raise `SEND_ACK_WAIT_MS` and file it, since the observed latency is ~40 ms. Code `463` = wrong JID or no trusted-contact token, `479` = stale device session. **Never re-send on a 463.** |
 | `error 463` for one specific contact only | Expected, not an account ban — despite the server's "Your account has been restricted" detail text, which is misleading. WhatsApp gates 1:1 sends behind a tc token. **Two causes, in this order:** (1) **wrong recipient JID** — a number that isn't on WhatsApp can never mint a token, so it 463s forever while every real chat keeps working; **never hand-build a phone JID**, look it up (`search_contacts`, or `SELECT jid,name,phone_number FROM contacts`) and send to the `@lid`. (2) **genuine first contact** — a real number you've never exchanged messages with has no token yet; this is not fixable from here, the contact must message first or the chat be established from the phone. Confirm scope with `grep 'send rejected by server' /data/wa-logs.txt`: if every `chat_jid` is the same, it's that recipient, not you. An actual account restriction hits every chat, including your own self-chat. |
-| `error 463` against a Brazilian mobile you typed by hand | Almost always the **extra-9 trap**. BR mobiles are normally `55 DD 9XXXX-XXXX` (13 digits), so agents "helpfully" insert a 9 into a 12-digit number — producing a *different* number that isn't on WhatsApp. This is exactly what caused every 463 on 2026-07-22: the real test number is `553191234567` (12 digits), and sends to `5531912344567` / `5531991234567` were both rejected while the same account delivered fine to the correct JID seconds later. Do not normalize BR numbers; resolve them from the contacts table. |
+| `error 463` against a Brazilian mobile you typed by hand | Almost always the **extra-9 trap**. BR mobiles are normally `55 DD 9XXXX-XXXX` (13 digits), so agents "helpfully" insert a 9 into a 12-digit number — producing a *different* number. That number may not be on WhatsApp at all (refused before sending) or may belong to someone who has never talked to you (463), while the same account keeps delivering to the correct JID. Do not normalize BR numbers; resolve them from the contacts table. |
 | `send_file` fails with "cannot read local file …" or "ENOENT" | The MCP server runs in a remote container — it can't see your host disk. Use `POST /upload` to publish the file first, then pass the returned URL to `send_file`. See "Sending host-disk files" above. |
 | `POST /upload` returns 401 | `MCP_AUTH_TOKEN` mismatch — same secret as the MCP endpoint. |
 | `POST /upload` returns 415 | Bytes didn't match any known magic header. Re-encode the file or check it's not truncated; `sniffMimetype` only recognises JPEG/PNG/GIF/WebP/PDF/MP4/3GP/MOV/M4A/OGG/WAV/MP3. |
@@ -202,12 +202,12 @@ Full numbers table: the workspace `CLAUDE.md`.
 
 ### Known pre-existing test / typecheck failures
 
-`@amiticia/baileys-client` is a **private package** that lives in the sibling `baileys-client/` repo and is **not installed in CI or fresh checkouts** where that sibling is absent. This causes:
+`@amiticia/baileys-client` is consumed from a sibling `baileys-client/` checkout (`link:../baileys-client`), so it is **not installed in CI or fresh checkouts** where that sibling is absent. This causes:
 
 - `pnpm test` — 2 test suites fail (`message-parsing.test.ts`, `whatsapp-concurrency.test.ts`); 4 tests are skipped.
 - `pnpm typecheck` — several `error TS2307: Cannot find module '@amiticia/baileys-client'` errors, plus downstream implicit-`any` errors in `whatsapp.ts`.
 
-These failures are **not regressions** — they exist on `main` and every branch. Fix by running `pnpm install` inside the monorepo root that includes the sibling `baileys-client/` package (or by symlinking `../baileys-client` so workspace resolution finds it).
+These failures are **not regressions** — they exist on `main` and every branch. Fix by cloning [`baileys-client`](https://github.com/AmiticIA-AutoSys/baileys-client) next to this repo, running `pnpm install && pnpm build` there, then `pnpm install` here.
 
 ## Critical Files (require human approval)
 
@@ -261,7 +261,7 @@ Recorded so a future agent reads these as decisions, not oversights:
 - **GitHub Actions CI** — deferred (ratified 2026-07-22). Blocked on a deploy key for the
   private sibling `@amiticia/baileys-client`; until then the pre-push gate is the only
   machine check, and nothing verifies a push from a hookless machine. Revisit when the
-  sibling is fetchable in CI.
+  sibling is fetchable in CI — making both repositories public removes the deploy-key need.
 - **Fixing the sibling-package failure mode** — `pnpm test`/`pnpm typecheck` still fail in
   checkouts without `../baileys-client` (see "Known pre-existing failures" above). Same
   root cause as the CI deferral; fixed together or not at all.
@@ -326,7 +326,7 @@ src/
 │   ├── connection.ts      #   per-socket drain driver: bus wake → DB delta → frames
 │   ├── server.ts          #   ws upgrade + token gate + inbound-bus fan-out + gap-fill
 │   └── follow.ts          #   executeFollowChat: mint token → wss URL (testable core)
-├── webhooks/              # Outbound inbound-message push (reactive subscribers, e.g. Hermes)
+├── webhooks/              # Outbound inbound-message push (reactive subscribers, e.g. agents)
 │   ├── types.ts           #   Subscription, InboundMessageInput, InboundMessageEvent
 │   ├── event.ts           #   buildInboundEvent — pure payload builder
 │   ├── registry.ts        #   in-memory subscription cache over the DB (load/add/remove/match)
@@ -406,8 +406,8 @@ Two guards now sit on both sending tools:
    skip the lookup. A lookup that itself fails logs a warning and falls through to the JID
    as given — a flaky lookup must never block a legitimate send.
    > **PN→LID upgrade is opportunistic.** When `onWhatsApp()` includes a `lid`, the send is
-   > addressed to it. In practice it often doesn't — verified live 2026-07-22 against the
-   > AmiticIA 2 contact, where the lookup returned `exists: true` with no `lid` and the send
+   > addressed to it. In practice it often doesn't — verified live 2026-07-22 against an
+   > owned test contact, where the lookup returned `exists: true` with no `lid` and the send
    > went out PN-addressed and delivered fine. So treat the upgrade as a bonus, not a
    > guarantee. `makeLidResolver`/`getLIDForPN` (`baileys-client/src/lid.ts`) is the
    > unwired second seam if this ever needs to be reliable.
@@ -416,10 +416,10 @@ Two guards now sit on both sending tools:
    an explicit `DO NOT RETRY`. The retry ban is load-bearing: throwing invites agents to try
    again, and each 463 retry is another reach-out.
 
-**Both guards are needed — they catch different failures.** Verified live 2026-07-22:
-`5531912344567` (an extra-9 typo) is not on WhatsApp and was stopped by guard 1;
-`5531991234567` **is** a real number, passed guard 1, and was caught by guard 2's 463. With
-only the pre-send check, that second send would have reported success again.
+**Both guards are needed — they catch different failures.** Verified live 2026-07-22 with two
+mistyped variants of an owned test number: one is not on WhatsApp and was stopped by guard 1;
+the other **is** a real number, passed guard 1, and was caught by guard 2's 463. With only the
+pre-send check, that second send would have reported success again.
 
 That second case is also why the 463 text names **two** causes: a wrong number, *and* a
 genuine first contact with a real number that has no trusted-contact token yet. The latter
@@ -438,12 +438,13 @@ restore the old fire-and-forget behavior without a redeploy.
 
 A third guard layer sits above the two above: `applySendPolicy` (`src/send-policy.ts`) —
 blocklist → cold-contact → pacing → typing, in that order, on both sending tools. It exists
-because the linked number was restricted twice in July 2026 by agent-driven cold sends.
+because a linked number was restricted twice by agent-driven cold sends.
 
 **Before touching any send path, read [`docs/account-restrictions.md`](./docs/account-restrictions.md)**
-— the incident forensics, the guard chain, its env vars, and the per-instance policy
-(`SEND_COLD_OVERRIDE=deny` on the personal number; outreach goes to the `whatsapp-work`
-instance). Those thresholds are risk-owner settings, not engineering defaults.
+— why the guards exist, the guard chain, its env vars, and the per-instance policy
+(`SEND_COLD_OVERRIDE=deny` on a number you cannot afford to lose; first-contact outreach
+belongs on a separate instance). Those thresholds are risk-owner settings, not engineering
+defaults.
 
 ### Message Actions
 | Tool | Description |
@@ -533,9 +534,9 @@ proxied HTTP connection warm. The agent loops to go longer.
 ## Outbound webhook (inbound-message push)
 
 This MCP is otherwise poll-only; webhook subscriptions add the missing **outbound
-push** so an external agent (e.g. Hermes) becomes *reactive* — it is woken when a
-WhatsApp message arrives. See `docs/hermes-bridge-stories.md` (Epic E1). The push is
-generic and tenant-tagged, not Hermes-specific — any agent/product can subscribe.
+push** so an external agent (e.g. a self-hosted agent gateway) becomes *reactive* — it is
+woken when a WhatsApp message arrives. The push is generic and tenant-tagged, not tied to
+any one agent — any agent/product can subscribe.
 
 **Model.** A subscription is durable state in SQLite (`webhook_subscriptions`, in the
 backups), registered/removed at runtime via the three tools above. On each **live**
@@ -550,8 +551,7 @@ loop guard, `actions.ts`); emit in `src/whatsapp.ts` `onMessageUpsert`; hydrated
 by `loadRegistry()` in `main.ts`.
 
 **Direction & the talk-to-yourself pattern.** The headline use case is chatting with an
-agent by messaging your **own** WhatsApp (a self-chat), à la Hermes's built-in bridge —
-your messages are `is_from_me`. So forwarding is decided per message:
+agent by messaging your **own** WhatsApp (a self-chat) — your messages are `is_from_me`. So forwarding is decided per message:
 - Genuine inbound (`is_from_me=false`) → always forwarded (if the chat is allow-listed).
 - Your own message (`is_from_me=true`) → forwarded when it's your **self-chat** (auto-detected
   by comparing `chat_jid` to the connected account's number — zero config) **or** the
@@ -576,7 +576,7 @@ deliveries whose `X-Webhook-Timestamp` is more than ~5 min from now** (replay gu
 the MCP signs but can't enforce the window; the receiver must).
 
 > **Security notes.** `target_url` may be an internal/private address — that's
-> intentional (the agent/Hermes often runs on the same private network), so internal
+> intentional (the subscribing agent often runs on the same private network), so internal
 > URLs are *not* blocked; the gate is the `MCP_AUTH_TOKEN` on the registration call.
 > `matchSubscriptions` is tenant-agnostic today (one WhatsApp account) — add a tenant
 > filter before onboarding a second tenant.
@@ -621,7 +621,7 @@ Captura de um cardápio com 12 sabores de pizza, preços R$ 35–58, promoção 
 
 Required env vars: `OPENROUTER_API_KEY` for transcription; `GEMINI_API_KEY` for image description. Optional `AUDIO_PROVIDER` / `WHISPER_MODEL` / `VISION_MODEL` overrides. `ffmpeg` must be present on the host (already installed in the runtime image).
 
-Long-audio note: a 24 MB FLAC ceiling guards the request (OpenRouter's multipart cap is 25 MB); typical WhatsApp voice notes up to ~25 min fit comfortably after preprocessing. Anything past that fails with a clear error — chunking + stitching is deferred to a follow-up PR (600 s windows, 10 s overlap). `tools/amiticia-knowledge-engine/transcript.py` already implements ffmpeg segmentation if a reference is wanted.
+Long-audio note: a 24 MB FLAC ceiling guards the request (OpenRouter's multipart cap is 25 MB); typical WhatsApp voice notes up to ~25 min fit comfortably after preprocessing. Anything past that fails with a clear error — chunking + stitching is deferred to a follow-up PR (600 s windows, 10 s overlap).
 
 ## Sending host-disk files (the `/upload` endpoint)
 
@@ -637,8 +637,8 @@ Flow from an agent on the user's machine:
 # raw body, MIME sniffed from magic bytes server-side
 curl -sS -X POST --data-binary @/tmp/video.mp4 \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-  https://mcp.amiticia.cc/upload
-# → { "url": "https://mcp.amiticia.cc/media/t/default/uploads/<uuid>.mp4",
+  https://mcp.example.com/upload
+# → { "url": "https://mcp.example.com/media/t/default/uploads/<uuid>.mp4",
 #     "key": "t/default/uploads/<uuid>.mp4",
 #     "mimetype": "video/mp4", "size": 4321567 }
 ```
@@ -651,7 +651,7 @@ Guarantees:
 - MIME sniffed from bytes — bodies that match no known format are rejected with HTTP 415 (junk / executables won't land in the bucket).
 - Object key: `t/{tenantId}/uploads/{uuid}.{ext}`. The public-read bucket policy makes the returned URL fetchable by the MCP container without any extra credential exchange.
 
-The endpoint is exposed by `src/upload-server.ts` on `UPLOAD_SERVER_PORT` (default `39003`), only started when `S3_ENABLED=true`. Traefik route required at the infra repo: `mcp.amiticia.cc/upload` → `whatsapp-mcp:39003`.
+The endpoint is exposed by `src/upload-server.ts` on `UPLOAD_SERVER_PORT` (default `39003`), only started when `S3_ENABLED=true`. Traefik route required (see `deploy/docker-compose.yaml`): `mcp.example.com/upload` → `whatsapp-mcp:39003`.
 
 ## Authentication
 
@@ -672,12 +672,12 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the public QR web page |
 | `QR_SERVER_PORT` | `39002` | Bind port for the QR web page |
 | `UPLOAD_SERVER_HOST` | `127.0.0.1` | Bind host for the host-disk upload endpoint (only started when `S3_ENABLED=true`) |
-| `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `mcp.amiticia.cc/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
+| `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `mcp.example.com/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
 | `STREAM_SERVER_HOST` | `127.0.0.1` | Bind host for the `follow_chat` WebSocket presence stream. |
-| `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `mcp.amiticia.cc/stream` (WebSocket upgrade). |
-| `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://mcp.amiticia.cc/stream`. |
+| `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `mcp.example.com/stream` (WebSocket upgrade). |
+| `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://mcp.example.com/stream`. |
 | `STREAM_TOKEN_TTL_S` | `1800` | Lifetime (seconds) of a `follow_chat` stream token. In-memory only; scoped to the requested jids + flags; treated as a bearer secret. |
-| `PUBLIC_QR_URL` | `https://wa.amiticia.cc/` | URL sent in ntfy `Click` header so tapping the push opens the QR page |
+| `PUBLIC_QR_URL` | _(derived: `http://<QR_SERVER_HOST>:<QR_SERVER_PORT>/`, `localhost` for a wildcard bind)_ | URL sent in ntfy `Click` header and message text so tapping the push opens the QR page. Set it to the public QR page (e.g. `https://wa.example.com/`) in any deployment you pair from a phone |
 | `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
 | `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |
 | `EXPECTED_WA_NUMBER` | _(unset)_ | If set, only pairings whose JID starts with this prefix are accepted. A mismatch triggers `socket.logout()`, purges `auth_info/`, and fires an ntfy alert. Critical when the QR page is publicly reachable. |
@@ -690,7 +690,7 @@ Auth credentials are saved in `auth_info/` for subsequent runs.
 | `S3_BUCKET` | `amiticia-media` | Bucket name. The `mc` init sidecar creates it on first boot. |
 | `S3_REGION` | `us-east-1` | Bucket region (cosmetic for RustFS; SDK still requires it). |
 | `S3_SKIP_POLICY` | `false` | Keep `false` — RustFS accepts `setBucketPolicy`, so the app sets the public-read policy at boot. |
-| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.amiticia.cc/media` (Traefik path-based route, see `deploy/docker-compose.yaml`). |
+| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.example.com/media` (Traefik path-based route, see `deploy/docker-compose.yaml`). |
 | `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. Hardcoded until 2nd customer. |
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
 | `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
@@ -718,7 +718,7 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 - `wa-logs.txt` - WhatsApp/Baileys logs
 - `mcp-logs.txt` - MCP server logs
 
-> **Media**: downloaded media is stored in a RustFS sidecar on the same VPS (bind-mounted at `/storage/whatsapp-mcp/minio`). It is served publicly through Traefik at `https://mcp.amiticia.cc/media/<key>` — no separate subdomain, no managed cloud bucket, no recurring bill. The legacy `data/media/` directory existed in older deployments — run `scripts/backfill-media.sh` inside the container to upload existing files into RustFS; the script then drops the legacy column.
+> **Media**: downloaded media is stored in a RustFS sidecar on the same VPS (bind-mounted at `/storage/whatsapp-mcp/minio`). It is served publicly through Traefik at `https://mcp.example.com/media/<key>` — no separate subdomain, no managed cloud bucket, no recurring bill. The legacy `data/media/` directory existed in older deployments — run `scripts/backfill-media.sh` inside the container to upload existing files into RustFS; the script then drops the legacy column.
 
 All data directories are gitignored for security.
 
@@ -771,20 +771,20 @@ Full procedure (local bridge → VPS):
 
 ```
 # 1. on the local machine — bridge can stay running, .backup is WAL-safe
-sqlite3 /home/you/.../whatsapp-mcp/data/whatsapp.db ".backup /tmp/old-wa.db"
-tar czf /tmp/old-wa-media.tar.gz -C /home/you/.../whatsapp-mcp/data media
+sqlite3 /path/to/local/whatsapp-mcp/data/whatsapp.db ".backup /tmp/old-wa.db"
+tar czf /tmp/old-wa-media.tar.gz -C /path/to/local/whatsapp-mcp/data media
 scp /tmp/old-wa.db /tmp/old-wa-media.tar.gz <vps>:/tmp/
 
 # 2. on the VPS
 ssh <vps>
-cd /opt/amiticia/whatsapp-mcp/deploy
+cd /path/to/whatsapp-mcp/deploy
 # extract media first (tar -k keeps existing files on conflict):
 tar xzkf /tmp/old-wa-media.tar.gz -C /storage/whatsapp-mcp/data/
 docker compose stop
 docker run --rm \
   -v /storage/whatsapp-mcp:/data \
   -v /tmp:/src \
-  -v /root/whatsapp-mcp/scripts:/scripts \
+  -v /path/to/whatsapp-mcp/scripts:/scripts \
   --entrypoint sh \
   ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
   /scripts/merge-db.sh /src/old-wa.db
@@ -796,16 +796,15 @@ docker compose start
 
 ### Offsite
 
-Backups are on the host side of the bind mount (`/storage/whatsapp-mcp/backups/` on the VPS). Point Borg at that directory using the operator reference in `your backup notes`. **Not automated in the stack today** — run Borg manually or add a separate host cron.
+Backups are on the host side of the bind mount (`/storage/whatsapp-mcp/backups/` on the VPS). Point an offsite backup tool (Borg, restic, …) at that directory. **Not automated in the stack today** — run it manually or add a separate host cron.
 
 ## Deploy (Docker + Traefik on VPS)
 
 Full deploy / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md).
 
-Production stack lives in the sibling `systems` repo at:
-`deploy/docker-compose.yaml`
+Production stack: [`deploy/docker-compose.yaml`](./deploy/docker-compose.yaml). Hostnames and the per-instance send policy come from `deploy/.env` (see `deploy/.env.example`), not from the compose file.
 
-Image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`.
+The maintainers' image is published privately as `ghcr.io/amiticia-autosys/whatsapp-mcp:latest`; build and tag your own for any other deployment.
 
 Build locally (BuildKit required — sibling `baileys-client/` must be present):
 
@@ -839,8 +838,8 @@ docker push ghcr.io/amiticia-autosys/whatsapp-mcp:latest
 ```
 
 Routes after deploy:
-- `https://wa.amiticia.cc/` — public QR page (safe because `EXPECTED_WA_NUMBER` check rejects wrong-phone pairings).
-- `https://mcp.amiticia.cc/mcp` — MCP endpoint, requires `Authorization: Bearer $MCP_AUTH_TOKEN`.
+- `https://wa.example.com/` — public QR page (safe because `EXPECTED_WA_NUMBER` check rejects wrong-phone pairings).
+- `https://mcp.example.com/mcp` — MCP endpoint, requires `Authorization: Bearer $MCP_AUTH_TOKEN`.
 
 ## MCP Client Configuration
 
@@ -882,7 +881,7 @@ NODE_PATH=$(which node)
 claude mcp add --scope user whatsapp -- $NODE_PATH --experimental-strip-types /ABSOLUTE/PATH/TO/whatsapp-mcp/src/main.ts
 
 # Example with full paths:
-claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v23.11.1/bin/node --experimental-strip-types /path/to/whatsapp-mcp/src/main.ts
+claude mcp add --scope user whatsapp -- /home/you/.nvm/versions/node/v24.11.0/bin/node --experimental-strip-types /home/you/src/whatsapp-mcp/src/main.ts
 ```
 
 ### Verify Installation

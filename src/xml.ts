@@ -2,7 +2,7 @@
  * XML envelope renderers for MCP tool responses.
  *
  * Matches the Anthropic-style XML-tag convention used across AmiticIA's
- * Claude-based stack (cf. wahub ADR-007 / prompt loader). Downstream agents
+ * Claude-based stack. Downstream agents
  * parse the wrapper tag (`<transcription>` / `<image_description>`) to
  * reliably separate model output from surrounding metadata.
  *

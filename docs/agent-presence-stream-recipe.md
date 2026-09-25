@@ -1,8 +1,8 @@
 # Recipe: be *present* in a WhatsApp chat with `follow_chat`
 
-The persona pattern (spec: [`spec-agent-presence-stream.md`](./spec-agent-presence-stream.md)):
-an interactive agent impersonates the user in a group and **does real work between
-messages** — it must be reactive without a blocking poll loop occupying its turns.
+The persona pattern: an interactive agent stands in for the user in a group and **does real
+work between messages** — it must be reactive without a blocking poll loop occupying its
+turns.
 
 `follow_chat` gives you a **WebSocket stream** you attach to your harness's background
 monitor. Each frame is one inbound message; you are woken per message while you keep
@@ -14,14 +14,14 @@ coding, running evals, committing — anything.
 // 1. Ask to follow the chat(s). include_from_me + transcribe default to true.
 follow_chat({ chat_jids: ["1203…@g.us"] })
 // → {
-//     "ws_url": "wss://mcp.amiticia.cc/stream?token=<opaque>",
+//     "ws_url": "wss://mcp.example.com/stream?token=<opaque>",
 //     "expires_at": "2026-07-02T15:28:00.000Z",
 //     "note": "Attach with your harness's background monitor …"
 //   }
 
 // 2. Attach the URL to your background monitor and keep working. Each WS frame
 //    wakes you with one message; you are NOT blocked between messages.
-Monitor({ ws: { url: "wss://mcp.amiticia.cc/stream?token=<opaque>" } })
+Monitor({ ws: { url: "wss://mcp.example.com/stream?token=<opaque>" } })
 
 // 3. React whenever a frame arrives — reply on the same chat.
 send_message({ recipient: "1203…@g.us", message: "Já ajusto isso, Beatriz." })
@@ -39,7 +39,7 @@ true for persona mode: so you see — and don't contradict — what they said ma
   "seq": 12,
   "id": "A577AE…",
   "chat_jid": "1203…@g.us",
-  "chat_name": "AmiticIA AutoSys",
+  "chat_name": "Project Group",
   "sender_jid": "…@s.whatsapp.net",
   "sender_display": "Beatriz A. Example",
   "is_from_me": false,
@@ -64,7 +64,7 @@ reconnect, pass the last cursor you processed as `?since=` and the server **repl
 gap** before going live:
 
 ```jsonc
-Monitor({ ws: { url: "wss://mcp.amiticia.cc/stream?token=<opaque>&since=<cursor>" } })
+Monitor({ ws: { url: "wss://mcp.example.com/stream?token=<opaque>&since=<cursor>" } })
 ```
 
 `<cursor>` is a `get_new_messages` / `wait_for_messages` `next_since` value (a `row:<n>`
@@ -90,10 +90,10 @@ attach. With no `since`, the stream starts from now.
 
 - The stream server listens on `STREAM_SERVER_PORT` (default `39004`), bound to
   `STREAM_SERVER_HOST` (default `127.0.0.1`). It must be exposed publicly via Traefik at
-  `mcp.amiticia.cc/stream` (WebSocket upgrade) — an infra change in the `systems` repo,
+  `mcp.example.com/stream` (WebSocket upgrade); `deploy/docker-compose.yaml` routes it,
   parallel to the `/upload` route.
 - `follow_chat` builds the URL from `STREAM_PUBLIC_URL` (e.g.
-  `wss://mcp.amiticia.cc/stream`); falls back to `ws://<host>:<port>/stream` for local
+  `wss://mcp.example.com/stream`); falls back to `ws://<host>:<port>/stream` for local
   dev.
 - Tokens are opaque bearer secrets scoped to the requested jids + flags, TTL
   `STREAM_TOKEN_TTL_S` (default 30 min), held in memory only. They ride the query string

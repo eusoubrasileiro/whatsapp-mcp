@@ -4,7 +4,7 @@
  * designed to be attached to a harness background monitor (Claude Code
  * `Monitor({ws:{url}})`) so the agent is woken per message while it keeps
  * working — the presence half of the persona pattern the pull tools couldn't
- * serve (see docs/spec-agent-presence-stream.md).
+ * serve (see docs/agent-presence-stream-recipe.md).
  *
  * Auth: the token rides the query string (WS clients can't set headers from a
  * background monitor) and is verified at the HTTP `upgrade` — a bad/expired

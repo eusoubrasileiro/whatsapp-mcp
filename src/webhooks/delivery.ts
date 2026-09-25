@@ -89,7 +89,7 @@ export interface DispatchDeps<T extends InboundMessageInput = InboundMessageInpu
    * stripped). Used to (a) detect the self-chat — a self-chat is all is_from_me,
    * so your messages there are always forwarded, zero config — and (b) let a
    * self-chat (which WhatsApp keys under your LID) also match a subscription that
-   * allow-listed your number. Hermes's own replies are still suppressed (loop guard).
+   * allow-listed your number. The agent's own replies are still suppressed (loop guard).
    */
   ownJids?: string[];
 }

@@ -56,6 +56,15 @@ describe("assertNotColdContact", () => {
     expect(message).toMatch(/SEND_COLD_CONTACT_GUARD/);
   });
 
+  it("states the risk generically, not one deployment's restriction history", () => {
+    // The text ships to every instance of this server; a dated claim that "this
+    // number was already restricted" is only true of one of them.
+    const message = refusalFor(COLD, { env: {}, hasInbound: () => false });
+
+    expect(message).not.toMatch(/\b20\d\d-\d\d-\d\d\b/);
+    expect(message).not.toMatch(/already restricted/i);
+  });
+
   it("allows a send to a contact that has already messaged us", () => {
     expect(() => assertNotColdContact(COLD, { env: {}, hasInbound: () => true })).not.toThrow();
   });
@@ -157,9 +166,9 @@ describe("getColdOverridePolicy", () => {
 
 /**
  * Why the per-call escape hatch is not enough — any agent can pass
- * `allow_cold_contact: true`, so on the personal-number instance — an account one
- * strike from a permanent ban — the guard was advisory. Under `deny` the
- * parameter is ignored outright.
+ * `allow_cold_contact: true`, so on a number that cannot afford another
+ * restriction the guard was advisory. Under `deny` the parameter is ignored
+ * outright.
  */
 describe("assertNotColdContact under SEND_COLD_OVERRIDE=deny", () => {
   const DENY = { SEND_COLD_OVERRIDE: "deny" };
@@ -170,13 +179,22 @@ describe("assertNotColdContact under SEND_COLD_OVERRIDE=deny", () => {
     ).toThrow(/never messaged/i);
   });
 
-  it("says the override is disabled by policy and points at the work instance", () => {
+  it("says the override is disabled by policy and points at a separate outreach instance", () => {
     const message = refusalFor(COLD, { env: DENY, hasInbound: () => false, allowCold: true });
 
     expect(message).toMatch(/disabled on this instance by policy/i);
     expect(message).toMatch(/SEND_COLD_OVERRIDE/);
-    expect(message).toMatch(/whatsapp-work/);
-    expect(message).toMatch(/first[- ]contact sends belong on the work instance/i);
+    expect(message).toMatch(/first[- ]contact sends belong on a separate instance/i);
+  });
+
+  it("never names a specific deployment or restriction history", () => {
+    // An agent told to "use the whatsapp-work MCP" goes looking for a server that
+    // may not exist on this operator's setup — and the named instance was one
+    // deployment's, not a property of this code.
+    const message = refusalFor(COLD, { env: DENY, hasInbound: () => false, allowCold: true });
+
+    expect(message).not.toMatch(/whatsapp-work/i);
+    expect(message).not.toMatch(/already been restricted/i);
   });
 
   it("does not tell the agent to retry with allow_cold_contact", () => {

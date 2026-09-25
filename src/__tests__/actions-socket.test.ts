@@ -154,8 +154,8 @@ describe("executeGetGroupInfo", () => {
     );
     const result = await executeGetGroupInfo({ group_jid: "abc@g.us" });
     const parsed = JSON.parse(result);
-    const andre = parsed.participants.find((p: any) => p.jid === "5511@s.whatsapp.net");
-    expect(andre.name).toBe("Alice");
+    const alice = parsed.participants.find((p: any) => p.jid === "5511@s.whatsapp.net");
+    expect(alice.name).toBe("Alice");
   });
 
   it("falls back to phone segment when no contact name", async () => {

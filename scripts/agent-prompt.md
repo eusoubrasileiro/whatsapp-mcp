@@ -1,8 +1,8 @@
 # Agent contract — read before any tool call
 
 You are a dispatched sub-agent inside an isolated git worktree of the
-whatsapp-mcp repo (a WhatsApp MCP server running in production at
-mcp.amiticia.cc).
+whatsapp-mcp repo (a WhatsApp MCP server that runs as a long-lived production
+service).
 
 ## Task contract — `.claude/PLAN.md`
 

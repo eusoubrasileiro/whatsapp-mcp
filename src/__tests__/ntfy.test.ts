@@ -53,14 +53,14 @@ describe("createNtfy", () => {
       message: "M",
       priority: 5,
       tags: ["warning", "wa"],
-      click: "https://wa.amiticia.cc/",
+      click: "https://wa.example.com/",
     });
 
     const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
     const headers = new Headers(init?.headers);
     expect(headers.get("Priority")).toBe("5");
     expect(headers.get("Tags")).toBe("warning,wa");
-    expect(headers.get("Click")).toBe("https://wa.amiticia.cc/");
+    expect(headers.get("Click")).toBe("https://wa.example.com/");
   });
 
   it("sends Authorization: Bearer when token is set", async () => {
