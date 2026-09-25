@@ -31,10 +31,11 @@
 #   SEND_COLD_OVERRIDE    anti-ban policy for this number: deny (default) | allow
 #   SEND_COLD_ALLOWED_JIDS  numbers you own that may always be messaged (comma list)
 #   NTFY_TOKEN            only if the ntfy topic is protected
-#   OPENROUTER_API_KEY    enables download_media transcribe=true via Whisper Large v3
+#   OPENROUTER_API_KEY    enables download_media transcribe=true (Whisper Large v3)
+#                         and describe=true (vision model, see VISION_MODEL)
 #   AUDIO_PROVIDER        transcription route: openrouter (default) | groq | openai.
 #                         Rollback lanes only — set this, never rely on key presence.
-#   GEMINI_API_KEY        enables download_media describe=true via Gemini 2.5 Flash
+#   VISION_MODEL          OpenRouter model id for describe=true (default openai/gpt-6-luna)
 name: whatsapp-mcp
 
 services:
@@ -145,7 +146,7 @@ services:
       AUDIO_PROVIDER: ${AUDIO_PROVIDER:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}      # only read when AUDIO_PROVIDER=groq
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}  # only read when AUDIO_PROVIDER=openai
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VISION_MODEL: ${VISION_MODEL:-}
     volumes:
       # Bind mount at /storage/<stack>.
       # Host side holds auth_info/, data/whatsapp.db, data/media/, backups/, logs.

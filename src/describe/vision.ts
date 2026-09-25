@@ -1,11 +1,13 @@
 /**
- * Image description via Google Gemini 2.5 Flash.
+ * Image description via OpenRouter (OpenAI-compatible chat completions).
  *
- * Cheapest acceptable vision model for pt-BR WhatsApp images (menus, products,
- * documents, screenshots). Reuses GEMINI_API_KEY env var.
+ * The image travels inline as a base64 data URL, so no upload step or vendor
+ * SDK is needed — one plain `fetch`, same pattern as `transcribe/whisper.ts`,
+ * reusing its `OPENROUTER_API_KEY`. The default model is a cheap, fast
+ * image-input model picked from the live OpenRouter catalogue; `VISION_MODEL`
+ * swaps it with no code change.
  */
 
-import { GoogleGenAI } from "@google/genai";
 import type { Logger } from "pino";
 
 const DEFAULT_PROMPT_PT = [
@@ -38,53 +40,79 @@ export class DescribeError extends Error {
   }
 }
 
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_VISION_MODEL = "openai/gpt-6-luna";
+
 export async function describeImage(opts: DescribeOptions): Promise<DescribeResult> {
   const { buffer, mimetype, prompt = DEFAULT_PROMPT_PT, logger } = opts;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new DescribeError("GEMINI_API_KEY is not set — cannot describe image.");
+    throw new DescribeError("OPENROUTER_API_KEY is not set — cannot describe image.");
   }
 
-  const model = process.env.VISION_MODEL ?? "gemini-2.5-flash";
+  const model = process.env.VISION_MODEL?.trim() || DEFAULT_VISION_MODEL;
   logger?.debug({ model, mimetype, bytes: buffer.length }, "vision.describe start");
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: mimetype, data: buffer.toString("base64") } },
-            { text: prompt },
-          ],
-        },
-      ],
-    });
+  const payload = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          {
+            type: "image_url",
+            image_url: { url: `data:${mimetype};base64,${buffer.toString("base64")}` },
+          },
+        ],
+      },
+    ],
+  };
 
-    const text = (response as any).text ?? extractText(response);
-    if (!text || typeof text !== "string") {
-      throw new DescribeError("Gemini returned no text content.");
-    }
-    logger?.debug({ model, chars: text.length }, "vision.describe done");
-    return { text: text.trim(), model };
+  let res: Response;
+  try {
+    res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   } catch (err) {
-    if (err instanceof DescribeError) throw err;
-    throw new DescribeError(`Gemini vision request failed: ${(err as Error).message}`, err);
+    throw new DescribeError(`OpenRouter vision request failed: ${(err as Error).message}`, err);
   }
+
+  const body = await res.text();
+  if (!res.ok) {
+    throw new DescribeError(
+      `OpenRouter vision request failed: HTTP ${res.status} — ${body.trim()}`,
+    );
+  }
+
+  let text = "";
+  try {
+    text = extractText(JSON.parse(body));
+  } catch (err) {
+    throw new DescribeError("OpenRouter vision response was not valid JSON.", err);
+  }
+  if (!text) {
+    throw new DescribeError("OpenRouter returned no text content.");
+  }
+  logger?.debug({ model, chars: text.length }, "vision.describe done");
+  return { text: text.trim(), model };
 }
 
-function extractText(response: any): string {
-  const candidates = response?.candidates ?? [];
-  for (const cand of candidates) {
-    const parts = cand?.content?.parts ?? [];
-    const merged = parts
-      .map((p: any) => p?.text ?? "")
-      .filter(Boolean)
+interface ChatCompletion {
+  choices?: { message?: { content?: unknown } }[];
+}
+
+/** `content` is a string on most providers, an array of typed parts on some. */
+function extractText(response: ChatCompletion): string {
+  const content = response?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p && typeof p === "object" && "text" in p ? String(p.text ?? "") : ""))
       .join("");
-    if (merged) return merged;
   }
   return "";
 }

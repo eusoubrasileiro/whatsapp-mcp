@@ -1,59 +1,65 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const generateContent = vi.fn();
-
-vi.mock("@google/genai", () => ({
-  GoogleGenAI: class MockGenAI {
-    models = { generateContent };
-  },
-}));
-
 import { DescribeError, describeImage } from "../describe/vision.ts";
+
+const fetchMock = vi.fn();
+
+function okBody(content: unknown) {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+}
 
 describe("describeImage", () => {
   beforeEach(() => {
-    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.VISION_MODEL;
-    generateContent.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
-    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.VISION_MODEL;
+    vi.unstubAllGlobals();
   });
 
-  it("calls gemini-2.5-flash with inlineData and a pt-BR prompt by default", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    generateContent.mockResolvedValue({ text: "Foto de uma pizza grande." });
+  it("POSTs an OpenAI-shaped chat completion to OpenRouter with a base64 data URL and pt-BR prompt", async () => {
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockResolvedValue(okBody("Foto de uma pizza grande."));
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 
-    const result = await describeImage({
-      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
-      mimetype: "image/jpeg",
+    const result = await describeImage({ buffer: bytes, mimetype: "image/jpeg" });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer or_test");
+    const body = JSON.parse(init.body);
+    expect(body.model).toBe("openai/gpt-6-luna");
+    const content = body.messages[0].content;
+    expect(content[0]).toEqual({
+      type: "text",
+      text: expect.stringMatching(/português brasileiro/),
     });
-
-    expect(generateContent).toHaveBeenCalledOnce();
-    const call = generateContent.mock.calls[0][0];
-    expect(call.model).toBe("gemini-2.5-flash");
-    const parts = call.contents[0].parts;
-    expect(parts[0].inlineData.mimeType).toBe("image/jpeg");
-    expect(parts[0].inlineData.data).toBe(Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64"));
-    expect(parts[1].text).toMatch(/português brasileiro/);
-    expect(result).toEqual({ text: "Foto de uma pizza grande.", model: "gemini-2.5-flash" });
+    expect(content[1]).toEqual({
+      type: "image_url",
+      image_url: { url: `data:image/jpeg;base64,${bytes.toString("base64")}` },
+    });
+    expect(result).toEqual({ text: "Foto de uma pizza grande.", model: "openai/gpt-6-luna" });
   });
 
   it("honors VISION_MODEL override", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    process.env.VISION_MODEL = "gemini-2.5-pro";
-    generateContent.mockResolvedValue({ text: "x" });
+    process.env.OPENROUTER_API_KEY = "or_test";
+    process.env.VISION_MODEL = "qwen/qwen3.8-flash";
+    fetchMock.mockResolvedValue(okBody("x"));
 
     const result = await describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" });
-    expect(generateContent.mock.calls[0][0].model).toBe("gemini-2.5-pro");
-    expect(result.model).toBe("gemini-2.5-pro");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe("qwen/qwen3.8-flash");
+    expect(result.model).toBe("qwen/qwen3.8-flash");
   });
 
   it("uses an explicit prompt when provided", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    generateContent.mockResolvedValue({ text: "ok" });
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockResolvedValue(okBody("ok"));
 
     await describeImage({
       buffer: Buffer.from([1]),
@@ -61,38 +67,51 @@ describe("describeImage", () => {
       prompt: "Just say OK.",
     });
 
-    const parts = generateContent.mock.calls[0][0].contents[0].parts;
-    expect(parts[1].text).toBe("Just say OK.");
+    const content = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
+    expect(content[0].text).toBe("Just say OK.");
   });
 
-  it("throws DescribeError when GEMINI_API_KEY is unset", async () => {
+  it("throws DescribeError when OPENROUTER_API_KEY is unset, without calling the network", async () => {
+    await expect(
+      describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" }),
+    ).rejects.toThrow(/OPENROUTER_API_KEY/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("wraps HTTP errors with DescribeError", async () => {
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockResolvedValue(new Response("rate limited", { status: 429 }));
+
+    await expect(
+      describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" }),
+    ).rejects.toThrow(/vision request failed: HTTP 429/);
+  });
+
+  it("wraps network errors with DescribeError", async () => {
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockRejectedValue(new Error("ECONNRESET"));
+
     await expect(
       describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" }),
     ).rejects.toThrow(DescribeError);
   });
 
-  it("wraps Gemini SDK errors with DescribeError", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    generateContent.mockRejectedValue(new Error("HTTP 429"));
-
-    await expect(
-      describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" }),
-    ).rejects.toThrow(/Gemini vision request failed: HTTP 429/);
-  });
-
-  it("falls back to extracting candidates[].content.parts[].text when top-level .text is missing", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    generateContent.mockResolvedValue({
-      candidates: [{ content: { parts: [{ text: "Parte 1." }, { text: " Parte 2." }] } }],
-    });
+  it("joins text parts when content comes back as an array", async () => {
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockResolvedValue(
+      okBody([
+        { type: "text", text: "Parte 1." },
+        { type: "text", text: " Parte 2." },
+      ]),
+    );
 
     const result = await describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" });
     expect(result.text).toBe("Parte 1. Parte 2.");
   });
 
   it("throws DescribeError when response has no extractable text", async () => {
-    process.env.GEMINI_API_KEY = "g_test";
-    generateContent.mockResolvedValue({ candidates: [] });
+    process.env.OPENROUTER_API_KEY = "or_test";
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [] }), { status: 200 }));
 
     await expect(
       describeImage({ buffer: Buffer.from([1]), mimetype: "image/png" }),
