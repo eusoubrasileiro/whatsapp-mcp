@@ -17,7 +17,7 @@ import { registerWebhooksTools } from "./mcp/tools/webhooks.ts";
  * Server-level routing hint surfaced to clients under "MCP Server Instructions".
  * Prime real estate every agent reads before choosing a tool — the three-lifetime
  * table steers "monitor / watch / follow / act as me" to the right reactive tool
- * instead of the blocking long-poll. See docs/spec-agent-presence-stream.md §4.
+ * instead of the blocking long-poll. See docs/agent-presence-stream-recipe.md.
  */
 const SERVER_INSTRUCTIONS = `
 WhatsApp as an MCP server: read/search history, send messages & media, and react to

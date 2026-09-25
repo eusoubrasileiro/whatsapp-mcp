@@ -1,8 +1,8 @@
 # Recipe: be *present* in a WhatsApp chat with `follow_chat`
 
-The persona pattern (spec: [`spec-agent-presence-stream.md`](./spec-agent-presence-stream.md)):
-an interactive agent impersonates the user in a group and **does real work between
-messages** — it must be reactive without a blocking poll loop occupying its turns.
+The persona pattern: an interactive agent stands in for the user in a group and **does real
+work between messages** — it must be reactive without a blocking poll loop occupying its
+turns.
 
 `follow_chat` gives you a **WebSocket stream** you attach to your harness's background
 monitor. Each frame is one inbound message; you are woken per message while you keep
@@ -39,7 +39,7 @@ true for persona mode: so you see — and don't contradict — what they said ma
   "seq": 12,
   "id": "A577AE…",
   "chat_jid": "1203…@g.us",
-  "chat_name": "AmiticIA AutoSys",
+  "chat_name": "Project Group",
   "sender_jid": "…@s.whatsapp.net",
   "sender_display": "Beatriz A. Example",
   "is_from_me": false,
@@ -90,7 +90,7 @@ attach. With no `since`, the stream starts from now.
 
 - The stream server listens on `STREAM_SERVER_PORT` (default `39004`), bound to
   `STREAM_SERVER_HOST` (default `127.0.0.1`). It must be exposed publicly via Traefik at
-  `mcp.example.com/stream` (WebSocket upgrade) — an infra change in the `systems` repo,
+  `mcp.example.com/stream` (WebSocket upgrade); `deploy/docker-compose.yaml` routes it,
   parallel to the `/upload` route.
 - `follow_chat` builds the URL from `STREAM_PUBLIC_URL` (e.g.
   `wss://mcp.example.com/stream`); falls back to `ws://<host>:<port>/stream` for local
