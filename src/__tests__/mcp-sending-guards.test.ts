@@ -286,8 +286,8 @@ describe("anti-ban guards", () => {
   });
 
   it("ignores allow_cold_contact when the instance denies the override", async () => {
-    // The personal-number deployment — any agent could pass the flag, so the
-    // escape hatch had to become an operator decision, not a per-call one.
+    // A number that cannot afford another restriction — any agent could pass the
+    // flag, so the escape hatch had to become an operator decision, not a per-call one.
     process.env.SEND_COLD_OVERRIDE = "deny";
 
     await expect(

@@ -40,7 +40,7 @@ describe("subscription registry", () => {
       targetUrl: "https://hook.example/in",
       allowedJids: ["5531@s.whatsapp.net"],
       secret: "shh",
-      label: "hermes",
+      label: "agent",
     });
 
     resetRegistry();

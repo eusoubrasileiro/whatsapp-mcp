@@ -4,7 +4,7 @@
  * These tests stub `fetch`, not an SDK. The previous suite mocked `groq-sdk`
  * and `openai`, which meant it asserted "we called the SDK we imported" and
  * would have passed no matter what the vendor actually accepts on the wire.
- * wahub's transcription client shipped with a wrong claim about OpenRouter's
+ * Another transcription client of ours shipped with a wrong claim about OpenRouter's
  * request format for exactly that reason. Pinning URL, method, form fields and
  * auth header is the part that can actually regress.
  *

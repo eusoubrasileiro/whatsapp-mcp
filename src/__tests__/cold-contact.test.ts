@@ -166,9 +166,9 @@ describe("getColdOverridePolicy", () => {
 
 /**
  * Why the per-call escape hatch is not enough — any agent can pass
- * `allow_cold_contact: true`, so on the personal-number instance — an account one
- * strike from a permanent ban — the guard was advisory. Under `deny` the
- * parameter is ignored outright.
+ * `allow_cold_contact: true`, so on a number that cannot afford another
+ * restriction the guard was advisory. Under `deny` the parameter is ignored
+ * outright.
  */
 describe("assertNotColdContact under SEND_COLD_OVERRIDE=deny", () => {
   const DENY = { SEND_COLD_OVERRIDE: "deny" };

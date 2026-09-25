@@ -36,14 +36,14 @@ describe("webhook actions", () => {
       target_url: "https://hook.example/in",
       allowed_jids: ["5531@s.whatsapp.net"],
       secret: "shh",
-      label: "hermes",
+      label: "agent",
     });
 
     const list = executeListWebhooks();
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       target_url: "https://hook.example/in",
-      label: "hermes",
+      label: "agent",
       has_secret: true,
       auth_mode: "hmac",
       transcribe: true,

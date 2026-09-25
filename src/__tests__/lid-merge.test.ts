@@ -35,7 +35,7 @@ describe("Phase 2 — physical chat merge", () => {
     resetDatabase();
   });
 
-  describe("mergeChatPair (regression: Carol Example)", () => {
+  describe("mergeChatPair (regression: one contact split across PN and LID)", () => {
     it("relocates the stale chat's messages onto the canonical LID and drops the stale row", () => {
       // Pre-LID history under the phone-number JID.
       storeMessage(makeMsg("old1", PN, "2026-05-13T10:00:00Z"));

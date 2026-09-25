@@ -1,9 +1,9 @@
 /**
  * Shared types for the outbound webhook subscription platform.
  *
- * A subscription lets an external agent (Hermes, or any future product/tenant)
+ * A subscription lets an external agent (or any future product/tenant)
  * receive inbound WhatsApp messages from a curated allow-list of chats in real
- * time. Nothing here is Hermes-specific — the push is a reusable asset.
+ * time. Nothing here is agent-specific — the push is a reusable asset.
  */
 
 export type AuthMode = "hmac" | "bearer";
@@ -22,8 +22,8 @@ export interface Subscription {
   transcribe: boolean;
   /**
    * When true, the user's OWN messages (is_from_me) in allow-listed chats are
-   * forwarded — the talk-to-yourself pattern (you message Hermes in a self-chat).
-   * Hermes's own replies are always suppressed regardless (loop guard). Default
+   * forwarded — the talk-to-yourself pattern (you message your agent in a self-chat).
+   * The agent's own replies are always suppressed regardless (loop guard). Default
    * false, so a customer-facing bot only sees genuine inbound.
    */
   includeFromMe: boolean;
