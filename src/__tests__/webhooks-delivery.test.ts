@@ -235,7 +235,7 @@ describe("dispatchInbound", () => {
       includeFromMe: true,
     });
 
-    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), {
+    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi agente" }), {
       logger: fakeLogger(),
     });
 
@@ -245,7 +245,7 @@ describe("dispatchInbound", () => {
     expect(url).toBe("https://h/self-chat");
     const body = JSON.parse(init?.body as string);
     expect(body.is_from_me).toBe(true);
-    expect(body.content).toBe("oi hermes");
+    expect(body.content).toBe("oi agente");
   });
 
   it("never forwards a message this MCP sent (loop guard), even with include_from_me", async () => {
@@ -255,9 +255,9 @@ describe("dispatchInbound", () => {
       allowedJids: ["5531@s.whatsapp.net"],
       includeFromMe: true,
     });
-    markSentByUs("REPLY1"); // Hermes's own reply echoing back
+    markSentByUs("REPLY1"); // the agent's own reply echoing back
 
-    await dispatchInbound(makeMsg({ id: "REPLY1", is_from_me: true, content: "I am Hermes" }), {
+    await dispatchInbound(makeMsg({ id: "REPLY1", is_from_me: true, content: "I am the agent" }), {
       logger: fakeLogger(),
     });
 
@@ -272,7 +272,7 @@ describe("dispatchInbound", () => {
       // note: includeFromMe NOT set (defaults false)
     });
 
-    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi hermes" }), {
+    await dispatchInbound(makeMsg({ is_from_me: true, content: "oi agente" }), {
       logger: fakeLogger(),
       ownJids: ["5531@s.whatsapp.net"],
     });
@@ -280,7 +280,7 @@ describe("dispatchInbound", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
     expect(body.is_from_me).toBe(true);
-    expect(body.content).toBe("oi hermes");
+    expect(body.content).toBe("oi agente");
   });
 
   it("delivers a non-from-me message in a self-chat (the unconditional branch)", async () => {

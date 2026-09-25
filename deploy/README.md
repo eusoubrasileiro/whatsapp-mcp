@@ -1,54 +1,54 @@
 # whatsapp-mcp stack — ops runbook
 
-Long-lived `whatsapp-mcp` container on the VPS. Publishes:
+Long-lived `whatsapp-mcp` container on a VPS behind Traefik. With `MCP_DOMAIN=mcp.example.com` and `QR_DOMAIN=wa.example.com` in `deploy/.env` (substitute your own hostnames), it publishes:
 
 - `https://mcp.example.com/mcp` — Bearer-auth MCP endpoint (whatsapp-mcp:39001)
-- `https://mcp.example.com/upload` — Bearer-auth host-disk upload endpoint (whatsapp-mcp:39003). Agents POST raw bytes here, get back `{url}`, then pass it to `send_file`. Same `MCP_AUTH_TOKEN` as `/mcp`. See `libs/whatsapp-mcp/CLAUDE.md` → "Sending host-disk files".
-- `https://mcp.example.com/media/<key>` — public media URLs served by a sibling RustFS container (path-rewrite via Traefik to `minio:9000/amiticia-media/<key>`). No new DNS, no new Cloudflare entry — same host, same TLS cert.
-- `wss://mcp.example.com/stream` — `follow_chat` WebSocket presence stream (whatsapp-mcp:39004). Scoped short-lived token gate enforced inside the app; the token rides the query string (`?token=…`). See `libs/whatsapp-mcp/CLAUDE.md` → `follow_chat`.
+- `https://mcp.example.com/upload` — Bearer-auth host-disk upload endpoint (whatsapp-mcp:39003). Agents POST raw bytes here, get back `{url}`, then pass it to `send_file`. Same `MCP_AUTH_TOKEN` as `/mcp`. See `CLAUDE.md` → "Sending host-disk files".
+- `https://mcp.example.com/media/<key>` — public media URLs served by a sibling RustFS container (path-rewrite via Traefik to `minio:9000/amiticia-media/<key>`). No extra DNS record — same host, same TLS cert.
+- `wss://mcp.example.com/stream` — `follow_chat` WebSocket presence stream (whatsapp-mcp:39004). Scoped short-lived token gate enforced inside the app; the token rides the query string (`?token=…`). See `CLAUDE.md` → `follow_chat`.
 - `https://wa.example.com/` — public QR page
 
-Audience: future-me. You forgot which branch, which network, which certresolver, which token. Start here.
+Audience: whoever operates the stack — which network, which certresolver, which token. Start here.
 
-## Prerequisites (already satisfied on manager1)
+## Prerequisites
 
-- Docker 28+ on VPS `203.0.113.10` (`ssh <vps>`)
-- Traefik v3 running, certresolver named **`myresolver`** (ACME TLS-ALPN, Let's Encrypt), attached to `network_public`
-- Root's docker already logged in to `ghcr.io`
-- DNS in Cloudflare for `example.com`:
-  - `mcp` CNAME `example.com` — **DNS only (grey cloud)**
-  - `wa`  CNAME `example.com` — **DNS only (grey cloud)**
-  - Root `example.com` A `203.0.113.10` (DNS only)
-  - **CF Proxy must be OFF** for `mcp` and `wa` — Traefik uses TLS-ALPN challenge which CF edge would break.
+- Docker 28+ on the VPS (`ssh <vps>` below)
+- Traefik v3 running, certresolver named **`myresolver`** (ACME TLS-ALPN, Let's Encrypt), attached to `network_public` — or edit the compose labels to match yours
+- If `image:` points at a private registry, the VPS's docker is logged in to it
+- DNS: `mcp` and `wa` records (your `MCP_DOMAIN` / `QR_DOMAIN`) pointing at the VPS
+  - If the zone is on Cloudflare, keep both records **DNS only (grey cloud)** — Traefik uses the TLS-ALPN challenge, which the CF proxy would break.
 
 ## First-time deploy
 
 ```bash
 ssh <vps>
 
-# 1. clone the three repos
-cd /root
-git clone git@github.com:AmiticIA-AutoSys/whatsapp-mcp.git
-git clone git@github.com:AmiticIA-AutoSys/baileys-client.git
+# 1. clone both repos side by side
+cd /opt
+git clone https://github.com/AmiticIA-AutoSys/whatsapp-mcp.git
+git clone https://github.com/AmiticIA-AutoSys/baileys-client.git
 
 # 2. build image (baileys-client is linked via BuildKit --build-context)
-cd /root
+cd /opt
 DOCKER_BUILDKIT=1 docker build \
-  --build-context baileys=/root/baileys-client \
+  --build-context baileys=/opt/baileys-client \
   -t ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
-  /root/whatsapp-mcp
+  /opt/whatsapp-mcp
 
 # 3. create .env
-cd /opt/app/whatsapp-mcp/deploy
-touch .env
+cd /opt/whatsapp-mcp/deploy
+cp .env.example .env
 chmod 600 .env
 vi .env
 # fill:
+#   MCP_DOMAIN=mcp.example.com         # your hostnames — compose refuses to start without them
+#   QR_DOMAIN=wa.example.com
 #   MCP_AUTH_TOKEN=<openssl rand -hex 32>
 #   NTFY_TOPIC_URL=https://ntfy.sh/<long-random-topic>
 #   EXPECTED_WA_NUMBER=                # leave empty on first boot (we don't know the JID yet)
 #   MINIO_ROOT_USER=<openssl rand -hex 8>       # env name kept; compose remaps to RUSTFS_ROOT_USER
 #   MINIO_ROOT_PASSWORD=<openssl rand -hex 32>  # env name kept; compose remaps to RUSTFS_ROOT_PASSWORD
+#   SEND_COLD_OVERRIDE / SEND_COLD_ALLOWED_JIDS  # per-instance send policy — see docs/account-restrictions.md
 # (S3_ACCESS_KEY/S3_SECRET_KEY in compose.yaml use ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD}; no second pair to manage.)
 
 # 4. prepare the bind mounts and deploy
@@ -75,8 +75,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://mcp.example.com/mcp \
 # 8. lock down EXPECTED_WA_NUMBER — after first successful pairing
 docker exec whatsapp-mcp grep -E 'username|myPN' /data/wa-logs.txt | tail -3
 # find your JID, then:
-vi /opt/app/whatsapp-mcp/deploy/.env
-#   EXPECTED_WA_NUMBER=<your full JID prefix, e.g. 551100000013>
+vi /opt/whatsapp-mcp/deploy/.env
+#   EXPECTED_WA_NUMBER=<your full JID prefix, e.g. 5511900000007>
 docker compose up -d --force-recreate
 ```
 
@@ -84,25 +84,32 @@ docker compose up -d --force-recreate
 
 ```bash
 ssh <vps>
-cd /root/whatsapp-mcp && git pull
-cd /root/baileys-client && git pull   # only if baileys-client changed
+cd /opt/whatsapp-mcp && git pull
+cd /opt/baileys-client && git pull   # only if baileys-client changed
 DOCKER_BUILDKIT=1 docker build \
-  --build-context baileys=/root/baileys-client \
+  --build-context baileys=/opt/baileys-client \
   -t ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
-  /root/whatsapp-mcp
-cd /opt/app/whatsapp-mcp/deploy
+  /opt/whatsapp-mcp
+cd /opt/whatsapp-mcp/deploy
 docker compose up -d --force-recreate
 docker logs -f whatsapp-mcp   # watch it recover
 ```
 
 Auth state in `/data/auth_info/` and the SQLite DB at `/data/data/whatsapp.db` are preserved across recreates via the host bind mount `/storage/whatsapp-mcp:/data`. You do NOT re-scan the QR on updates.
 
+> **Upgrading from a compose file with hard-coded hostnames?** Before the `git pull`, copy the
+> hostnames and any `SEND_COLD_OVERRIDE` / `SEND_COLD_ALLOWED_JIDS` values from the deployed
+> `docker-compose.yaml` into `.env` as `MCP_DOMAIN`, `QR_DOMAIN`, `SEND_COLD_OVERRIDE` and
+> `SEND_COLD_ALLOWED_JIDS`. Missing hostnames make `docker compose` refuse to start (nothing is
+> touched); a missing allowlist fails safe — sends to those numbers are refused until it is set.
+> `docker compose config` shows the result before you apply it.
+
 ## Rotate MCP_AUTH_TOKEN
 
 ```bash
 ssh <vps>
 NEW=$(openssl rand -hex 32)
-cd /opt/app/whatsapp-mcp/deploy
+cd /opt/whatsapp-mcp/deploy
 sed -i "s/^MCP_AUTH_TOKEN=.*/MCP_AUTH_TOKEN=$NEW/" .env
 docker compose up -d --force-recreate
 
@@ -142,13 +149,13 @@ https://mcp.example.com/media/t/default/<sanitizedJid>/<msgId>.<ext>
 
 Traefik strips the `/media/` prefix and forwards to `minio:9000/amiticia-media/<key>` via a `replacepathregex` middleware. There is **no** new DNS record, **no** subdomain, **no** managed cloud bucket — just one extra container on the same `network_public`.
 
-Storage is bind-mounted at `/storage/whatsapp-mcp/minio` so Borg picks it up as part of the existing `/storage/whatsapp-mcp` tree.
+Storage is bind-mounted at `/storage/whatsapp-mcp/minio`, so an offsite backup of the `/storage/whatsapp-mcp` tree covers it.
 
 Sanity-check after deploy:
 
 ```bash
 ssh <vps>
-docker compose -f /opt/app/whatsapp-mcp/deploy/docker-compose.yaml ps
+docker compose -f /opt/whatsapp-mcp/deploy/docker-compose.yaml ps
 # expect: whatsapp-mcp Up (healthy), whatsapp-mcp-minio Up (healthy), whatsapp-mcp-minio-init Exited (0)
 
 # bucket exists and is anon-readable
@@ -175,7 +182,7 @@ After backfill (see whatsapp-mcp `scripts/backfill-media.sh`), pick any row with
 | `/media/<key>` returns 403 / `AccessDenied` | Bucket policy not applied | The app's `ensureBucketReady()` runs at boot and sets the policy; check `docker logs whatsapp-mcp` for `setBucketPolicy` errors. As a fallback: `docker run --rm --network network_public rustfs/rc:latest sh -c 'rc alias set local http://whatsapp-mcp-minio:9000 ... && rc anonymous set download local/amiticia-media'` |
 | HTTP 401 with the correct Bearer | `.env` drifted from clients | Rotate + resync all clients |
 | ntfy push never arrives | Topic unsubscribed, `NTFY_TOPIC_URL` empty, or non-ASCII in title | Check `.env`, subscribe topic in ntfy app, `grep ntfy /data/wa-logs.txt` |
-| "Linked as ?" in QR page after first pair | Known cosmetic bug in baileys-client — state.user populated after first `creds.update` arrives | Reconnect populates it; root-cause fix pending in baileys-client |
+| "Linked as ?" in QR page after first pair | Old baileys-client — `state.user` was only populated after the first `creds.update` | Fixed in baileys-client (falls back to the JID's number until the name arrives); rebuild the image against a current checkout |
 | Unexpected auto-logout + purge + push | `EXPECTED_WA_NUMBER` mismatch — someone else scanned the QR, or you paired a second device with a different number | Verify the expected number, re-scan from correct phone |
 | Sync seems stuck / no messages | `wa-logs.txt` usually shows what step it's on (`history sync complete` is the success line) | If stuck, restart container. Creds preserved. |
 
@@ -185,7 +192,7 @@ If this stack was running before the `/storage/whatsapp-mcp` bind mount landed, 
 
 ```bash
 ssh <vps>
-cd /opt/app/whatsapp-mcp/deploy
+cd /opt/whatsapp-mcp/deploy
 docker compose down
 mkdir -p /storage/whatsapp-mcp
 docker run --rm \
@@ -230,12 +237,12 @@ Both require the container to be stopped (WAL lock). The whatsapp-mcp image alre
 
 ```bash
 ssh <vps>
-cd /opt/app/whatsapp-mcp/deploy
+cd /opt/whatsapp-mcp/deploy
 docker compose stop
 docker run --rm \
   -v /storage/whatsapp-mcp:/data \
   -v /tmp:/src \
-  -v /root/whatsapp-mcp/scripts:/scripts \
+  -v /opt/whatsapp-mcp/scripts:/scripts \
   --entrypoint sh \
   ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
   /scripts/restore.sh /src/source.db
@@ -256,12 +263,12 @@ scp /tmp/old-wa.db /tmp/old-wa-media.tar.gz <vps>:/tmp/
 ssh <vps>
 # extract media first (-k keeps existing files on name collision):
 tar xzkf /tmp/old-wa-media.tar.gz -C /storage/whatsapp-mcp/data/
-cd /opt/app/whatsapp-mcp/deploy
+cd /opt/whatsapp-mcp/deploy
 docker compose stop
 docker run --rm \
   -v /storage/whatsapp-mcp:/data \
   -v /tmp:/src \
-  -v /root/whatsapp-mcp/scripts:/scripts \
+  -v /opt/whatsapp-mcp/scripts:/scripts \
   --entrypoint sh \
   ghcr.io/amiticia-autosys/whatsapp-mcp:latest \
   /scripts/merge-db.sh /src/old-wa.db
@@ -329,15 +336,15 @@ If you want everything self-contained in the stack, add an `ofelia` sidecar that
 
 Works. Root's socket access is already required to `docker exec`, so the blast radius is the same as running compose commands. Downside is visibility — failures go to `/var/log/whatsapp-mcp-backup.log` on disk and don't page anyone. If the container is down when cron fires, the docker exec just errors silently.
 
-## Offsite backups — Borg (manual)
+## Offsite backups (manual)
 
-Backup directory is at `/storage/whatsapp-mcp/backups/` on the host. Point a Borg repo at it using the patterns in `your backup notes`. **No cron is wired for Borg in this stack today** — run it from wherever holds the Borg repo (laptop, second disk, remote). Something like:
+Backup directory is at `/storage/whatsapp-mcp/backups/` on the host. Point an offsite backup tool at it — Borg shown here. **No cron is wired for it in this stack today** — run it from wherever holds the backup repo (laptop, second disk, remote). Something like:
 
 ```bash
 # example only — adapt to your Borg repo layout
 borg create \
   --compression lz4 \
-  /media/you/backup/borg-repo::whatsapp-mcp-{now} \
+  /path/to/borg-repo::whatsapp-mcp-{now} \
   /storage/whatsapp-mcp/backups /storage/whatsapp-mcp/auth_info
 ```
 

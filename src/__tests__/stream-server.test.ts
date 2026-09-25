@@ -51,7 +51,7 @@ describe("stream WS server", () => {
     initializeDatabase(":memory:");
     resetInboundBus();
     resetSentTracker();
-    storeChat({ jid: "g@g.us", name: "AmiticIA AutoSys" });
+    storeChat({ jid: "g@g.us", name: "Project Group" });
     tokens = createStreamTokenStore({ ttlMs: 60_000 });
     server = createStreamServer({
       logger,
@@ -94,7 +94,7 @@ describe("stream WS server", () => {
       id: "a",
       chat_jid: "g@g.us",
       content: "Amei.",
-      chat_name: "AmiticIA AutoSys",
+      chat_name: "Project Group",
     });
   });
 
@@ -145,7 +145,7 @@ describe("stream WS server", () => {
     const { token } = tokens.issue({ jids: ["g@g.us"], includeFromMe: true, transcribe: false });
     const { frames } = await connect(`${baseWs}?token=${token}`);
 
-    // Alice types from his phone → is_from_me, must appear (persona mode).
+    // The user types from their own phone → is_from_me, must appear (persona mode).
     storeMessage(
       makeMsg({ id: "phone", chat_jid: "g@g.us", content: "eu respondo", is_from_me: true }),
     );

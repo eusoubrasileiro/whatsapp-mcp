@@ -2,7 +2,7 @@
  * Loop guard for the talk-to-yourself pattern.
  *
  * When a subscription has `include_from_me`, we forward the user's own messages
- * (so Hermes sees what you type in a self-chat). But Hermes's *replies* — sent
+ * (so the agent sees what you type in a self-chat). But the agent's *replies* — sent
  * through this MCP — are also `is_from_me` and echo back via messages.upsert. If
  * we forwarded those, the agent would react to its own reply forever. So every
  * message this MCP sends is recorded here, and dispatch skips any upsert whose

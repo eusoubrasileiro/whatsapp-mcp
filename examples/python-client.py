@@ -21,11 +21,11 @@ from typing import Any
 
 import httpx
 
-MCP_URL = os.environ.get("MCP_URL", "https://mcp.example.com/mcp")
+MCP_URL = os.environ.get("MCP_URL")
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN")
 
-if not MCP_AUTH_TOKEN:
-    sys.exit("MCP_AUTH_TOKEN env var is required")
+if not MCP_URL or not MCP_AUTH_TOKEN:
+    sys.exit("MCP_URL and MCP_AUTH_TOKEN env vars are required")
 
 
 class MCPClient:

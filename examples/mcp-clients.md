@@ -1,6 +1,6 @@
 # MCP client configs
 
-Copy-pasteable snippets for every client tested against `https://mcp.example.com/mcp`. Replace `<your-token>` with your `MCP_AUTH_TOKEN`.
+Copy-pasteable snippets for every tested client. Replace `https://mcp.example.com/mcp` with your deployment's endpoint and `<your-token>` with your `MCP_AUTH_TOKEN`.
 
 ## Claude Code
 
@@ -27,7 +27,7 @@ Verify:
 ```bash
 claude mcp list     # whatsapp: ✓ Connected
 # inside a session:
-/mcp                # should list the 20 whatsapp tools
+/mcp                # should list the 23 whatsapp tools
 ```
 
 ## Claude Desktop
@@ -134,7 +134,7 @@ See `README.md` in this directory for curl/Python examples if your runtime doesn
     // always present — public URL to the stored object
     {
       "type": "resource_link",
-      "uri": "https://mcp.example.com/media/t/default/553188xxx@s.whatsapp.net/3EB0C1A....jpg",
+      "uri": "https://mcp.example.com/media/t/default/5511900000007@s.whatsapp.net/3EB0C1A....jpg",
       "name": "3EB0C1A....jpg",
       "mimeType": "image/jpeg"
     },
@@ -147,7 +147,7 @@ See `README.md` in this directory for curl/Python examples if your runtime doesn
 Notes for integrators:
 
 - The `resource_link.uri` is **public** — no `Authorization` header needed when fetching it.
-- The host is the same as the MCP endpoint (`mcp.example.com`), routed by path (`/media/*`) to a MinIO bucket on the VPS. Same TLS cert, no extra DNS.
+- The host is the same as the MCP endpoint (`mcp.example.com`), routed by path (`/media/*`) to an S3-compatible bucket (a RustFS sidecar in the production compose). Same TLS cert, no extra DNS.
 - Audio messages get `{ "type": "audio", … }` instead of `image` on first call.
 - For files larger than `MEDIA_INLINE_MAX_BYTES` (default 5 MiB), no inline block is returned — fetch via `resource_link.uri`.
 - Subsequent calls for the same `(message_id, chat_jid)` skip Baileys and return only the `resource_link` + JSON metadata (`status: "cached"`).
