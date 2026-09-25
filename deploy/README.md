@@ -3,9 +3,9 @@
 Long-lived `whatsapp-mcp` container on a VPS behind Traefik. With `MCP_DOMAIN=mcp.example.com` and `QR_DOMAIN=wa.example.com` in `deploy/.env` (substitute your own hostnames), it publishes:
 
 - `https://mcp.example.com/mcp` — Bearer-auth MCP endpoint (whatsapp-mcp:39001)
-- `https://mcp.example.com/upload` — Bearer-auth host-disk upload endpoint (whatsapp-mcp:39003). Agents POST raw bytes here, get back `{url}`, then pass it to `send_file`. Same `MCP_AUTH_TOKEN` as `/mcp`. See `CLAUDE.md` → "Sending host-disk files".
+- `https://mcp.example.com/upload` — Bearer-auth host-disk upload endpoint (whatsapp-mcp:39003). Agents POST raw bytes here, get back `{url}`, then pass it to `send_file`. Same `MCP_AUTH_TOKEN` as `/mcp`. See [`docs/tools.md`](../docs/tools.md#sending-host-disk-files-the-upload-endpoint).
 - `https://mcp.example.com/media/<key>` — public media URLs served by a sibling RustFS container (path-rewrite via Traefik to `minio:9000/amiticia-media/<key>`). No extra DNS record — same host, same TLS cert.
-- `wss://mcp.example.com/stream` — `follow_chat` WebSocket presence stream (whatsapp-mcp:39004). Scoped short-lived token gate enforced inside the app; the token rides the query string (`?token=…`). See `CLAUDE.md` → `follow_chat`.
+- `wss://mcp.example.com/stream` — `follow_chat` WebSocket presence stream (whatsapp-mcp:39004). Scoped short-lived token gate enforced inside the app; the token rides the query string (`?token=…`). See [`docs/agent-presence-stream-recipe.md`](../docs/agent-presence-stream-recipe.md).
 - `https://wa.example.com/` — public QR page
 
 Audience: whoever operates the stack — which network, which certresolver, which token. Start here.
@@ -141,7 +141,7 @@ docker exec whatsapp-mcp grep -iE 'ntfy|error|loggedOut' /data/wa-logs.txt | tai
 
 ## Media plane (RustFS sidecar)
 
-Media downloaded by the `download_media` tool is uploaded to a `minio` service (runs RustFS) in this same compose file. The bucket `amiticia-media` is created by a one-shot `minio-init` (mc) container and set to anonymous-read. Public URLs look like:
+Media downloaded by the `download_media` tool is uploaded to a `minio` service (runs RustFS) in this same compose file. The bucket `amiticia-media` is created by a one-shot `minio-init` (`rustfs/rc`) container and set to anonymous-read. Public URLs look like:
 
 ```
 https://mcp.example.com/media/t/default/<sanitizedJid>/<msgId>.<ext>
@@ -170,7 +170,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" https://mcp.example.com/media/probe-do
 # expect 404 (Not Found from RustFS) — proves routing is wired
 ```
 
-After backfill (see whatsapp-mcp `scripts/backfill-media.sh`), pick any row with `media_object_key IS NOT NULL` and `curl -I` its public URL — should return `HTTP/2 200`.
+After a backfill (`scripts/backfill-media.sh`, only for deployments older than the media plane), pick any row with `media_object_key IS NOT NULL` and `curl -I` its public URL — should return `HTTP/2 200`.
 
 ## Troubleshooting
 
@@ -352,5 +352,4 @@ borg create \
 
 - Image source: `github.com/eusoubrasileiro/whatsapp-mcp` (branch `main`)
 - Shared client lib: `github.com/eusoubrasileiro/baileys-client` (branch `main`)
-- User docs: see the whatsapp-mcp repo's `README.md` and `CLAUDE.md`
-- This runbook lives in this repo at `deploy/README.md` — the product owns its own deployment config
+- User docs: [`README.md`](../README.md) and [`docs/`](../docs/)

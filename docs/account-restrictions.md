@@ -30,9 +30,10 @@ refusal *across* sessions, so a fresh session days later re-attempted the same d
 `applySendPolicy` (`src/send-policy.ts`), on both sending tools, after `resolveTarget()` so
 guards see the canonical post-LID JID. **Order is load-bearing:**
 
-```
-assertNotBlocked   →  assertNotColdContact  →  applySendPacing  →  simulateTyping
-durable 463 memory    no inbound history       interval + caps     presence
+```mermaid
+flowchart LR
+  A["assertNotBlocked<br/>durable 463 memory"] --> B["assertNotColdContact<br/>no inbound history"]
+  B --> C["applySendPacing<br/>interval + caps"] --> D["simulateTyping<br/>presence"] --> S((send))
 ```
 
 - **`send-blocklist.ts`** — persists cold `463` refusals; later sends to that alias group are
@@ -45,7 +46,7 @@ durable 463 memory    no inbound history       interval + caps     presence
 - **`send-typing.ts`** — typing indicator scaled to message length before a text send.
 
 Underneath sit the two older guards (pre-send `onWhatsApp()` in `recipient.ts`, post-send
-rejection wait in `ack-bus.ts`/`send-guard.ts`) — see CLAUDE.md "Send guards".
+rejection wait in `ack-bus.ts`/`send-guard.ts`) — see [`send-guards.md`](./send-guards.md).
 
 `allow_cold_contact: true` is **not** an agent's escape hatch: `SEND_COLD_OVERRIDE=deny` makes
 it inert and the refusal says so.
