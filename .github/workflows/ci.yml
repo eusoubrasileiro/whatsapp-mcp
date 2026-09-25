@@ -34,6 +34,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: whatsapp-mcp/.nvmrc
+      # Audio transcription tests shell out to ffmpeg, which the runtime image
+      # also installs via apt.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Build baileys-client
         working-directory: baileys-client
         run: pnpm install --frozen-lockfile && pnpm build
