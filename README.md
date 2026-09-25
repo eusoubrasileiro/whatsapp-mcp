@@ -1,5 +1,7 @@
 # WhatsApp MCP Server
 
+[![CI](https://github.com/eusoubrasileiro/whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eusoubrasileiro/whatsapp-mcp/actions/workflows/ci.yml)
+
 WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTTPS with Bearer auth, and pushes [ntfy](https://ntfy.sh) notifications when your session needs attention (QR expired, connection dropped). Built on [Baileys](https://github.com/WhiskeySockets/Baileys) via the [`@amiticia/baileys-client`](https://github.com/eusoubrasileiro/baileys-client) wrapper.
 
 ## Who this is for
