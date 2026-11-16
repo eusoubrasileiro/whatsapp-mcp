@@ -101,14 +101,4 @@ resolves the link normally and can `pnpm install`.)
 
 ## Behavioral probes
 
-Unit tests can't catch this server's characteristic failure — a send that reports success and
-never arrives. Before calling a send-path change done, exercise a really-running instance:
-
-| Probe | Target |
-|---|---|
-| QR page shows a live connection state | the local `docker-compose.dev.yaml` stack |
-| `send_message` delivers and returns a real ack | a dedicated test number you own — never a production number |
-| `POST /upload` returns a URL `send_file` can resolve | the local stack's upload endpoint |
-
-The send probe uses WhatsApp's live network with a real account, so it is always run by a
-person, never as an unattended gate.
+Declared in [`CLAUDE.md`](../CLAUDE.md#behavioral-probes) — one copy, so it cannot drift.

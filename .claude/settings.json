@@ -1,28 +1,6 @@
 {
-  "_comment": "Permission policy for Claude Code agents (standards §6). Three tiers: allow = unguarded; ask = human approval required (must mirror scripts/security-review.mjs critical-paths + sensitiveFiles); deny = never, wins over any allow (including the blanket Bash(git *) in an untracked settings.local.json). Keep the ask tier in sync with the reviewer's two lists.",
+  "_comment": "Permission policy for Claude Code agents (standards §6). No allow tier: grants are global (claude-config/settings.json); a project allow entry can never widen them, so it is dead weight. ask = human approval required (must mirror scripts/lib/critical-paths.mjs, which the reviewer and its ratification check both read). deny = never, stricter than ask. Keep the ask tier in sync with critical-paths.mjs.",
   "permissions": {
-    "allow": [
-      "Bash(pnpm typecheck)",
-      "Bash(pnpm test)",
-      "Bash(pnpm test:coverage)",
-      "Bash(pnpm test:harness)",
-      "Bash(pnpm lint)",
-      "Bash(pnpm lint:fix)",
-      "Bash(pnpm quality-gate)",
-      "Bash(pnpm start)",
-      "Bash(pnpm dispatch *)",
-      "Bash(pnpm dispatch:cleanup *)",
-      "Bash(pnpm exec tsc *)",
-      "Bash(pnpm exec biome *)",
-      "Bash(git status)",
-      "Bash(git diff *)",
-      "Bash(git log *)",
-      "Bash(git show *)",
-      "Bash(curl -s http://127.0.0.1:*)",
-      "Bash(curl -sS http://127.0.0.1:*)",
-      "mcp__plugin_context7_context7__resolve-library-id",
-      "mcp__plugin_context7_context7__query-docs"
-    ],
     "ask": [
       "Edit(.husky/**)",
       "Write(.husky/**)",
