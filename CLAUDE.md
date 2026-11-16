@@ -22,6 +22,7 @@ runs directly via `--experimental-strip-types`, there is no build step.
 | `pnpm test` / `pnpm test:coverage` | vitest |
 | `pnpm exec tsc --noEmit` | Typecheck |
 | `pnpm lint` / `pnpm lint:fix` | Biome |
+| `pnpm test:e2e` | Real servers over HTTP, WhatsApp never connected; needs `pnpm test:e2e:deps` (dev RustFS) up |
 | `pnpm test:harness` | `node --test` for `scripts/lib/*.test.mjs` |
 | `pnpm quality-gate` | Metrics ratchet vs `quality-baseline.json` (fails on regression) |
 

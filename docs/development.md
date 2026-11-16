@@ -51,10 +51,17 @@ Red-Green-Refactor: write the failing test first.
 | Refactor | Existing tests green before and after |
 | Dependency bump | Contract test pinning the consumed API surface |
 
-All tests live in `src/__tests__/*.test.ts` (vitest). Names describe behavior
+Unit tests live in `src/__tests__/*.test.ts` (vitest). Names describe behavior
 (`it("returns fallback when socket is null")`); never mock the module under test. Order:
 happy path → edge cases → guards → error paths. `pnpm test:harness` runs the `node --test`
 suite for the review and mutation tooling in `scripts/`.
+
+The E2E suite lives in `e2e/` (`pnpm test:e2e`, config `vitest.e2e.config.ts`). Each spec boots
+the real MCP, QR and upload servers in a child process on a temp data dir and ephemeral ports,
+and drives them over HTTP. It needs the dev RustFS: `pnpm test:e2e:deps` starts it, and the
+upload spec fails, never skips, when it is down. WhatsApp is never connected: an egress guard
+kills the child on any non-loopback connect. Do not call `get_connection_status` from a spec —
+while disconnected it starts a real connection. The pre-push e2e leg runs this suite.
 
 ## Git hooks (husky)
 

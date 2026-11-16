@@ -22,6 +22,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:deps": "docker compose -p whatsapp-mcp-dev -f docker-compose.dev.yaml up -d --wait minio",
     "test:harness": "node --test \"scripts/*.test.mjs\" \"scripts/lib/*.test.mjs\"",
     "mutate": "node scripts/mutation-gate.mjs",
     "lint": "biome check .",
