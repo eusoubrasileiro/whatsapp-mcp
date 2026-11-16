@@ -7,7 +7,7 @@
     "defaultBranch": "main"
   },
   "files": {
-    "includes": ["src/**", "scripts/**/*.mjs", "*.json", "*.ts", "*.js", "*.mjs", "*.cjs"]
+    "includes": ["src/**", "e2e/**", "scripts/**/*.mjs", "*.json", "*.ts", "*.js", "*.mjs", "*.cjs"]
   },
   "formatter": {
     "enabled": true,

@@ -22,7 +22,7 @@ export const NO_EGRESS = path.join(here, "no-egress.ts");
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 10_000;
 
-export const RUSTFS_HINT =
+const RUSTFS_HINT =
   "The upload spec needs the dev RustFS from docker-compose.dev.yaml on localhost:9000. " +
   "Start it with: pnpm test:e2e:deps";
 

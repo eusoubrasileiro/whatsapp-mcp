@@ -52,7 +52,7 @@ export const initializeRequest = {
   },
 };
 
-export interface ToolResult {
+interface ToolResult {
   isError: boolean;
   text: string;
 }
