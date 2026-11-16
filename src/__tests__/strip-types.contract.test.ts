@@ -56,6 +56,8 @@ describe("strip-types compatibility", () => {
     "transcribe/whisper.ts",
     "describe/vision.ts",
     "xml.ts",
+    "connection-watchdog.ts",
+    "watchdog-store.ts",
   ];
 
   for (const target of TARGETS) {

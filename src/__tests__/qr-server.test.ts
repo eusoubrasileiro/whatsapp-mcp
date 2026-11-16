@@ -185,6 +185,36 @@ describe("createQrServer", () => {
       expect(code).toBe(200);
     });
 
+    it("answers /live with 200 while /health answers 503 for the same wedged state", async () => {
+      // 2026-11-13: /health was 503 for 63h, Docker marked the container
+      // unhealthy and Traefik dropped the route, so mcp + QR page both 404'd.
+      // The Docker healthcheck must probe /live, which stays 200 regardless.
+      await health();
+      state.status = "connecting";
+      state.user = null;
+      clock += 63 * 3600 * 1000;
+
+      const live = await fetch(`${baseUrl}/live`);
+      expect(live.status).toBe(200);
+      const { code } = await health();
+      expect(code).toBe(503);
+    });
+
+    it("answers /live with 200 in every connection status", async () => {
+      const statuses: ConnectionState["status"][] = [
+        "connected",
+        "syncing",
+        "connecting",
+        "disconnected",
+        "qr_pending",
+      ];
+      for (const status of statuses) {
+        state.status = status;
+        const res = await fetch(`${baseUrl}/live`);
+        expect(res.status, status).toBe(200);
+      }
+    });
+
     it("always returns 200 when HEALTH_DISCONNECTED_GRACE_S is 0", async () => {
       const previous = process.env.HEALTH_DISCONNECTED_GRACE_S;
       process.env.HEALTH_DISCONNECTED_GRACE_S = "0";

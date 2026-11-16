@@ -1,12 +1,16 @@
 import fs from "node:fs";
 import pino from "pino";
+import { resolvePublicQrUrl } from "./connection-notifier.ts";
+import { ConnectionWatchdog, readWatchdogEnv } from "./connection-watchdog.ts";
 import { closeDatabase, initializeDatabase, setDatabaseLogger } from "./database.ts";
 import { startMcpServer } from "./mcp.ts";
+import { createNtfy, resolveNtfyConfig } from "./ntfy.ts";
 import { createQrServer } from "./qr-server.ts";
 import { ensureBucketReady, putUpload } from "./storage.ts";
 import { createStreamServer } from "./stream/server.ts";
 import { streamTokens } from "./stream/token.ts";
 import { createUploadServer } from "./upload-server.ts";
+import { createFileWatchdogStore } from "./watchdog-store.ts";
 import { loadRegistry } from "./webhooks/registry.ts";
 import {
   getConnectionState,
@@ -30,6 +34,23 @@ function createAppLogger(filename: string) {
 
 const waLogger = createAppLogger("wa-logs.txt");
 const mcpLogger = createAppLogger("mcp-logs.txt");
+
+/**
+ * End the process for the container's restart policy. Same cleanup as
+ * `shutdown`, but never lets a failing cleanup step keep a wedged process alive.
+ */
+function exitForRestart(code: number): never {
+  try {
+    closeDatabase();
+  } catch (err) {
+    mcpLogger.error({ err }, "closeDatabase failed during watchdog exit");
+  }
+  waLogger.flush();
+  mcpLogger.flush();
+  process.exit(code);
+}
+
+let watchdog: ConnectionWatchdog | null = null;
 
 async function main() {
   mcpLogger.info("Starting WhatsApp MCP Server...");
@@ -109,6 +130,18 @@ async function main() {
     mcpLogger.error({ err }, "follow_chat stream server error");
   });
 
+  // Dead-man switch: if the WhatsApp socket stays down, push ntfy and exit so
+  // `restart: unless-stopped` revives the container (2026-11-13: 63 h wedge).
+  watchdog = new ConnectionWatchdog(waLogger, {
+    ...readWatchdogEnv(),
+    getState: getConnectionState,
+    sendNtfy: createNtfy(waLogger, resolveNtfyConfig()),
+    publicQrUrl: resolvePublicQrUrl(),
+    store: createFileWatchdogStore(`${dataDir}/watchdog-state.json`, waLogger),
+    exit: exitForRestart,
+  });
+  watchdog.start();
+
   // Start WhatsApp connection in background (non-blocking)
   // MCP tools already handle socketState.socket being null gracefully
   mcpLogger.info("Attempting to connect to WhatsApp...");
@@ -121,6 +154,8 @@ async function main() {
 
 async function shutdown(signal: string) {
   mcpLogger.info(`Received ${signal}. Shutting down gracefully...`);
+
+  watchdog?.stop();
 
   closeDatabase();
 

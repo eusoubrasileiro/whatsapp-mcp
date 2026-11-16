@@ -13,7 +13,7 @@
 # Deployment). The maintainers publish ghcr.io/amiticia-autosys/whatsapp-mcp
 # (private); retag your own build to the same name or change `image:` below.
 # Routes:
-#   https://${QR_DOMAIN}/          → port 39002 (public QR page + /health)
+#   https://${QR_DOMAIN}/          → port 39002 (public QR page + /live, /health)
 #   https://${MCP_DOMAIN}/mcp      → port 39001 (Bearer auth enforced by the app)
 #   https://${MCP_DOMAIN}/upload   → port 39003 (host-disk file upload, Bearer auth enforced by the app)
 #   https://${MCP_DOMAIN}/stream   → port 39004 (follow_chat WebSocket stream, token-gated by the app)
@@ -36,6 +36,9 @@
 #   AUDIO_PROVIDER        transcription route: openrouter (default) | groq | openai.
 #                         Rollback lanes only — set this, never rely on key presence.
 #   VISION_MODEL          OpenRouter model id for describe=true (default openai/gpt-6-luna)
+#   WATCHDOG_RESTART_AFTER_S  seconds the WhatsApp socket may stay down before the
+#                         process exits for `restart: unless-stopped` (default 600; 0 = off)
+#   WATCHDOG_MAX_RESTARTS self-restarts allowed per rolling 6 h (default 3; 0 = alert only)
 name: whatsapp-mcp
 
 services:
@@ -147,6 +150,10 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}      # only read when AUDIO_PROVIDER=groq
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}  # only read when AUDIO_PROVIDER=openai
       VISION_MODEL: ${VISION_MODEL:-}
+      # ── Connection watchdog (self-heal a wedged socket) ──────────────
+      # Empty falls back to the app default (600 s / 3 restarts per 6 h).
+      WATCHDOG_RESTART_AFTER_S: ${WATCHDOG_RESTART_AFTER_S:-}
+      WATCHDOG_MAX_RESTARTS: ${WATCHDOG_MAX_RESTARTS:-}
     volumes:
       # Bind mount at /storage/<stack>.
       # Host side holds auth_info/, data/whatsapp.db, data/media/, backups/, logs.
@@ -154,6 +161,17 @@ services:
       - /storage/whatsapp-mcp:/data
     networks:
       - network_public
+    # Probe /live (200 whenever the process serves HTTP), never /health. A wedged
+    # WhatsApp socket makes /health 503; plain Docker does not restart unhealthy
+    # containers and Traefik stops routing to them, which took the MCP and QR
+    # URLs down for 63 h on 2026-11-13. The in-process watchdog exits on a wedge
+    # and `restart: unless-stopped` does the rest. Overrides the image default.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:39002/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=network_public"

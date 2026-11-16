@@ -33,7 +33,7 @@ import {
 import { readNonNegativeNumber } from "./env-config.ts";
 import { emitInbound } from "./inbound-bus.ts";
 import { assertMimeForType, resolveMediaInput } from "./media-input.ts";
-import { createNtfy, type NtfyConfig } from "./ntfy.ts";
+import { createNtfy, resolveNtfyConfig } from "./ntfy.ts";
 import { toFlacMono16k } from "./transcribe/preprocess.ts";
 import { transcribeAudio } from "./transcribe/whisper.ts";
 import { dispatchInbound } from "./webhooks/delivery.ts";
@@ -207,13 +207,7 @@ export async function startWhatsAppConnection(logger: P.Logger): Promise<void> {
 }
 
 async function doStartConnection(logger: P.Logger, attemptId: number): Promise<void> {
-  const ntfyConfig: NtfyConfig | null = process.env.NTFY_TOPIC_URL
-    ? {
-        topicUrl: process.env.NTFY_TOPIC_URL,
-        token: process.env.NTFY_TOKEN,
-      }
-    : null;
-  const sendNtfy = createNtfy(logger, ntfyConfig);
+  const sendNtfy = createNtfy(logger, resolveNtfyConfig());
 
   // Webhook push: transcribe an inbound voice note on demand for subscribers
   // that opted in. Delegates to the shared, exported helper (also used by the

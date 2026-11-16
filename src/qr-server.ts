@@ -1,31 +1,10 @@
 import http, { type Server } from "node:http";
-import type { ConnectionState, ConnectionStatus } from "@amiticia/baileys-client";
+import type { ConnectionState } from "@amiticia/baileys-client";
 import type { Logger } from "pino";
 import QRCode from "qrcode";
+import { CLOCK_RESETTING_STATUSES, LIVE_STATUSES } from "./connection-status.ts";
 import { readNonNegativeNumber } from "./env-config.ts";
 import { createRouter, type Route } from "./http-router.ts";
-
-/**
- * Statuses in which the WhatsApp socket is actually usable. Anything else is
- * reported as `degraded`, whatever the HTTP status ends up being.
- */
-const LIVE_STATUSES = new Set<ConnectionStatus>(["connected", "syncing"]);
-
-/**
- * Statuses that reset the degradation clock.
- *
- * `qr_pending` is deliberately included even though it is *not* live: it means
- * the server is waiting on a human to scan, which no container restart can fix
- * — a restart would destroy the very QR code the operator is looking at. So a
- * pairing-needed container reports `degraded` with HTTP 200, forever, and the
- * clock only starts once pairing moves on.
- *
- * `connecting` is deliberately *excluded*. The 2026-07-28 outage sat wedged for
- * ~21h while `/health` answered 200; a reconnect loop that flaps
- * disconnected→connecting→disconnected must accumulate downtime, or the grace
- * window can never elapse and the container stays "healthy" through a wedge.
- */
-const CLOCK_RESETTING_STATUSES = new Set<ConnectionStatus>([...LIVE_STATUSES, "qr_pending"]);
 
 function readGraceSeconds(): number {
   return readNonNegativeNumber(process.env.HEALTH_DISCONNECTED_GRACE_S, 300);
@@ -142,12 +121,29 @@ export function createQrServer(
           disconnected_for_s: disconnectedForS,
           grace_s: graceS,
         });
-        // 503 is what makes the Docker healthcheck fail, so the container is
-        // finally restarted instead of sitting "healthy" with a dead socket.
+        // Informational only: 503 flags a wedged socket to humans and external
+        // monitors. It does NOT restart anything — plain Docker never restarts an
+        // unhealthy container, and Traefik drops unhealthy containers from its
+        // routes (2026-11-13: 63h of 404s on the MCP and QR URLs). The Docker
+        // healthcheck therefore probes /live; the in-process watchdog
+        // (connection-watchdog.ts) is what exits and lets `restart:
+        // unless-stopped` bring the container back.
         res.writeHead(wedged ? 503 : 200, {
           "content-type": "application/json; charset=utf-8",
         });
         res.end(body);
+      },
+    },
+    {
+      // Process liveness for the Docker healthcheck: 200 whenever this HTTP
+      // server answers, whatever the WhatsApp socket is doing. Keeping the
+      // container "healthy" keeps Traefik routing to it, so the QR page stays
+      // reachable exactly when a disconnect needs it.
+      method: "GET",
+      path: "/live",
+      handler: async (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ live: true }));
       },
     },
     {
