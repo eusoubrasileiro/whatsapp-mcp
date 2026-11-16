@@ -89,6 +89,20 @@ src/
   operator scripts, all `*.md`) need human approval.
 - Tests first (Red-Green-Refactor); regression test before any bug fix.
 
+## Behavioral probes
+
+Unit tests can't catch this server's characteristic failure — a send that reports success and
+never arrives. Before calling a send-path change done, exercise a really-running instance:
+
+| Probe | Tool | Allowed target |
+|---|---|---|
+| QR page shows a live connection state | `curl` / a browser | the local `docker-compose.dev.yaml` stack |
+| `POST /upload` returns a URL `send_file` can resolve | `curl` | the local stack's upload endpoint |
+| `send_message` delivers and returns a real ack | an MCP client | a dedicated test number the owner names — never a production number, never a real contact |
+
+Never the public deployment. The send probe uses WhatsApp's live network with a real
+account, so it is always run attended by a person, never as an unattended gate.
+
 ## Docs
 
 | Topic | File |
@@ -101,5 +115,5 @@ src/
 | Env vars, data layout, DB tables | [`docs/configuration.md`](./docs/configuration.md) |
 | Build, pairing, backups, troubleshooting | [`docs/operations.md`](./docs/operations.md) |
 | Deploy runbook (Docker + Traefik) | [`deploy/README.md`](./deploy/README.md) |
-| Dev setup, tests, hooks, worktrees, probes | [`docs/development.md`](./docs/development.md) |
+| Dev setup, tests, hooks, worktrees | [`docs/development.md`](./docs/development.md) |
 | Client configs, curl/Python/TS examples | [`examples/`](./examples/) |

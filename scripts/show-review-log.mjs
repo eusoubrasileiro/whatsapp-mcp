@@ -15,7 +15,7 @@ import { execSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadAllEntries } from "./lib/review-log.mjs";
+import { isApproval, loadAllEntries } from "./lib/review-log.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -37,6 +37,7 @@ function safeExec(cmd) {
 }
 
 function categorize(file) {
+  if (file.startsWith("e2e/")) return "E2E";
   if (file.startsWith("src/__tests__/")) return "TEST";
   if (file.startsWith(".husky/") || file.startsWith("scripts/lib/")) return "HOOK";
   if (
@@ -44,8 +45,10 @@ function categorize(file) {
     file === ".claude/settings.json" ||
     file === "commitlint.config.cjs" ||
     file === "biome.json" ||
+    file === "knip.json" ||
     file === "scripts/quality-gate.mjs" ||
     file === "scripts/security-review.mjs" ||
+    file === "scripts/mutation-gate.mjs" ||
     file === "Dockerfile"
   )
     return "CONFIG";
@@ -84,13 +87,17 @@ function getCommitTimestamp(hash) {
 }
 
 function findReviewEntryForCommit(reviewLog, hash) {
-  // Prefer exact-hash match — `.husky/post-commit` backfills the hash into
-  // the most recent "(staged)" entry after each commit.
-  const exact = reviewLog.find((e) => e.commit === hash);
+  // Prefer hash match — the reviewer stamps each entry with the FULL sha it reviewed,
+  // while `hash` here comes from `git log --oneline` (abbreviated), so match on the
+  // prefix: an equality test never matches. The LAST match wins, because a push
+  // retried on the same tip logs a second verdict that supersedes the first.
+  const exact = reviewLog.findLast(
+    (e) => typeof e.commit === "string" && e.commit.length > 0 && e.commit.startsWith(hash),
+  );
   if (exact) return exact;
 
-  // Fallback: file-set + timestamp matching for entries written before the
-  // post-commit backfill ran (older history, retried commits, etc.).
+  // Fallback: file-set + timestamp matching for entries that carry no usable hash
+  // (older history logged "(staged)"), and for non-tip commits of a push.
   const commitFiles = new Set(getCommitFiles(hash));
   const commitTs = new Date(getCommitTimestamp(hash)).getTime();
 
@@ -139,11 +146,11 @@ function main() {
       grouped.get(cat).push(f);
     }
 
-    const order = ["HOOK", "CONFIG", "BASELINE", "TEST", "SOURCE"];
+    const order = ["E2E", "HOOK", "CONFIG", "BASELINE", "TEST", "SOURCE"];
     for (const cat of order) {
       if (!grouped.has(cat)) continue;
       const tagColor =
-        cat === "HOOK" || cat === "CONFIG"
+        cat === "E2E" || cat === "HOOK" || cat === "CONFIG"
           ? RED
           : cat === "BASELINE" || cat === "TEST"
             ? YELLOW
@@ -159,8 +166,14 @@ function main() {
       continue;
     }
 
-    if (entry.verdict === "reject" || entry.verdict === "escalate") {
-      const label = entry.verdict === "reject" ? "REJECT" : "ESCALATE";
+    // Green is reserved for a genuine approval. This used to be
+    // `verdict === "reject" || verdict === "escalate"`, i.e. every other value —
+    // "awaiting-approval" among them — printed as "Verdict: approve" in the one
+    // place a human eyeballs before pushing. A blacklist is the wrong shape
+    // here: it is only as closed as the list is complete, and a reader cannot
+    // know every verdict the writer will grow.
+    if (!isApproval(entry.verdict)) {
+      const label = String(entry.verdict ?? "unknown").toUpperCase();
       process.stdout.write(`  ${RED}${BOLD}Verdict: ${label}${RESET}\n`);
       process.stdout.write(`  ${RED}Justification:${RESET} ${entry.justification}\n`);
       if (Array.isArray(entry.concerns) && entry.concerns.length > 0) {

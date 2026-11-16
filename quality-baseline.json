@@ -14,5 +14,6 @@
   "coverageStatements": 76.65,
   "coverageBranches": 73.5,
   "coverageFunctions": 80.83,
-  "coverageLines": 76.63
+  "coverageLines": 76.63,
+  "docContractViolations": 0
 }

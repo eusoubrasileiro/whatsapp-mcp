@@ -1,3 +1,4 @@
+#!/usr/bin/env sh
 # Fast gate (~15-30s). Runs on every commit — catches type and unit-level
 # regressions without blocking the inner loop. Stages, in order:
 #   1. lint-staged   — biome auto-fix on staged files
@@ -5,8 +6,10 @@
 #   3. test:coverage — unit tests; produces coverage-summary.json for stage 4
 #   4. quality-gate  — deterministic metrics ratchet vs quality-baseline.json
 #
-# The LLM reviewer is deliberately NOT here: it lives on pre-push only, so a
-# Claude CLI outage can never block a local commit (ratified 2026-07-22).
+# No LLM reviewer here (standards.md §5): the commit, its message and its
+# Ratified-by trailer do not exist yet, so it would review nothing. Pre-push runs it.
+set -e
+
 pnpm exec lint-staged
 pnpm exec tsc --noEmit
 pnpm test:coverage --silent

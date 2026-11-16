@@ -30,6 +30,9 @@ data/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/plans/
+# Rendered per worktree by dispatch — build output, never tracked (standards §7)
+.claude/PLAN.md
+.claude/AGENT.md
 
 # OS generated files
 .DS_Store

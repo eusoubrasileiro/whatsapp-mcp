@@ -1,10 +1,23 @@
+#!/usr/bin/env sh
+# Heavy gate (full safety net before code leaves the machine). Stages:
+#   1. tsc --noEmit    — full typecheck
+#   2. test:harness    — node --test suites for the review/mutation tooling
+#   3. pnpm lint       — biome, zero tolerance
+#   4. test:coverage   — full suite + coverage for the quality gate
+#   5. e2e             — path-triggered: the real server against real local deps
+#   6. quality-gate    — deterministic metrics ratchet
+#   7. mutation gate   — path-triggered: does a test notice a broken line?
+#   8. security-review — Sonnet LLM reviewer, fail-closed, last (the only paid check)
+#   9. show-review-log — print every verdict in the pushed range for eyeballing
 set -e
 
 # Read all pushed refs from stdin (can only be read once).
 # Each line: <local_ref> <local_sha> <remote_ref> <remote_sha>
 # A deletion is signaled by local_sha == 40 zeros.
-# When we find a real push, capture the SHAs so the security reviewer
-# (scripts/security-review.mjs) can diff the exact range being pushed.
+#
+# Two consumers: the path-triggered legs below (e2e, mutation), which decide over
+# EVERY ref via scripts/lib/push-refs.mjs, and scripts/security-review.mjs, which reads
+# PUSH_LOCAL_SHA/PUSH_REMOTE_SHA — the first non-deletion ref only.
 stdin_data="$(cat)"
 
 zero_sha="0000000000000000000000000000000000000000"
@@ -36,21 +49,48 @@ fi
 
 export PUSH_LOCAL_SHA PUSH_REMOTE_SHA PUSH_REMOTE_REF
 
-# Heavy gate (full safety net before code leaves the machine). Stages:
-#   1. tsc --noEmit    — full typecheck
-#   2. test:harness    — node --test unit tests for the reviewer libs
-#   3. pnpm lint       — biome, zero tolerance
-#   4. test:coverage   — full suite + coverage for the quality gate
-#   5. quality-gate    — deterministic metrics ratchet   (armed in its commit)
-#   6. security-review — Sonnet LLM reviewer, fail-closed
-#   7. show-review-log — print every verdict in the pushed range for eyeballing
-#
-# There is no e2e/Playwright block: this is a single MCP server, not a web app.
 pnpm exec tsc --noEmit
 pnpm test:harness
 pnpm lint
 pnpm test:coverage
+
+# === e2e ====================================================================
+# Path-triggered, so a docs-only push stays fast. UNCERTAINTY DEFAULTS TO RUN
+# (standards.md §8.2): scripts/lib/push-refs.mjs decides over EVERY pushed ref; only
+# its exact word `skip` skips — a new branch, an undiffable ref, or a crash in the
+# helper runs the leg. Trigger paths: E2E_PATHS in scripts/lib/push-refs.mjs.
+e2e_decision="$(printf '%s\n' "$stdin_data" | node scripts/lib/push-refs.mjs e2e || true)"
+if [ "$e2e_decision" != "skip" ]; then
+  if node -e "process.exit(require('./package.json').scripts?.['test:e2e'] ? 0 : 1)"; then
+    echo "[pre-push] running e2e (server, schema or e2e changes, or a new branch)"
+    pnpm test:e2e
+  else
+    # Loud, never silent: a leg that runs nothing must not read as green (§8.2).
+    echo "[pre-push] WARNING: no test:e2e script yet — the e2e leg ran NOTHING"
+  fi
+else
+  echo "[pre-push] e2e skipped — this push touches no server, schema or e2e file"
+fi
+# ============================================================================
+
 pnpm quality-gate
+
+# === mutation gate ==========================================================
+# Breaks one character of production source on the lines this push changed and
+# asks whether any test notices. Coverage answers "did this line run"; this
+# answers "would anyone notice if this line were wrong". BINARY — any survivor
+# blocks the push. Placed before the LLM reviewer, so a push that cannot pass a
+# free check never spends a paid one. Trigger path: MUTATE_ROOT in
+# scripts/lib/mutation-sites.mjs, so the trigger and the gate cannot disagree.
+mutation_decision="$(printf '%s\n' "$stdin_data" | node scripts/lib/push-refs.mjs mutation || true)"
+if [ "$mutation_decision" != "skip" ]; then
+  echo "[pre-push] running mutation gate (source changes or new branch)"
+  node scripts/mutation-gate.mjs
+else
+  echo "[pre-push] mutation gate skipped (no mutable source changes in this push)"
+fi
+# ============================================================================
+
 node scripts/security-review.mjs
 
 echo ""

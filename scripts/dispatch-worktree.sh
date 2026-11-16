@@ -137,6 +137,11 @@ else
   echo "[dispatch] --no-install: skipping node_modules symlink"
 fi
 
+# Hooks last: `pnpm exec husky` needs the node_modules above. A worktree without
+# `.husky/_/pre-commit` runs NO commit or push gate and says nothing (standards §7,
+# gate theater) — this generates it or fails the dispatch.
+bash "$PARENT_ROOT/scripts/ensure-worktree-hooks.sh" "$WORKTREE_ROOT"
+
 cat <<EOF
 
 # ── dispatch complete ───────────────────────────────────────────────────────

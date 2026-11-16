@@ -30,6 +30,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { findDocContractOffenders } from "./lib/doc-contract.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const BASELINE_FILE = path.join(ROOT, "quality-baseline.json");
@@ -64,6 +66,22 @@ function ensureDir(dir) {
 }
 
 // ─── Metric collectors ────────────────────────────────────────────────────────
+
+// Offenders from the CURRENT tree, kept for the failure message: "a number went up" is
+// unactionable for a rule whose failure mode is a document nobody noticed (§8).
+let docContractOffenders = [];
+
+function collectDocContract(root = ROOT) {
+  // Tracked plus untracked-unignored: a stray doc fails before it is ever committed,
+  // while gitignored scratch (.claude/plans/) stays out of scope. Throws on an empty
+  // listing rather than reporting a confident zero.
+  const listed = run("git ls-files --cached --others --exclude-standard", { cwd: root }).split(
+    "\n",
+  );
+  const offenders = findDocContractOffenders(listed);
+  if (root === ROOT) docContractOffenders = offenders;
+  return { docContractViolations: offenders.length };
+}
 
 function collectFileSizes(root = ROOT) {
   // Non-test source only: __tests__ files are large by nature and tracked by
@@ -204,6 +222,7 @@ const metrics = {
   ...collectTsSuppressors(),
   ...collectTestAssertions(),
   ...collectCoverage(),
+  ...collectDocContract(),
 };
 
 // ─── Read/write baseline ──────────────────────────────────────────────────────
@@ -242,6 +261,7 @@ const lowerIsBetter = [
   "jscpdClones",
   "anyCasts",
   "tsSuppressors",
+  "docContractViolations",
 ];
 
 // Metrics where HIGHER is better (regression = current < baseline)
@@ -279,6 +299,7 @@ const metricLabels = {
   coverageBranches: "coverage branches %",
   coverageFunctions: "coverage funcs %",
   coverageLines: "coverage lines %",
+  docContractViolations: "doc-contract violations",
 };
 
 // ─── Drift attribution ─────────────────────────────────────────────────────────
@@ -310,6 +331,7 @@ const METRIC_COLLECTORS = {
   anyCasts: collectAnyCasts,
   tsSuppressors: collectTsSuppressors,
   testAssertions: collectTestAssertions,
+  docContractViolations: collectDocContract,
 };
 
 function resolveBaseRef() {
@@ -515,6 +537,15 @@ if (attribution) {
     );
     for (const k of partialKeys) console.log(`     - ${metricLabels[k] ?? k}`);
   }
+}
+
+if (docContractOffenders.length > 0) {
+  console.log("\n✗  Markdown off the doc allowlist (scripts/lib/doc-contract.mjs):");
+  for (const f of docContractOffenders) console.log(`     - ${f}`);
+  console.log(
+    "   Fold it into an existing doc, delete it, or get the owner's Ratified-by to add\n" +
+      "   its path to DOC_ALLOWLIST in the same commit that creates it.",
+  );
 }
 
 // ─── Write report.json ────────────────────────────────────────────────────────
