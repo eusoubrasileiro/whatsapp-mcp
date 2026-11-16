@@ -1,6 +1,6 @@
 import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createNtfy } from "../ntfy.ts";
+import { createNtfy, resolveNtfyConfig } from "../ntfy.ts";
 
 function makeSilentLogger(): Logger {
   return pino({ level: "silent" });
@@ -117,6 +117,20 @@ describe("createNtfy", () => {
     expect(init?.body).toBe("body \u00e9 utf-8");
   });
 
+  it("logs a delivered push at info, so an incident log can show it was sent", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() } as unknown as Logger;
+
+    const send = createNtfy(logger, { topicUrl: "https://ntfy.sh/t" });
+    await send({ title: "WhatsApp - fora do ar", message: "M" });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "WhatsApp - fora do ar" }),
+      "ntfy push sent",
+    );
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
   it("omits optional headers when not provided", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
@@ -131,5 +145,22 @@ describe("createNtfy", () => {
     expect(headers.get("Tags")).toBeNull();
     expect(headers.get("Click")).toBeNull();
     expect(headers.get("Authorization")).toBeNull();
+  });
+});
+
+describe("resolveNtfyConfig", () => {
+  it("is null when NTFY_TOPIC_URL is unset or empty", () => {
+    expect(resolveNtfyConfig({})).toBeNull();
+    expect(resolveNtfyConfig({ NTFY_TOPIC_URL: "" })).toBeNull();
+  });
+
+  it("carries the topic URL and the optional token", () => {
+    expect(
+      resolveNtfyConfig({ NTFY_TOPIC_URL: "https://ntfy.sh/t", NTFY_TOKEN: "tk_abc" }),
+    ).toEqual({ topicUrl: "https://ntfy.sh/t", token: "tk_abc" });
+    expect(resolveNtfyConfig({ NTFY_TOPIC_URL: "https://ntfy.sh/t" })).toEqual({
+      topicUrl: "https://ntfy.sh/t",
+      token: undefined,
+    });
   });
 });

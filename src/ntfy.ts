@@ -15,6 +15,14 @@ export type NtfyMessage = {
 
 export type SendNtfy = (msg: NtfyMessage) => Promise<void>;
 
+/** ntfy settings from the environment, or `null` (pushes become no-ops) when no topic is set. */
+export function resolveNtfyConfig(
+  env: Record<string, string | undefined> = process.env,
+): NtfyConfig | null {
+  if (!env.NTFY_TOPIC_URL) return null;
+  return { topicUrl: env.NTFY_TOPIC_URL, token: env.NTFY_TOKEN };
+}
+
 export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy {
   if (!config) {
     return async () => {};
@@ -47,7 +55,7 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
         logger.warn({ status: res.status, topicUrl }, "ntfy returned non-2xx status");
         return;
       }
-      logger.debug({ title: msg.title }, "ntfy push sent");
+      logger.info({ title: msg.title }, "ntfy push sent");
     } catch (err) {
       logger.warn({ err, topicUrl }, "ntfy fetch failed");
     }
