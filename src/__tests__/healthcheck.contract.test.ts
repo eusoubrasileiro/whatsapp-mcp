@@ -25,10 +25,21 @@ function composeHealthcheck(): string {
   return block[1];
 }
 
-// The Dockerfile's own HEALTHCHECK still probes /health until its change is
-// human-approved (critical path); the compose override below is what the
-// deployment actually runs, and it takes precedence over the image default.
+/** The Dockerfile HEALTHCHECK instruction, with backslash continuations joined. */
+function dockerfileHealthcheck(): string {
+  const text = readFileSync(join(repoRoot, "Dockerfile"), "utf8").replace(/\\\r?\n/g, " ");
+  const line = text.split("\n").find((l) => l.startsWith("HEALTHCHECK "));
+  if (!line) throw new Error("Dockerfile has no HEALTHCHECK instruction");
+  return line;
+}
+
 describe("Docker healthcheck", () => {
+  it("Dockerfile HEALTHCHECK probes /live", () => {
+    const check = dockerfileHealthcheck();
+    expect(check).toContain("39002/live");
+    expect(check).not.toMatch(/\/health\b/);
+  });
+
   it("deploy compose overrides the whatsapp-mcp healthcheck to probe /live", () => {
     const check = composeHealthcheck();
     expect(check).toContain("39002/live");

@@ -165,7 +165,7 @@ services:
     # WhatsApp socket makes /health 503; plain Docker does not restart unhealthy
     # containers and Traefik stops routing to them, which took the MCP and QR
     # URLs down for 63 h on 2026-11-13. The in-process watchdog exits on a wedge
-    # and `restart: unless-stopped` does the rest. Overrides the image default.
+    # and `restart: unless-stopped` does the rest. Mirrors the Dockerfile.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:39002/live"]
       interval: 30s

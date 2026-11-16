@@ -41,7 +41,9 @@ All configuration is environment variables. The production values live in `deplo
 | `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
 | `SEND_PRESEND_CHECK` | `true` | Verify the recipient exists via `onWhatsApp()` before sending, and upgrade a phone JID to its canonical `@lid`. Set `false` to send to exactly the JID given, unverified. |
 | `SEND_BLOCKLIST_ENABLED`, `SEND_COLD_CONTACT_GUARD`, `SEND_COLD_OVERRIDE`, `SEND_COLD_ALLOWED_JIDS`, `SEND_RATE_LIMIT_*`, `SEND_SIMULATE_TYPING`, `SEND_TYPING_MAX_MS` | see doc | The anti-ban guard chain. Defaults, effects and the per-instance policy: **[`account-restrictions.md`](./account-restrictions.md)**. These are risk-owner settings — don't change one to make a send go through. |
-| `HEALTH_DISCONNECTED_GRACE_S` | `300` | How long the WhatsApp socket may be disconnected before `/health` returns 503. Guards against the failure where the container reported `healthy` through a 21-hour outage. |
+| `HEALTH_DISCONNECTED_GRACE_S` | `300` | How long the WhatsApp socket may be down before `/health` returns 503. Informational: `/health` is for humans and external monitors, **not** the Docker healthcheck (that probes `/live`, which is always 200 while the process serves HTTP). `0` never returns 503. |
+| `WATCHDOG_RESTART_AFTER_S` | `600` | In-process watchdog: seconds the socket may stay down (any status except `connected`, `syncing` or `qr_pending`) before the process pushes a priority-5 ntfy and exits, so `restart: unless-stopped` brings the container back. `qr_pending` never counts and never restarts — a restart would destroy the QR. `0` disables the watchdog entirely, alerts included. A malformed value reads as `600`, never as off. |
+| `WATCHDOG_MAX_RESTARTS` | `3` | Self-restarts the watchdog may trigger per rolling 6 h (a ban-risk guard against reconnect storms). The count lives in `watchdog-state.json` under the data dir, so it survives the restart it causes. Once reached, it stops exiting and pushes "precisa de você" (priority 5) every 30 min while still down. `0` = alert only, never restart. If the count cannot be written, it refuses to exit and alerts instead. |
 | `OPENROUTER_API_KEY` | _(unset)_ | Enables `download_media`'s `transcribe` (Whisper `openai/whisper-large-v3`, the default audio route) and `describe` (vision model) flags. |
 | `AUDIO_PROVIDER` | `openrouter` | Transcription route: `openrouter` \| `groq` \| `openai`. Rollback lanes kept deliberately; an unknown value throws rather than silently guessing. **Routing is never by key presence** — a leftover `GROQ_API_KEY` must not quietly keep traffic on a closed account. |
 | `GROQ_API_KEY` | _(unset)_ | Only used when `AUDIO_PROVIDER=groq` (rollback; `whisper-large-v3`). |
@@ -55,6 +57,7 @@ All configuration is environment variables. The production values live in `deplo
 Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via `pnpm start`, `/data` in the Docker image):
 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
+- `watchdog-state.json` - Timestamps of the connection watchdog's recent self-restarts (the `WATCHDOG_MAX_RESTARTS` cap) and whether a "reconectado" push is owed
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
 - `backups/hourly/whatsapp.db` - Rolling hourly snapshot (overwritten, WAL-safe)
 - `backups/daily/whatsapp-YYYY-MM-DD.db` - Per-day snapshots (14-day retention)
