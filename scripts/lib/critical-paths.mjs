@@ -48,6 +48,12 @@ export const CRITICAL_PATH_GROUPS = Object.freeze([
       "scripts/lib/",
       "scripts/dispatch-worktree.sh",
       "scripts/cleanup-worktrees.sh",
+      "scripts/ensure-worktree-hooks.sh",
+      "scripts/mutation-gate.mjs",
+      "scripts/heavy-lock.sh",
+      // knip decides what the unused-export metrics count: an ignore entry
+      // weakens that floor exactly as editing quality-baseline.json would.
+      "knip.json",
     ],
   },
   {

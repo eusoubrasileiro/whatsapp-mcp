@@ -61,6 +61,30 @@ export function loadPlan(cwd) {
   }
 }
 
+/**
+ * The plan's "Done when" section, verbatim — the owner's definition of done, handed to
+ * the reviewer as written rather than through Haiku's summary of the plan.
+ *
+ * @param {string | null} plan Plan body (from `loadPlan`).
+ * @returns {string | null} The section body up to the next heading of the same or a
+ *   higher level, trimmed; null when there is no plan, no such section, or it is empty.
+ */
+export function extractDoneWhen(plan) {
+  if (!plan) return null;
+  const lines = plan.split("\n");
+  const start = lines.findIndex((l) => /^#{1,6}\s+done when\s*$/i.test(l.trim()));
+  if (start === -1) return null;
+  const level = lines[start].trim().match(/^#+/)[0].length;
+  const body = [];
+  for (const line of lines.slice(start + 1)) {
+    const heading = line.match(/^(#{1,6})\s/);
+    if (heading && heading[1].length <= level) break;
+    body.push(line);
+  }
+  const text = body.join("\n").trim();
+  return text.length > 0 ? text : null;
+}
+
 function loadSystemPrompt() {
   try {
     return readFileSync(SYSTEM_PROMPT_PATH, "utf8");

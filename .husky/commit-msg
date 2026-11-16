@@ -1,1 +1,50 @@
+#!/usr/bin/env sh
+# `set -e` is load-bearing, not decoration. A commit-msg hook's exit status is
+# that of its LAST command — so appending any check below commitlint silently
+# discards commitlint's verdict whenever that check's condition is false.
+set -e
+
 pnpm exec commitlint --edit "$1"
+
+# `Ratified-by: <owner>` counts as ratification ONLY if git parses it as a git
+# TRAILER — and git parses only the final contiguous paragraph of the message.
+# A blank line between `Ratified-by:` and the other trailers demotes it to prose:
+#
+#     Ratified-by: <owner>        ← blank line below ends the trailer block,
+#                                    so git never sees this line
+#     Co-Authored-By: ...
+#
+# the reviewer's ratification module reads it with `%(trailers:key=Ratified-by)`,
+# i.e. git's own parser, so a demoted line reads MISSING — while the commit log
+# still LOOKS ratified to a human. That is the worst shape a record can have:
+# wrong in the direction nobody checks. Measured 2026-09-15: 14 of the last 400
+# commits carry a `Ratified-by: <owner>` line git does not recognise.
+#
+# History cannot be fixed after the fact, so this stops the next one. Loud at
+# commit time beats silent at push time.
+#
+# The pattern is anchored at COLUMN 0 on purpose. A line git could ever read as a
+# trailer is never indented, while a `Ratified-by:` quoted as an example inside a
+# commit body always is. Matching leading whitespace would reject messages that
+# merely TALK about the trailer. Restricting the search to the final paragraph —
+# the other obvious narrowing — is exactly wrong: a stranded trailer is by
+# definition NOT in the final paragraph, so that version would never fire on the
+# defect it exists to catch.
+if grep -qE '^Ratified-by:' "$1" &&
+   ! git interpret-trailers --parse <"$1" | grep -qE '^Ratified-by:'; then
+  echo ""
+  echo "✗ COMMIT REJECTED — 'Ratified-by:' is present but git does not parse it as a trailer."
+  echo ""
+  echo "  Trailers must be ONE contiguous final paragraph, no blank lines inside it:"
+  echo ""
+  echo "      Ratified-by: <owner>"
+  echo "      Co-Authored-By: ..."
+  echo "      Claude-Session: ..."
+  echo ""
+  echo "  git sees only the last paragraph. A blank line above a trailer drops it,"
+  echo "  and the ratification silently reads MISSING even though the log looks signed."
+  echo ""
+  echo "  Check your message with:  git interpret-trailers --parse < <file>"
+  echo ""
+  exit 1
+fi

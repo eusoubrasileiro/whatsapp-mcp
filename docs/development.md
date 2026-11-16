@@ -54,16 +54,21 @@ Red-Green-Refactor: write the failing test first.
 All tests live in `src/__tests__/*.test.ts` (vitest). Names describe behavior
 (`it("returns fallback when socket is null")`); never mock the module under test. Order:
 happy path → edge cases → guards → error paths. `pnpm test:harness` runs the `node --test`
-suite for the review tooling in `scripts/lib/`.
+suite for the review and mutation tooling in `scripts/`.
 
 ## Git hooks (husky)
 
 | Hook | Runs |
 |---|---|
 | `pre-commit` | `lint-staged` (biome fix) → `tsc --noEmit` → `pnpm test:coverage` → `pnpm quality-gate` |
-| `commit-msg` | commitlint (Conventional Commits; `bug:` / `hotfix:` also accepted) |
-| `post-commit` | records the commit hash in the review log, prints the quality-gate delta (never blocks) |
-| `pre-push` | tsc → `test:harness` → lint → `test:coverage` → `quality-gate` → `scripts/security-review.mjs` (LLM reviewer via the Claude CLI, fail-closed — without an authenticated `claude` on PATH the push is refused; outside contributors can open a PR instead) |
+| `commit-msg` | commitlint (Conventional Commits; `bug:` / `hotfix:` also accepted), then rejects a `Ratified-by:` line git does not parse as a trailer |
+| `post-commit` | prints the quality-gate delta (never blocks) |
+| `pre-push` | tsc → `test:harness` → lint → `test:coverage` → e2e (path-triggered) → `quality-gate` → mutation gate (path-triggered) → `scripts/security-review.mjs` (LLM reviewer via the Claude CLI, fail-closed — without an authenticated `claude` on PATH the push is refused; outside contributors can open a PR instead) |
+
+The **mutation gate** (`scripts/mutation-gate.mjs`) breaks one character of `src/` on the
+lines a push changed and runs the suite: any mutant no test notices blocks the push. The
+reviewer stops a branch after 3 rejects (`MAX_FIX_ROUNDS`) — report to the owner instead of
+retrying.
 
 `pnpm quality-gate` is a deterministic ratchet against `quality-baseline.json` (max file
 length, duplication, `any` casts, assertion count, coverage): metrics may improve, never
@@ -76,11 +81,13 @@ Never bypass the hooks with `--no-verify`; fix the cause.
 [`scripts/lib/critical-paths.mjs`](../scripts/lib/critical-paths.mjs) is the single list of
 files whose edits need human approval. It feeds the pre-push reviewer, and
 `scripts/lib/critical-paths.test.mjs` asserts `.claude/settings.json` gates every pattern in
-it. The groups:
+it. A pushed commit touching any of them must carry the owner's `Ratified-by:` trailer
+(`scripts/lib/ratification.mjs`); the reviewer checks it from git and rejects before any
+model call when it is missing. The groups:
 
 | Group | Why |
 |---|---|
-| Hooks, review scripts, lint/commit config, quality baseline | An agent that can edit the gate can delete the gate |
+| Hooks, review and mutation-gate scripts, lint/commit/knip config, quality baseline | An agent that can edit the gate can delete the gate |
 | Send guards — `send-guard.ts`, `recipient.ts`, `ack-bus.ts`, `ack-errors.ts` | Weakening them re-opens "success reported, message never sent" |
 | Anti-ban policy — `send-policy.ts`, `send-blocklist.ts`, `cold-contact.ts`, `send-pacer.ts`, `send-typing.ts`, `env-config.ts`, `db/inbound-history.ts`, `db/send-blocklist-store.ts` | These stand between an agent and an account restriction |
 | Data layer — `db/schema.ts`, `database.ts`, `db/ddl.ts` | Mistakes corrupt the message store |

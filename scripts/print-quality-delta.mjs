@@ -67,7 +67,8 @@ function colorForOverall(overall) {
 
 function colorForVerdict(verdict) {
   if (verdict === "approve") return GREEN;
-  if (verdict === "reject") return RED;
+  // "escalate" is a reject that ended the fix loop — it reads redder, not softer.
+  if (verdict === "reject" || verdict === "escalate") return RED;
   return YELLOW;
 }
 
