@@ -58,13 +58,15 @@ ENV NODE_ENV=production \
 EXPOSE 39001 39002
 VOLUME ["/data"]
 
-# Health check hits the public QR server (no Bearer required). /health now
-# observes the WhatsApp socket and answers 503 once it has been non-live past
-# HEALTH_DISCONNECTED_GRACE_S — GNU wget exits 8 on that, so the container goes
-# unhealthy. --content-on-error puts the degraded JSON in `docker inspect`'s
-# health log, which is the signal the 2026-07-28 21h outage completely lacked.
+# Health check hits the public QR server (no Bearer required) on /live, which
+# answers 200 whenever the process serves HTTP. It must NOT probe /health: a
+# wedged WhatsApp socket makes /health 503, plain Docker never restarts an
+# unhealthy container, and Traefik drops unhealthy containers from its routes —
+# on 2026-11-13 that turned the MCP and QR URLs into 404s for 63 h. A wedged
+# socket is healed in-process instead: the connection watchdog (see
+# WATCHDOG_RESTART_AFTER_S) exits and `restart: unless-stopped` restarts us.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s \
-  CMD wget -q --content-on-error -O- http://127.0.0.1:39002/health || exit 1
+  CMD wget -q -O- http://127.0.0.1:39002/live || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "--experimental-strip-types", "src/main.ts"]
