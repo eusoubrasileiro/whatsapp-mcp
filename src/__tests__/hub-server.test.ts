@@ -226,7 +226,10 @@ describe("headers on every response", () => {
       expect(res.headers.get("cache-control")).toBe("no-store");
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("x-frame-options")).toBe("DENY");
-      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      // Not "no-referrer": with it a browser sends `Origin: null` on every form post, and the
+      // unlink form's Origin check would refuse the page's own submit. "same-origin" shares
+      // nothing with other sites and keeps the real Origin on a post to the hub itself.
+      expect(res.headers.get("referrer-policy")).toBe("same-origin");
     }
   });
 

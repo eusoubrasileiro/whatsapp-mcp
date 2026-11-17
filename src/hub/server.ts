@@ -84,7 +84,7 @@ function send(
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
-    "referrer-policy": "no-referrer",
+    "referrer-policy": "same-origin", // not no-referrer: that makes browsers post `Origin: null`
     ...headers,
   });
   res.end(body);

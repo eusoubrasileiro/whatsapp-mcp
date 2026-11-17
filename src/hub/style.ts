@@ -158,8 +158,8 @@ body {
   margin: 0 0 16px; padding: 12px 14px; border-radius: 12px;
   background: var(--waiting-bg); color: var(--waiting-fg); border-left: 6px solid var(--waiting-bar);
 }
-.warning h2 { margin: 0 0 4px; font-size: 1rem; font-weight: 750; }
-.warning p { font-weight: 600; }
+.warning h2 { margin: 0 0 8px; font-size: 1.1rem; font-weight: 800; line-height: 1.25; }
+.warning p { margin: 0; font-weight: 500; line-height: 1.5; }
 .effect { margin: 0 0 18px !important; color: var(--muted); }
 .unlink .pin { margin-bottom: 14px; letter-spacing: normal; }
 .unlink label { margin-top: 2px; }
