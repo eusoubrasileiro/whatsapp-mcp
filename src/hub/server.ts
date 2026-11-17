@@ -9,6 +9,7 @@ import type { Logger } from "pino";
 import type { PinGate } from "./auth.ts";
 import { renderHubPage, renderLockedPage, renderPinForm } from "./page.ts";
 import type { Poller } from "./poller.ts";
+import { en, type Strings } from "./strings.ts";
 
 /** The only paths a login may send a visitor back to: one lower-case segment, or `/`. */
 const SAFE_NEXT = /^\/[a-z0-9-]*$/;
@@ -21,6 +22,8 @@ export interface HubListenerOptions {
   poller: Pick<Poller, "views" | "qrPng">;
   gate: PinGate;
   logger: Logger;
+  /** The words of every page. Defaults to English. */
+  t?: Strings;
 }
 
 export function safeNext(path: string | null): string {
@@ -126,6 +129,7 @@ function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
 
 export function createHubListener(options: HubListenerOptions): RequestListener {
   const { poller, gate, logger } = options;
+  const t = options.t ?? en;
 
   async function login(req: IncomingMessage, res: ServerResponse, nonce: string): Promise<void> {
     const body = await readBody(req, MAX_LOGIN_BODY_BYTES);
@@ -147,11 +151,11 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
     if (result.outcome === "ok") {
       send(res, 303, { location: next, "set-cookie": gate.issueCookie() }, "");
     } else if (result.outcome === "locked") {
-      sendHtml(res, 429, nonce, renderLockedPage({ nonce }), {
+      sendHtml(res, 429, nonce, renderLockedPage({ nonce, t }), {
         "retry-after": String(result.retryAfterS),
       });
     } else {
-      sendHtml(res, 401, nonce, renderPinForm({ nonce, next, failed: true }));
+      sendHtml(res, 401, nonce, renderPinForm({ nonce, next, failed: true, t }));
     }
   }
 
@@ -168,6 +172,7 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
         views,
         target: asked,
         unknownLabel: known ? null : asked,
+        t,
       }),
     );
   }
@@ -193,7 +198,7 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
     if (method === "POST" && path === "/_hub/login") return login(req, res, nonce);
 
     if (!gate.hasSession(req.headers.cookie)) {
-      sendHtml(res, 401, nonce, renderPinForm({ nonce, next: safeNext(path), failed: false }));
+      sendHtml(res, 401, nonce, renderPinForm({ nonce, next: safeNext(path), failed: false, t }));
       return;
     }
     if (method !== "GET") return notFound(res);

@@ -87,6 +87,36 @@ describe("loadHubConfig: a valid environment", () => {
   });
 });
 
+describe("loadHubConfig: HUB_LANG", () => {
+  it.each([
+    ["unset", undefined],
+    ["empty", ""],
+    ["en", "en"],
+  ])("reads English when HUB_LANG is %s", (_name, value) => {
+    expect(loadHubConfig(env({ HUB_LANG: value })).lang).toBe("en");
+  });
+
+  it("reads Brazilian Portuguese from pt-BR", () => {
+    expect(loadHubConfig(env({ HUB_LANG: "pt-BR" })).lang).toBe("pt-BR");
+  });
+
+  it.each(["xx", "pt", "pt-br", "PT-BR", "EN", " en", "en "])(
+    "refuses the language %j and says which ones it accepts",
+    (value) => {
+      const error = refusal({ HUB_LANG: value });
+
+      expect(error.problems).toHaveLength(1);
+      expect(error.problems[0]).toContain("HUB_LANG");
+      expect(error.problems[0]).toContain("en");
+      expect(error.problems[0]).toContain("pt-BR");
+    },
+  );
+
+  it("never quotes the refused value", () => {
+    expect(refusal({ HUB_LANG: "klingon-zz9" }).message).not.toContain("klingon-zz9");
+  });
+});
+
 describe("loadHubConfig: HUB_INSTANCES", () => {
   it("expands a bare label to the compose service address, in order", () => {
     const config = loadHubConfig(env({ HUB_INSTANCES: "personal, empresa" }));

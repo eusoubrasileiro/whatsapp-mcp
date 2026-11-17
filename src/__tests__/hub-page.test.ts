@@ -10,7 +10,8 @@ import {
   stateText,
 } from "../hub/page.ts";
 import type { InstanceView } from "../hub/poller.ts";
-import { en, fill, type Strings } from "../hub/strings.ts";
+import { en, fill, type Strings, stringsFor } from "../hub/strings.ts";
+import { englishLeaks } from "./helpers/hub-english.ts";
 
 const NONCE = "bm9uY2Utbm9uY2Utbm9uY2U=";
 
@@ -248,6 +249,95 @@ describe("the gate pages", () => {
     expect(html).toContain("Try again later.");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<input");
+  });
+});
+
+describe("in Brazilian Portuguese", () => {
+  const t = stringsFor("pt-BR");
+  const pages = () => [
+    renderHubPage({
+      nonce: NONCE,
+      t,
+      target: "empresa",
+      views: [
+        view({ state: "waiting_qr", qr_rev: "abcdef012345" }),
+        view({ label: "b", state: "connected" }),
+        view({ label: "c", state: "down", down_for_s: 7500 }),
+        view({ label: "d", state: "mismatch", phone_last4: null }),
+      ],
+    }),
+    renderHubPage({ nonce: NONCE, t, views: [], unknownLabel: "nobody" }),
+    renderPinForm({ nonce: NONCE, t, next: "/", failed: false }),
+    renderPinForm({ nonce: NONCE, t, next: "/", failed: true }),
+    renderLockedPage({ nonce: NONCE, t }),
+  ];
+
+  it("says the page is Brazilian Portuguese, and English by default", () => {
+    for (const html of pages()) expect(html).toContain('<html lang="pt-BR">');
+    expect(page([view()])).toContain('<html lang="en">');
+    expect(renderPinForm({ nonce: NONCE, next: "/", failed: false })).toContain('<html lang="en">');
+    expect(renderLockedPage({ nonce: NONCE })).toContain('<html lang="en">');
+  });
+
+  function page(views: InstanceView[]): string {
+    return renderHubPage({ nonce: NONCE, views });
+  }
+
+  it("writes the cards in Portuguese: state, digits, QR sentence and image text", () => {
+    const html = pages()[0];
+
+    expect(html).toContain("Aguardando você escanear o QR code");
+    expect(html).toContain("Conectado");
+    expect(html).toContain("Fora do ar há 2 h 5 min");
+    expect(html).toContain("Configuração errada: este endereço responde como outro número");
+    expect(html).toContain("número terminado em 1234");
+    expect(html).toContain(
+      "Pegue o celular do número &quot;empresa&quot; (terminado em 1234) e escaneie este código: WhatsApp → Configurações → Dispositivos conectados → Conectar dispositivo.",
+    );
+    expect(html).toContain('alt="QR code para vincular o número de WhatsApp &quot;empresa&quot;"');
+    expect(html).toContain("<h1>Números de WhatsApp</h1>");
+    expect(html).toContain("Esta página se atualiza sozinha.");
+    expect(html).toContain("Sem contato com o hub. Tentando de novo…");
+  });
+
+  it("writes the notice for an unknown number in Portuguese", () => {
+    expect(pages()[1]).toContain(
+      "Não existe nenhum número chamado &quot;nobody&quot;. Estes são os números que este hub mostra.",
+    );
+  });
+
+  it("writes the PIN form, the wrong-PIN sentence and the locked page in Portuguese", () => {
+    const [, , form, wrong, locked] = pages();
+
+    expect(form).toContain("<h1>Digite o PIN</h1>");
+    expect(form).toContain(">Abrir</button>");
+    expect(wrong).toContain('<p class="error" role="alert">Esse PIN não funcionou.</p>');
+    expect(locked).toContain("Muitos PINs errados");
+    expect(locked).toContain("Tente de novo mais tarde.");
+  });
+
+  it("has none of the English table's sentences on any page", () => {
+    for (const html of pages()) expect(englishLeaks(html)).toEqual([]);
+  });
+
+  it("finds an English sentence when one is there (the check can fail)", () => {
+    expect(englishLeaks(page([view()]))).toContain("Connected");
+  });
+
+  it("gives the page script the Portuguese words, so a patched card stays in Portuguese", () => {
+    const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(pages()[0])?.[1] ?? "";
+
+    expect(script).toContain('"connected":"Conectado"');
+    expect(script).toContain('"down":"Fora do ar há {duration}"');
+    expect(script).toContain('"lessThanMinute":"menos de um minuto"');
+    expect(script).toContain('"numberEnding":"número terminado em {last4}"');
+    expect(englishLeaks(script)).toEqual([]);
+  });
+
+  it("formats a duration with the table it is given", () => {
+    expect(formatDuration(5, t)).toBe("menos de um minuto");
+    expect(formatDuration(600, t)).toBe("10 min");
+    expect(stateText(view({ state: "down", down_for_s: 725 }), t)).toBe("Fora do ar há 12 min");
   });
 });
 

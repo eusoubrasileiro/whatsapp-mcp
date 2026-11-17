@@ -7,6 +7,7 @@ import pino from "pino";
 import { createPinGate, type PinGate } from "../../hub/auth.ts";
 import { createPoller, type Poller } from "../../hub/poller.ts";
 import { createHubListener } from "../../hub/server.ts";
+import { type HubLang, stringsFor } from "../../hub/strings.ts";
 import type { NtfyMessage } from "../../ntfy.ts";
 
 export const TEST_PIN = "correct-test-pin";
@@ -31,6 +32,8 @@ export interface HubHarnessOptions {
   /** Replaces the real poller, e.g. with one that throws. */
   poller?: Poller;
   pollerTimeoutMs?: number;
+  /** The language of every page. Defaults to English. */
+  lang?: HubLang;
 }
 
 export async function startHubHarness(options: HubHarnessOptions): Promise<HubHarness> {
@@ -54,7 +57,12 @@ export async function startHubHarness(options: HubHarnessOptions): Promise<HubHa
     },
   });
   const server: Server = http.createServer(
-    createHubListener({ poller, gate, logger: pino({ level: "silent" }) }),
+    createHubListener({
+      poller,
+      gate,
+      logger: pino({ level: "silent" }),
+      t: stringsFor(options.lang ?? "en"),
+    }),
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

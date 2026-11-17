@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { type NtfyConfig, resolveNtfyConfig } from "../ntfy.ts";
+import { HUB_LANGS, type HubLang } from "./strings.ts";
 
 /** One WhatsApp number the hub shows: its label and where its server answers. */
 export interface HubInstance {
@@ -16,6 +17,8 @@ export interface HubConfig {
   host: string;
   port: number;
   ntfy: NtfyConfig | null;
+  /** The language of every page. */
+  lang: HubLang;
 }
 
 /**
@@ -103,6 +106,15 @@ function parsePort(raw: string | undefined, problems: string[]): number {
   return port;
 }
 
+/** `HUB_LANG`: `en` when unset or empty, otherwise exactly one of the languages the hub has. */
+function parseLang(raw: string | undefined, problems: string[]): HubLang {
+  if (!raw) return HUB_LANGS[0];
+  const lang = HUB_LANGS.find((candidate) => candidate === raw);
+  if (lang) return lang;
+  problems.push(`HUB_LANG must be one of: ${HUB_LANGS.join(", ")}`);
+  return HUB_LANGS[0];
+}
+
 function checkStateDir(dir: string | undefined, problems: string[]): void {
   let usable = false;
   try {
@@ -133,6 +145,7 @@ export function loadHubConfig(env: Env): HubConfig {
   const instances = parseInstances(env.HUB_INSTANCES, problems);
   const publicUrl = parsePublicUrl(env.HUB_PUBLIC_URL, problems);
   const port = parsePort(env.HUB_PORT, problems);
+  const lang = parseLang(env.HUB_LANG, problems);
   checkStateDir(env.HUB_STATE_DIR, problems);
 
   if (problems.length > 0) throw new HubConfigError(problems);
@@ -146,5 +159,6 @@ export function loadHubConfig(env: Env): HubConfig {
     host: env.HUB_HOST || "0.0.0.0",
     port,
     ntfy: resolveNtfyConfig(env),
+    lang,
   };
 }

@@ -147,13 +147,14 @@ if (target) target.scrollIntoView({ block: "start" });
 
 function document(options: {
   nonce: string;
+  lang: string;
   title: string;
   body: string;
   script?: string;
 }): string {
   const nonce = escapeHtml(options.nonce);
   return `<!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(options.lang)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -193,7 +194,13 @@ ${notice}
 ${options.views.map((view) => renderCard(view, options.target ?? null, t)).join("\n")}
 </main>
 </div>`;
-  return document({ nonce: options.nonce, title: t.title, body, script: clientScript(t) });
+  return document({
+    nonce: options.nonce,
+    lang: t.htmlLang,
+    title: t.title,
+    body,
+    script: clientScript(t),
+  });
 }
 
 export interface PinFormOptions {
@@ -220,7 +227,7 @@ ${error}
 <button class="btn" type="submit">${escapeHtml(t.pin.submit)}</button>
 </form>
 </main>`;
-  return document({ nonce: options.nonce, title: t.pin.title, body });
+  return document({ nonce: options.nonce, lang: t.htmlLang, title: t.pin.title, body });
 }
 
 export function renderLockedPage(options: { nonce: string; t?: Strings }): string {
@@ -231,5 +238,5 @@ export function renderLockedPage(options: { nonce: string; t?: Strings }): strin
 <p>${escapeHtml(t.pin.locked)}</p>
 </div>
 </main>`;
-  return document({ nonce: options.nonce, title: t.pin.lockedTitle, body });
+  return document({ nonce: options.nonce, lang: t.htmlLang, title: t.pin.lockedTitle, body });
 }

@@ -4,6 +4,7 @@ import { PAGE_POLL_INTERVAL_MS } from "../hub/page.ts";
 import { createPoller, POLL_INTERVAL_MS } from "../hub/poller.ts";
 import { clientAddress, isLoopbackPeer, safeNext } from "../hub/server.ts";
 import { type FakeInstance, qrPng, startFakeInstance } from "./helpers/fake-instance.ts";
+import { englishLeaks } from "./helpers/hub-english.ts";
 import {
   type HubHarness,
   loginForm,
@@ -730,5 +731,69 @@ describe("with a session", () => {
 
     expect(res.status).toBe(500);
     expect(res.body).toBe("internal error");
+  });
+});
+
+describe("in Brazilian Portuguese", () => {
+  async function startPortuguese(): Promise<HubHarness> {
+    hub = await startHubHarness({
+      instances: [
+        { label: "personal", baseUrl: personal.url },
+        { label: "empresa", baseUrl: empresa.url },
+      ],
+      lang: "pt-BR",
+    });
+    await hub.poller.pollOnce();
+    return hub;
+  }
+
+  it("asks for the PIN, answers a wrong one and a locked form in Portuguese", async () => {
+    const h = await startPortuguese();
+
+    const form = await request(h.url, "/");
+    const wrong = await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+    for (let i = 0; i < 4; i++) {
+      await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+    }
+    const locked = await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+
+    expect(form.status).toBe(401);
+    expect(form.body).toContain('<html lang="pt-BR">');
+    expect(form.body).toContain("<h1>Digite o PIN</h1>");
+    expect(wrong.body).toContain("Esse PIN não funcionou.");
+    expect(locked.status).toBe(429);
+    expect(locked.body).toContain("Muitos PINs errados");
+    for (const res of [form, wrong, locked]) expect(englishLeaks(res.body)).toEqual([]);
+  });
+
+  it("shows the cards, the QR sentence and an unknown number's notice in Portuguese", async () => {
+    const h = await startPortuguese();
+    const cookie = await h.login();
+
+    const front = await request(h.url, "/", { cookie });
+    const unknown = await request(h.url, "/nobody", { cookie });
+
+    expect(front.body).toContain('<html lang="pt-BR">');
+    for (const text of [
+      "Conectado",
+      "número terminado em 5678",
+      "Aguardando você escanear o QR code",
+      "Pegue o celular do número &quot;empresa&quot; (terminado em 1234) e escaneie este código",
+    ]) {
+      expect(front.body).toContain(text);
+    }
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toContain("Não existe nenhum número chamado &quot;nobody&quot;.");
+    for (const res of [front, unknown]) expect(englishLeaks(res.body)).toEqual([]);
+  });
+
+  it("stays in English when no language is asked for", async () => {
+    const h = await startHub();
+    const cookie = await h.login();
+
+    const res = await request(h.url, "/", { cookie });
+
+    expect(res.body).toContain('<html lang="en">');
+    expect(res.body).toContain("Waiting for you to scan the QR code");
   });
 });

@@ -5,6 +5,7 @@ import { createPinGate } from "./auth.ts";
 import { HubConfigError, loadHubConfig } from "./config.ts";
 import { createPoller } from "./poller.ts";
 import { createHubListener } from "./server.ts";
+import { stringsFor } from "./strings.ts";
 
 /** A slow client must not hold a connection open for ever. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -41,7 +42,9 @@ export async function startHub(
     sendNtfy: createNtfy(logger, config.ntfy),
   });
   const poller = createPoller({ instances: config.instances, now: options.now });
-  const server = http.createServer(createHubListener({ poller, gate, logger }));
+  const server = http.createServer(
+    createHubListener({ poller, gate, logger, t: stringsFor(config.lang) }),
+  );
   server.requestTimeout = REQUEST_TIMEOUT_MS;
 
   await new Promise<void>((resolve, reject) => {

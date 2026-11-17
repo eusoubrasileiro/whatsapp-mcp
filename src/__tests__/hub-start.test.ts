@@ -77,6 +77,25 @@ describe("startHub", () => {
     expect(await res.text()).toContain("Enter the PIN");
   });
 
+  it("answers in Brazilian Portuguese when HUB_LANG says pt-BR", async () => {
+    const env = await environment({ HUB_LANG: "pt-BR" });
+    running = await startHub(env, { logger: silent });
+
+    const res = await fetch(`http://127.0.0.1:${env.HUB_PORT}/`);
+
+    const body = await res.text();
+    expect(body).toContain('<html lang="pt-BR">');
+    expect(body).toContain("Digite o PIN");
+  });
+
+  it("refuses a language it does not have before it binds anything", async () => {
+    const env = await environment({ HUB_LANG: "xx" });
+
+    await expect(startHub(env, { logger: silent })).rejects.toThrow(/HUB_LANG/);
+
+    await expect(fetch(`http://127.0.0.1:${env.HUB_PORT}/live`)).rejects.toThrow();
+  });
+
   it("refuses unusable settings before it binds anything", async () => {
     const env = await environment({ HUB_PIN: "123" });
 
