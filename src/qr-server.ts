@@ -105,10 +105,12 @@ function escapeHtml(s: string): string {
   });
 }
 
-/** The `/health` keys that name the line. `phone_last4` is absent when no number is known. */
+/**
+ * The `/health` keys that name the line. `phone_last4` is `undefined` when no number is known,
+ * and `JSON.stringify` drops an `undefined` value, so the key is then absent from the body.
+ */
 function lineFields(identity: InstanceIdentity, pairedUserId: string | null | undefined) {
-  const last4 = phoneLast4(pairedUserId);
-  return { instance: { ...identity }, ...(last4 ? { phone_last4: last4 } : {}) };
+  return { instance: { ...identity }, phone_last4: phoneLast4(pairedUserId) };
 }
 
 export function createQrServer(
