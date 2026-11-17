@@ -2,6 +2,7 @@ import fs from "node:fs";
 import type { Server } from "node:http";
 import pino, { type Logger } from "pino";
 import { initializeDatabase, setDatabaseLogger } from "./database.ts";
+import { readInstanceIdentity } from "./instance-identity.ts";
 import { startMcpServer } from "./mcp.ts";
 import { createQrServer } from "./qr-server.ts";
 import { ensureBucketReady, putUpload } from "./storage.ts";
@@ -9,7 +10,12 @@ import { createStreamServer } from "./stream/server.ts";
 import { streamTokens } from "./stream/token.ts";
 import { createUploadServer } from "./upload-server.ts";
 import { loadRegistry } from "./webhooks/registry.ts";
-import { getConnectionState, transcribeMediaMessage, triggerRepair } from "./whatsapp.ts";
+import {
+  getConnectionState,
+  socketState,
+  transcribeMediaMessage,
+  triggerRepair,
+} from "./whatsapp.ts";
 
 /**
  * Everything the process starts BEFORE it connects to WhatsApp: database, webhook
@@ -94,6 +100,10 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
   initializeDatabase();
   mcpLogger.info("Database initialized successfully.");
 
+  // Which WhatsApp line this instance is (`INSTANCE_LABEL`); read once, handed to everything
+  // that shows it. `null` leaves every output exactly as it was.
+  const identity = readInstanceIdentity();
+
   // Hydrate webhook subscriptions before the WhatsApp connection emits, so
   // inbound messages match against the persisted set on the very first upsert.
   loadRegistry();
@@ -106,11 +116,14 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
 
   // Start MCP server FIRST — stdio handshake must complete before any async network I/O
   mcpLogger.info("Starting MCP server...");
-  await startMcpServer(mcpLogger, waLogger);
+  await startMcpServer(mcpLogger, waLogger, identity);
   mcpLogger.info("MCP Server started and listening.");
 
   // QR web server — port 39002 by default.
-  const qr = createQrServer(waLogger, getConnectionState, () => triggerRepair(waLogger));
+  const qr = createQrServer(waLogger, getConnectionState, () => triggerRepair(waLogger), {
+    identity,
+    pairedUserId: () => socketState.socket?.user?.id,
+  });
 
   // Upload server — only if S3 plane is enabled. Lets agents POST host-disk files and
   // get a public URL to pass to send_file.
