@@ -120,7 +120,12 @@ function parseLang(raw: string | undefined, problems: string[]): HubLang {
   return HUB_LANGS[0];
 }
 
-/** The shortest unlink secret the hub accepts. An instance ignores a shorter one. */
+/**
+ * The shortest unlink secret the hub accepts. An instance ignores a shorter one. The number is
+ * written here and again as `MIN_HUB_SECRET_LENGTH` in `src/hub-instance-secret.ts` on purpose:
+ * the hub shares no module with a number's server but `ntfy.ts`. A test on each side pins 31
+ * and 32.
+ */
 const MIN_INSTANCE_SECRET_LENGTH = 32;
 
 /** `HUB_INSTANCE_SECRET`: unset or empty turns unlinking off, anything else must be long enough. */
