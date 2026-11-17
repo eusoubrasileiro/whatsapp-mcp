@@ -456,6 +456,20 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
         expect(res.body).not.toContain(bucket);
       },
     );
+
+    it.each(["/empresa/media/t/", "/empresa/media/t/?list-type=2", "/empresa/media/t/empresa/"])(
+      "lets %s reach the bucket, which refuses to list anything",
+      async (target) => {
+        const res = await proxy.fetch(url(target));
+        const body = await res.text();
+
+        expect(res.status).toBe(404);
+        expect(body).toContain("<Error>");
+        expect(body).not.toContain("ListBucketResult");
+        expect(body).not.toContain("<Key>");
+        expect(body).not.toContain(uploads.empresa.key);
+      },
+    );
   });
 
   describe("4. stream", () => {
