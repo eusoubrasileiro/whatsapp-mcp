@@ -3,7 +3,8 @@ import type { Logger } from "pino";
 import QRCode from "qrcode";
 import { z } from "zod";
 import { executeLogout } from "../../actions.ts";
-import { connectionState, startWhatsAppConnection } from "../../whatsapp.ts";
+import { buildConnectionReport, isQrReady, QR_PNG_PATH } from "../../connection-report.ts";
+import { connectionState, socketState, startWhatsAppConnection } from "../../whatsapp.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 /**
@@ -48,56 +49,27 @@ export function registerConnectionTools(server: ToolRegistrar, deps: ToolDeps): 
     execute: async () => {
       mcpLogger.info("[MCP Tool] Executing get_connection_status");
 
-      if (connectionState.status === "qr_pending" && connectionState.qrCode) {
-        const qrPath = "/tmp/whatsapp-mcp-qr.png";
-        await QRCode.toFile(qrPath, connectionState.qrCode, { scale: 10 });
-        mcpLogger.info({ qrPath }, "QR code saved as PNG");
+      if (isQrReady(connectionState)) {
+        await QRCode.toFile(QR_PNG_PATH, connectionState.qrCode, { scale: 10 });
+        mcpLogger.info({ qrPath: QR_PNG_PATH }, "QR code saved as PNG");
 
-        openImageInViewer(qrPath, mcpLogger);
-
-        return JSON.stringify(
-          {
-            status: "qr_pending",
-            qr_code_path: qrPath,
-            message:
-              "QR code saved (and opened if a desktop session is available). Scan with WhatsApp mobile (Settings > Linked Devices), or open the QR web page. Call this tool again after scanning.",
-          },
-          null,
-          2,
-        );
+        openImageInViewer(QR_PNG_PATH, mcpLogger);
       }
 
-      const result: Record<string, unknown> = {
-        status: connectionState.status,
-      };
+      const report = buildConnectionReport(connectionState, {
+        identity: deps.identity ?? null,
+        pairedId: socketState.socket?.user?.id,
+        now: Date.now(),
+      });
 
-      if (connectionState.user) {
-        result.user = connectionState.user;
-      }
-
-      if (connectionState.status === "connected") {
-        result.message = "WhatsApp is connected and ready";
-      } else if (connectionState.status === "syncing") {
-        result.message = "WhatsApp is connected but syncing history. Some operations may fail.";
-        result.sync_progress = {
-          chats: connectionState.syncProgress.chats,
-          contacts: connectionState.syncProgress.contacts,
-          messages: connectionState.syncProgress.messages,
-          last_batch_ago_seconds: connectionState.syncProgress.lastBatchAt
-            ? Math.round((Date.now() - connectionState.syncProgress.lastBatchAt.getTime()) / 1000)
-            : null,
-        };
-      } else if (connectionState.status === "connecting") {
-        result.message = "Connecting to WhatsApp...";
-      } else {
-        result.message = "WhatsApp is disconnected. Attempting to reconnect...";
+      if (report.reconnect) {
         // Trigger lazy reconnection
         startWhatsAppConnection(waLogger).catch((err) => {
           mcpLogger.error({ err }, "Reconnection attempt from get_connection_status failed");
         });
       }
 
-      return JSON.stringify(result, null, 2);
+      return JSON.stringify(report.body, null, 2);
     },
   });
 

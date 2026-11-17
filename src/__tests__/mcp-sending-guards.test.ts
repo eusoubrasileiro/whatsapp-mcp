@@ -63,25 +63,34 @@ afterEach(() => {
 
 type Tool = { name: string; execute: (args: never) => Promise<string> };
 
-function tools() {
+function tools(identity?: { label: string; description?: string } | null) {
   const registered: Record<string, Tool> = {};
   const logger = pino({ level: "silent" });
   registerSendingTools(
     { addTool: ((t: Tool) => (registered[t.name] = t)) as never },
-    { mcpLogger: logger, waLogger: logger },
+    { mcpLogger: logger, waLogger: logger, identity },
   );
   return registered;
 }
 
 const GOOD = { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" };
 
+/**
+ * A fresh ack bus and recipient cache, and happy-path send mocks. `ackWaitMs`, when given,
+ * sets how long a send waits for a rejection ack.
+ */
+function armSendMocks(ackWaitMs?: string) {
+  resetAckBus();
+  resetRecipientCache();
+  sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
+  sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
+  onWhatsApp.mockReset().mockResolvedValue([GOOD]);
+  if (ackWaitMs !== undefined) process.env.SEND_ACK_WAIT_MS = ackWaitMs;
+}
+
 describe("send_message guards", () => {
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
+    armSendMocks();
     delete process.env.SEND_ACK_WAIT_MS;
     delete process.env.SEND_PRESEND_CHECK;
   });
@@ -186,11 +195,7 @@ describe("send_message guards", () => {
 
 describe("send_file guards", () => {
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
-    process.env.SEND_ACK_WAIT_MS = "50";
+    armSendMocks("50");
   });
 
   afterEach(() => {
@@ -229,6 +234,59 @@ describe("send_file guards", () => {
   });
 });
 
+/** Which line a send came from, at the tool boundary (instance identity). */
+describe("send results name the line", () => {
+  beforeEach(() => {
+    armSendMocks("10");
+  });
+
+  afterEach(() => {
+    delete process.env.SEND_ACK_WAIT_MS;
+  });
+
+  const message = { recipient: "551100000011@s.whatsapp.net", message: "hi" } as never;
+  const file = {
+    recipient: "551100000011@s.whatsapp.net",
+    file_path: "https://example.com/a.jpg",
+    type: "image",
+  } as never;
+
+  it("send_message returns today's exact string when no identity is set", async () => {
+    expect(await tools().send_message!.execute(message)).toBe(
+      "Message sent successfully to 10000000000005@lid (ID: m1).",
+    );
+    expect(await tools(null).send_message!.execute(message)).toBe(
+      "Message sent successfully to 10000000000005@lid (ID: m1).",
+    );
+  });
+
+  it("send_message ends with the line when an identity is set", async () => {
+    expect(await tools({ label: "empresa" }).send_message!.execute(message)).toBe(
+      'Message sent successfully to 10000000000005@lid (ID: m1). Sent from the "empresa" line.',
+    );
+  });
+
+  it("send_file returns today's exact string when no identity is set", async () => {
+    expect(await tools().send_file!.execute(file)).toBe(
+      "Image sent successfully to 10000000000005@lid (ID: f1).",
+    );
+  });
+
+  it("send_file ends with the line when an identity is set", async () => {
+    expect(await tools({ label: "empresa" }).send_file!.execute(file)).toBe(
+      'Image sent successfully to 10000000000005@lid (ID: f1). Sent from the "empresa" line.',
+    );
+  });
+
+  it("a refused send still throws, and the error does not claim the line", async () => {
+    onWhatsApp.mockResolvedValue([{ exists: false }]);
+
+    await expect(tools({ label: "empresa" }).send_message!.execute(message)).rejects.toThrow(
+      /not on WhatsApp/i,
+    );
+  });
+});
+
 /**
  * The 2026-07-28 restriction, at the tool boundary: the account could still
  * reach saved contacts but not strangers, so the send path must refuse a cold
@@ -242,12 +300,7 @@ describe("anti-ban guards", () => {
   }
 
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
-    process.env.SEND_ACK_WAIT_MS = "0";
+    armSendMocks("0");
     // Opt back in to the cold-contact guard; keep pacing/typing off unless the
     // test is about them.
     delete process.env.SEND_COLD_CONTACT_GUARD;
