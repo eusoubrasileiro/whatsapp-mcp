@@ -17,19 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  minio-init:
-    image: rustfs/rc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-        rc alias set local http://minio:9000 minioadmin minioadmin &&
-        rc mb -p local/amiticia-media &&
-        rc anonymous set download local/amiticia-media &&
-        echo 'Bucket ready.'
-      "
-
   whatsapp-mcp:
     build:
       context: .
@@ -39,8 +26,8 @@ services:
       - "3001:3001"
       - "39002:39002"
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     environment:
       S3_ENABLED: "true"
       S3_ENDPOINT: minio
