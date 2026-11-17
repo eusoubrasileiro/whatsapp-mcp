@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   identityParagraph,
   pairedPhoneDigits,
+  phoneLast4,
   readInstanceIdentity,
   sentFromSuffix,
 } from "../instance-identity.ts";
@@ -172,5 +173,58 @@ describe("pairedPhoneDigits", () => {
     expect(pairedPhoneDigits("55000:x@s.whatsapp.net")).toBeUndefined();
     expect(pairedPhoneDigits("120363000000000001@g.us")).toBeUndefined();
     expect(pairedPhoneDigits("x5500000000000@s.whatsapp.net")).toBeUndefined();
+  });
+});
+
+describe("phoneLast4", () => {
+  const PAIRED = "5500000001234:7@s.whatsapp.net";
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is the last four digits of the paired number", () => {
+    expect(phoneLast4(PAIRED, {})).toBe("1234");
+  });
+
+  it("prefers the paired number over EXPECTED_WA_NUMBER", () => {
+    expect(phoneLast4(PAIRED, { EXPECTED_WA_NUMBER: "5500000009999" })).toBe("1234");
+  });
+
+  it("falls back to the last four digits of EXPECTED_WA_NUMBER while nothing is paired", () => {
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "5500000001234" })).toBe("1234");
+    expect(phoneLast4(null, { EXPECTED_WA_NUMBER: "5500000001234" })).toBe("1234");
+  });
+
+  it("reads only the digits of EXPECTED_WA_NUMBER", () => {
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "+55 (00) 00000-1234" })).toBe("1234");
+  });
+
+  it("accepts an EXPECTED_WA_NUMBER of exactly ten digits, not nine", () => {
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "1234567890" })).toBe("7890");
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "123456789" })).toBeUndefined();
+  });
+
+  it("is undefined when nothing is paired and EXPECTED_WA_NUMBER is unset, empty or not a number", () => {
+    expect(phoneLast4(undefined, {})).toBeUndefined();
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "" })).toBeUndefined();
+    expect(phoneLast4(undefined, { EXPECTED_WA_NUMBER: "not-a-number" })).toBeUndefined();
+  });
+
+  it("does not take digits from a LID, so it falls back to EXPECTED_WA_NUMBER", () => {
+    expect(phoneLast4("10000000009876:3@lid", {})).toBeUndefined();
+    expect(phoneLast4("10000000009876:3@lid", { EXPECTED_WA_NUMBER: "5500000001234" })).toBe(
+      "1234",
+    );
+  });
+
+  it("is never shorter than four characters", () => {
+    expect(phoneLast4("123@s.whatsapp.net", {})).toBeUndefined();
+    expect(phoneLast4("1234@s.whatsapp.net", {})).toBe("1234");
+  });
+
+  it("reads process.env when no env is passed", () => {
+    vi.stubEnv("EXPECTED_WA_NUMBER", "5500000001234");
+    expect(phoneLast4(undefined)).toBe("1234");
   });
 });

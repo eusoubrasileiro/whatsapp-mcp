@@ -1,19 +1,8 @@
-import type { ConnectionState } from "@amiticia/baileys-client";
 import { describe, expect, it } from "vitest";
 import { buildConnectionReport, isQrReady, QR_PNG_PATH } from "../connection-report.ts";
+import { stateOf as state } from "./helpers/connection-state.ts";
 
 const NOW = 1_700_000_000_000;
-
-function state(overrides: Partial<ConnectionState> = {}): ConnectionState {
-  return {
-    status: "disconnected",
-    qrCode: null,
-    qrAscii: null,
-    user: null,
-    syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
-    ...overrides,
-  };
-}
 
 const NO_IDENTITY = { identity: null, now: NOW };
 const EMPRESA = { label: "empresa", description: "the company line" };

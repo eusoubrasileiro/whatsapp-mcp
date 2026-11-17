@@ -82,3 +82,21 @@ const PHONE_JID = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/;
 export function pairedPhoneDigits(socketUserId: string | null | undefined): string | undefined {
   return socketUserId?.match(PHONE_JID)?.[1];
 }
+
+/** Fewest digits `EXPECTED_WA_NUMBER` must hold before it can stand in for the paired number. */
+const EXPECTED_NUMBER_MIN_DIGITS = 10;
+
+/**
+ * Last four digits of this line's phone number, for the public `/health` page: never more.
+ * The paired account's own number wins; while nothing is paired, `EXPECTED_WA_NUMBER` (digits
+ * only, at least ten of them) stands in; otherwise `undefined`.
+ */
+export function phoneLast4(
+  pairedUserId: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const paired = pairedPhoneDigits(pairedUserId);
+  if (paired && paired.length >= 4) return paired.slice(-4);
+  const expected = (env.EXPECTED_WA_NUMBER ?? "").replace(/\D/g, "");
+  return expected.length >= EXPECTED_NUMBER_MIN_DIGITS ? expected.slice(-4) : undefined;
+}
