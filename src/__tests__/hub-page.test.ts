@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   escapeHtml,
   formatDuration,
+  mcpUrl,
   PAGE_POLL_INTERVAL_MS,
   renderHubPage,
   renderLockedPage,
@@ -10,9 +11,11 @@ import {
   stateText,
 } from "../hub/page.ts";
 import type { InstanceView } from "../hub/poller.ts";
-import { en, fill, type Strings } from "../hub/strings.ts";
+import { en, fill, type Strings, stringsFor } from "../hub/strings.ts";
+import { englishLeaks } from "./helpers/hub-english.ts";
 
 const NONCE = "bm9uY2Utbm9uY2Utbm9uY2U=";
+const PUBLIC_URL = "https://hub.example.com";
 
 function view(overrides: Partial<InstanceView> = {}): InstanceView {
   return {
@@ -117,7 +120,7 @@ describe("the string table", () => {
 
 describe("renderHubPage", () => {
   const page = (views: InstanceView[], extra: Record<string, unknown> = {}) =>
-    renderHubPage({ nonce: NONCE, views, ...extra });
+    renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, views, ...extra });
 
   it("escapes every value that came from an instance", () => {
     const html = page([
@@ -212,7 +215,12 @@ describe("renderHubPage", () => {
   it("cannot be broken out of by a table entry that contains markup", () => {
     const hostile: Strings = { ...en, numberEnding: "</script><script>alert(1)</script> {last4}" };
 
-    const html = renderHubPage({ nonce: NONCE, views: [view()], t: hostile });
+    const html = renderHubPage({
+      nonce: NONCE,
+      publicUrl: PUBLIC_URL,
+      views: [view()],
+      t: hostile,
+    });
 
     expect(html.match(/<script\b/g)).toHaveLength(1);
     expect(html.match(/<\/script>/g)).toHaveLength(1);
@@ -248,6 +256,312 @@ describe("the gate pages", () => {
     expect(html).toContain("Try again later.");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<input");
+  });
+});
+
+describe("in Brazilian Portuguese", () => {
+  const t = stringsFor("pt-BR");
+  const pages = () => [
+    renderHubPage({
+      nonce: NONCE,
+      publicUrl: PUBLIC_URL,
+      t,
+      target: "empresa",
+      views: [
+        view({ state: "waiting_qr", qr_rev: "abcdef012345" }),
+        view({ label: "b", state: "connected" }),
+        view({ label: "c", state: "down", down_for_s: 7500 }),
+        view({ label: "d", state: "mismatch", phone_last4: null }),
+      ],
+    }),
+    renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, t, views: [], unknownLabel: "nobody" }),
+    renderPinForm({ nonce: NONCE, t, next: "/", failed: false }),
+    renderPinForm({ nonce: NONCE, t, next: "/", failed: true }),
+    renderLockedPage({ nonce: NONCE, t }),
+  ];
+
+  it("says the page is Brazilian Portuguese, and English by default", () => {
+    for (const html of pages()) expect(html).toContain('<html lang="pt-BR">');
+    expect(page([view()])).toContain('<html lang="en">');
+    expect(renderPinForm({ nonce: NONCE, next: "/", failed: false })).toContain('<html lang="en">');
+    expect(renderLockedPage({ nonce: NONCE })).toContain('<html lang="en">');
+  });
+
+  function page(views: InstanceView[]): string {
+    return renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, views });
+  }
+
+  it("writes the cards in Portuguese: state, digits, QR sentence and image text", () => {
+    const html = pages()[0];
+
+    expect(html).toContain("Aguardando você escanear o QR code");
+    expect(html).toContain("Conectado");
+    expect(html).toContain("Fora do ar há 2 h 5 min");
+    expect(html).toContain("Configuração errada: este endereço responde como outro número");
+    expect(html).toContain("número terminado em 1234");
+    expect(html).toContain(
+      "Pegue o celular do número &quot;empresa&quot; (terminado em 1234) e escaneie este código: WhatsApp → Configurações → Dispositivos conectados → Conectar dispositivo.",
+    );
+    expect(html).toContain('alt="QR code para vincular o número de WhatsApp &quot;empresa&quot;"');
+    expect(html).toContain("<h1>Números de WhatsApp</h1>");
+    expect(html).toContain("Esta página se atualiza sozinha.");
+    expect(html).toContain("Sem contato com o hub. Tentando de novo…");
+  });
+
+  it("writes the notice for an unknown number in Portuguese", () => {
+    expect(pages()[1]).toContain(
+      "Não existe nenhum número chamado &quot;nobody&quot;. Estes são os números que este hub mostra.",
+    );
+  });
+
+  it("writes the PIN form, the wrong-PIN sentence and the locked page in Portuguese", () => {
+    const [, , form, wrong, locked] = pages();
+
+    expect(form).toContain("<h1>Digite o PIN</h1>");
+    expect(form).toContain(">Abrir</button>");
+    expect(wrong).toContain('<p class="error" role="alert">Esse PIN não funcionou.</p>');
+    expect(locked).toContain("Muitos PINs errados");
+    expect(locked).toContain("Tente de novo mais tarde.");
+  });
+
+  it("has none of the English table's sentences on any page", () => {
+    for (const html of pages()) expect(englishLeaks(html)).toEqual([]);
+  });
+
+  it("finds an English sentence when one is there (the check can fail)", () => {
+    expect(englishLeaks(page([view()]))).toContain("Connected");
+  });
+
+  it("gives the page script the Portuguese words, so a patched card stays in Portuguese", () => {
+    const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(pages()[0])?.[1] ?? "";
+
+    expect(script).toContain('"connected":"Conectado"');
+    expect(script).toContain('"down":"Fora do ar há {duration}"');
+    expect(script).toContain('"lessThanMinute":"menos de um minuto"');
+    expect(script).toContain('"numberEnding":"número terminado em {last4}"');
+    expect(englishLeaks(script)).toEqual([]);
+  });
+
+  it("formats a duration with the table it is given", () => {
+    expect(formatDuration(5, t)).toBe("menos de um minuto");
+    expect(formatDuration(600, t)).toBe("10 min");
+    expect(stateText(view({ state: "down", down_for_s: 725 }), t)).toBe("Fora do ar há 12 min");
+  });
+});
+
+describe("connect a client", () => {
+  const html = () =>
+    renderHubPage({
+      nonce: NONCE,
+      publicUrl: PUBLIC_URL,
+      views: [view(), view({ label: "pessoal", description: "Personal line" })],
+    });
+  const cardOf = (page: string, label: string) =>
+    new RegExp(`<article[^>]*data-label="${label}"[\\s\\S]*?</article>`).exec(page)?.[0] ?? "";
+
+  it("builds the MCP address of a number from the hub's public address", () => {
+    expect(mcpUrl("https://hub.example.com", "empresa")).toBe(
+      "https://hub.example.com/empresa/mcp",
+    );
+  });
+
+  it("gives every card its own collapsed block with its own address", () => {
+    for (const label of ["empresa", "pessoal"]) {
+      const card = cardOf(html(), label);
+
+      expect(card).toMatch(/<details class="connect">\s*<summary>Connect a client<\/summary>/);
+      expect(card).not.toMatch(/<details[^>]*\sopen/);
+      expect(card).toContain(`https://hub.example.com/${label}/mcp`);
+      expect(card).not.toContain(`/${label === "empresa" ? "pessoal" : "empresa"}/mcp`);
+    }
+  });
+
+  it("shows the JSON entry the examples document, with the placeholder in place of a token", () => {
+    const card = cardOf(html(), "empresa");
+
+    expect(card).toContain("&quot;whatsapp-empresa&quot;: {");
+    expect(card).toContain("&quot;type&quot;: &quot;http&quot;,");
+    expect(card).toContain("&quot;url&quot;: &quot;https://hub.example.com/empresa/mcp&quot;,");
+    expect(card).toContain("&quot;Authorization&quot;: &quot;Bearer &lt;token&gt;&quot;");
+  });
+
+  it("shows the one-line claude mcp add command with the same placeholder", () => {
+    expect(cardOf(html(), "empresa")).toContain(
+      "claude mcp add --transport http whatsapp-empresa https://hub.example.com/empresa/mcp --header &quot;Authorization: Bearer &lt;token&gt;&quot;",
+    );
+  });
+
+  it("says where the token is, and never carries anything but the placeholder after Bearer", () => {
+    const page = html();
+
+    expect(page).toContain(
+      "The token is in this number&#39;s env file on the server. It is never shown here.",
+    );
+    const tokens = [...page.matchAll(/Bearer (&lt;token&gt;|\S+)/g)].map((m) => m[1]);
+    expect(tokens).toHaveLength(4); // the entry and the command, on two cards
+    expect(new Set(tokens)).toEqual(new Set(["&lt;token&gt;"]));
+  });
+
+  it("gives each snippet a copy button that names an element on the same page", () => {
+    const page = html();
+    const buttons = [
+      ...page.matchAll(/<button class="copy" type="button" data-copy="([^"]+)">Copy<\/button>/g),
+    ];
+
+    expect(buttons).toHaveLength(6); // address, entry and command, for two cards
+    for (const [, id] of buttons) expect(page.match(new RegExp(`id="${id}"`, "g"))).toHaveLength(1);
+    expect(new Set(buttons.map((b) => b[1])).size).toBe(6);
+  });
+
+  it("escapes a public address that carries markup", () => {
+    const page = renderHubPage({
+      nonce: NONCE,
+      publicUrl: 'https://x.example.com/"><b>',
+      views: [view()],
+    });
+
+    expect(page).not.toContain("<b>");
+  });
+
+  it("writes the block in Portuguese under pt-BR", () => {
+    const page = renderHubPage({
+      nonce: NONCE,
+      publicUrl: PUBLIC_URL,
+      views: [view()],
+      t: stringsFor("pt-BR"),
+    });
+
+    expect(page).toContain("<summary>Conectar um cliente</summary>");
+    expect(page).toContain("Endereço MCP");
+    expect(page).toContain(">Copiar</button>");
+    expect(englishLeaks(page)).toEqual([]);
+  });
+});
+
+describe("the copy button's script", () => {
+  interface FakeButton {
+    attrs: Record<string, string>;
+    textContent: string;
+    getAttribute(name: string): string;
+  }
+
+  function rig(options: { clipboard?: "ok" | "refuses" | "missing" } = {}) {
+    const html = renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, views: [view()] });
+    const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
+    const listeners: Record<string, (event: unknown) => void> = {};
+    const written: string[] = [];
+    const selected: string[] = [];
+    const timers: (() => void)[] = [];
+    const source = { textContent: "the snippet text" };
+    const button: FakeButton = {
+      attrs: { "data-copy": "snip-empresa-url" },
+      textContent: "Copy",
+      getAttribute: (name) => button.attrs[name],
+    };
+    const context = {
+      document: {
+        hidden: false,
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        getElementById: (id: string) =>
+          id === "snip-empresa-url" ? source : id === "offline" ? { hidden: true } : null,
+        addEventListener: (type: string, fn: (event: unknown) => void) => {
+          listeners[type] = fn;
+        },
+        createRange: () => ({
+          selectNodeContents: (node: unknown) =>
+            selected.push(node === source ? "source" : "other"),
+        }),
+      },
+      window: {
+        getSelection: () => ({ removeAllRanges: () => undefined, addRange: () => undefined }),
+      },
+      navigator:
+        options.clipboard === "missing"
+          ? {}
+          : {
+              clipboard: {
+                writeText: (text: string) => {
+                  written.push(text);
+                  return options.clipboard === "refuses"
+                    ? Promise.reject(new Error("denied"))
+                    : Promise.resolve();
+                },
+              },
+            },
+      location: { reload: () => undefined },
+      setInterval: () => undefined,
+      fetch: () => new Promise(() => undefined),
+      setTimeout: (fn: () => void) => timers.push(fn),
+      clearTimeout: () => undefined,
+    };
+    vm.runInNewContext(script, context);
+    const click = async (target: unknown) => {
+      listeners.click({ target });
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    return { button, written, selected, timers, click, listeners };
+  }
+
+  const onButton = (button: FakeButton) => ({ closest: () => button });
+
+  it("listens for clicks once, on the document", () => {
+    expect(Object.keys(rig().listeners)).toContain("click");
+  });
+
+  it("copies the snippet's text and says so, then goes back to the word Copy", async () => {
+    const r = rig();
+
+    await r.click(onButton(r.button));
+
+    expect(r.written).toEqual(["the snippet text"]);
+    expect(r.button.textContent).toBe("Copied");
+    expect(r.selected).toEqual([]);
+    r.timers[0]();
+    expect(r.button.textContent).toBe("Copy");
+  });
+
+  it("selects the snippet's text instead when the clipboard refuses", async () => {
+    const r = rig({ clipboard: "refuses" });
+
+    await r.click(onButton(r.button));
+
+    expect(r.written).toEqual(["the snippet text"]);
+    expect(r.selected).toEqual(["source"]);
+    expect(r.button.textContent).toBe("Selected. Press Ctrl+C to copy.");
+  });
+
+  it("selects the snippet's text instead when there is no clipboard API", async () => {
+    const r = rig({ clipboard: "missing" });
+
+    await r.click(onButton(r.button));
+
+    expect(r.written).toEqual([]);
+    expect(r.selected).toEqual(["source"]);
+    expect(r.button.textContent).toBe("Selected. Press Ctrl+C to copy.");
+  });
+
+  it("ignores a click that is not on a copy button", async () => {
+    const r = rig();
+
+    await r.click({ closest: () => null });
+    await r.click({});
+    await r.click(null);
+
+    expect(r.written).toEqual([]);
+    expect(r.selected).toEqual([]);
+    expect(r.button.textContent).toBe("Copy");
+  });
+
+  it("ignores a button whose snippet is not on the page", async () => {
+    const r = rig();
+    r.button.attrs["data-copy"] = "gone";
+    const reachable = { ...r.button, getAttribute: () => "gone" };
+
+    await r.click(onButton(reachable));
+
+    expect(r.written).toEqual([]);
+    expect(r.selected).toEqual([]);
   });
 });
 
@@ -304,7 +618,7 @@ interface Rig {
 type Answer = { status: number; body?: unknown } | "throw";
 
 function runScript(labels: string[], answers: Answer[], options: { target?: boolean } = {}): Rig {
-  const html = renderHubPage({ nonce: NONCE, views: [view()] });
+  const html = renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, views: [view()] });
   const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
   const cards = Object.fromEntries(labels.map((label) => [label, fakeCard(label)]));
   const rig: Rig = {
@@ -514,7 +828,7 @@ describe("the page's own script", () => {
 
   it("has one request in flight at a time", async () => {
     let release: () => void = () => undefined;
-    const html = renderHubPage({ nonce: NONCE, views: [view()] });
+    const html = renderHubPage({ nonce: NONCE, publicUrl: PUBLIC_URL, views: [view()] });
     const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
     let timer: () => void = () => undefined;
     let calls = 0;

@@ -19,7 +19,15 @@ const SECRETS = {
   message: "meet me at the secret place",
   nested: { id: "9988776655443", note: "nested-secret-value" },
 };
-const ALLOWED_KEYS = ["label", "description", "phone_last4", "state", "down_for_s", "qr_rev"];
+const ALLOWED_KEYS = [
+  "label",
+  "description",
+  "phone_last4",
+  "state",
+  "down_for_s",
+  "qr_rev",
+  "mcp_url",
+];
 
 let hub: HubHarness | undefined;
 let fakes: FakeInstance[] = [];
@@ -86,6 +94,7 @@ describe("what the hub never says", () => {
       await request(hub.url, "/_hub/login", { method: "POST", body: loginForm(TEST_PIN) }),
     );
 
+    const afterBearer: string[] = [];
     for (const res of responses) {
       const everything = `${res.body}\n${[...res.headers].map(([k, v]) => `${k}: ${v}`).join("\n")}`;
       expect(
@@ -105,7 +114,11 @@ describe("what the hub never says", () => {
       ]) {
         expect(everything).not.toContain(secret);
       }
+      afterBearer.push(...[...everything.matchAll(/Bearer (\S+)/g)].map((m) => m[1]));
     }
+    // The connect-a-client snippets carry a placeholder where a token goes, and only that.
+    expect(afterBearer.length).toBeGreaterThan(0);
+    for (const word of afterBearer) expect(word).toMatch(/^&lt;token&gt;/);
   });
 
   it("serves status.json with exactly the allowed keys per number, and nothing at the top", async () => {

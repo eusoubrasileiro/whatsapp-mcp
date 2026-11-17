@@ -1,6 +1,7 @@
 import type { InstanceView } from "./poller.ts";
 import { en, fill, type Strings } from "./strings.ts";
 import { STYLE } from "./style.ts";
+import type { UnlinkOutcome } from "./unlink.ts";
 
 /** How often the page asks `/_hub/status.json` for the current picture. */
 export const PAGE_POLL_INTERVAL_MS = 2000;
@@ -62,7 +63,54 @@ function qrUrl(view: InstanceView): string {
   return `/_hub/qr/${view.label}.png?rev=${view.qr_rev}`;
 }
 
-function renderCard(view: InstanceView, target: string | null, t: Strings): string {
+/** Where an MCP client reaches the number `label` through this hub's public address. */
+export function mcpUrl(publicUrl: string, label: string): string {
+  return `${publicUrl}/${label}/mcp`;
+}
+
+/** The token is never known here: every snippet carries this placeholder in its place. */
+const TOKEN_PLACEHOLDER = "<token>";
+
+/** One titled snippet and the button that copies it. */
+function snippet(id: string, title: string, text: string, t: Strings): string {
+  return `<div class="snippet">
+<p class="snippet-title">${escapeHtml(title)}</p>
+<div class="snippet-box"><pre class="code" id="${escapeHtml(id)}">${escapeHtml(text)}</pre><button class="copy" type="button" data-copy="${escapeHtml(id)}">${escapeHtml(t.connect.copy)}</button></div>
+</div>`;
+}
+
+/** The collapsed "connect a client" block: the address and the two documented config forms. */
+function renderConnect(view: InstanceView, publicUrl: string, t: Strings): string {
+  const url = mcpUrl(publicUrl, view.label);
+  const name = `whatsapp-${view.label}`;
+  const entry = `${JSON.stringify(name)}: ${JSON.stringify(
+    { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } },
+    null,
+    2,
+  )}`;
+  const command = `claude mcp add --transport http ${name} ${url} --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}"`;
+  const id = (part: string) => `snip-${view.label}-${part}`;
+  return `<details class="connect">
+<summary>${escapeHtml(t.connect.summary)}</summary>
+<div class="connect-body">
+${snippet(id("url"), t.connect.addressTitle, url, t)}
+${snippet(id("entry"), t.connect.jsonTitle, entry, t)}
+${snippet(id("command"), t.connect.commandTitle, command, t)}
+<p class="token-note">${escapeHtml(t.connect.tokenNote)}</p>
+</div>
+</details>`;
+}
+
+/** What every card needs besides its own view. */
+interface CardContext {
+  target: string | null;
+  publicUrl: string;
+  /** Whether the hub can unlink numbers: the card then links to the confirmation page. */
+  canUnlink: boolean;
+  t: Strings;
+}
+
+function renderCard(view: InstanceView, { target, publicUrl, canUnlink, t }: CardContext): string {
   const showQr = view.state === "waiting_qr" && view.qr_rev !== null;
   const label = escapeHtml(view.label);
   const classes = view.label === target ? "card is-target" : "card";
@@ -75,6 +123,8 @@ function renderCard(view: InstanceView, target: string | null, t: Strings): stri
 <p class="qr-help" data-role="qr-help">${escapeHtml(scanSentence(view, t))}</p>
 <div class="qr-frame"><img class="qr-img" data-role="qr-img" width="512" height="512" alt="${escapeHtml(fill(t.scan.imageAlt, { label: view.label }))}"${showQr ? ` src="${escapeHtml(qrUrl(view))}"` : ""}></div>
 </div>
+${renderConnect(view, publicUrl, t)}
+${canUnlink ? `<a class="unlink-link" href="/_hub/unlink/${label}">${escapeHtml(t.unlink.open)}</a>` : ""}
 </article>`;
 }
 
@@ -85,6 +135,7 @@ function clientScript(t: Strings): string {
     durations: t.durations,
     numberEnding: t.numberEnding,
     scan: t.scan,
+    connect: { copy: t.connect.copy, copied: t.connect.copied, selected: t.connect.selected },
   }).replace(/</g, "\\u003c");
   return `(function () {
 var T = ${words};
@@ -119,6 +170,29 @@ function patch(card, v) {
   var src = "/_hub/qr/" + v.label + ".png?rev=" + v.qr_rev;
   if (img.getAttribute("src") !== src) img.setAttribute("src", src);
 }
+function say(button, text) {
+  button.textContent = text;
+  clearTimeout(button.resetTimer);
+  button.resetTimer = setTimeout(function () { button.textContent = T.connect.copy; }, 2000);
+}
+function selectText(node) {
+  var range = document.createRange();
+  range.selectNodeContents(node);
+  var selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+document.addEventListener("click", function (event) {
+  var button = event.target && event.target.closest ? event.target.closest("[data-copy]") : null;
+  var source = button && document.getElementById(button.getAttribute("data-copy"));
+  if (!source) return;
+  var fallback = function () { selectText(source); say(button, T.connect.selected); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(source.textContent).then(function () { say(button, T.connect.copied); }, fallback);
+  } else {
+    fallback();
+  }
+});
 var busy = false;
 var offline = document.getElementById("offline");
 function poll() {
@@ -147,13 +221,14 @@ if (target) target.scrollIntoView({ block: "start" });
 
 function document(options: {
   nonce: string;
+  lang: string;
   title: string;
   body: string;
   script?: string;
 }): string {
   const nonce = escapeHtml(options.nonce);
   return `<!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(options.lang)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -173,10 +248,14 @@ ${options.script ? `<script nonce="${nonce}">${options.script}</script>` : ""}
 export interface HubPageOptions {
   nonce: string;
   views: InstanceView[];
+  /** The hub's own public origin: the MCP addresses on the cards are built from it. */
+  publicUrl: string;
   /** The label to highlight and scroll to, when the address was `/<label>`. */
   target?: string | null;
   /** A label that was asked for and does not exist; the page says so. */
   unknownLabel?: string | null;
+  /** Show "unlink this number" on every card. Only when the hub holds the instances' secret. */
+  canUnlink?: boolean;
   t?: Strings;
 }
 
@@ -185,15 +264,27 @@ export function renderHubPage(options: HubPageOptions): string {
   const notice = options.unknownLabel
     ? `<p class="notice" role="alert">${escapeHtml(fill(t.unknownLabel, { label: options.unknownLabel }))}</p>`
     : "";
+  const card: CardContext = {
+    target: options.target ?? null,
+    publicUrl: options.publicUrl,
+    canUnlink: options.canUnlink ?? false,
+    t,
+  };
   const body = `<div class="wrap">
 <header class="top"><h1>${escapeHtml(t.title)}</h1><p class="live">${escapeHtml(t.liveNote)}</p></header>
 <p class="offline" id="offline" role="alert" hidden>${escapeHtml(t.offline)}</p>
 ${notice}
 <main class="cards">
-${options.views.map((view) => renderCard(view, options.target ?? null, t)).join("\n")}
+${options.views.map((view) => renderCard(view, card)).join("\n")}
 </main>
 </div>`;
-  return document({ nonce: options.nonce, title: t.title, body, script: clientScript(t) });
+  return document({
+    nonce: options.nonce,
+    lang: t.htmlLang,
+    title: t.title,
+    body,
+    script: clientScript(t),
+  });
 }
 
 export interface PinFormOptions {
@@ -220,7 +311,7 @@ ${error}
 <button class="btn" type="submit">${escapeHtml(t.pin.submit)}</button>
 </form>
 </main>`;
-  return document({ nonce: options.nonce, title: t.pin.title, body });
+  return document({ nonce: options.nonce, lang: t.htmlLang, title: t.pin.title, body });
 }
 
 export function renderLockedPage(options: { nonce: string; t?: Strings }): string {
@@ -231,5 +322,84 @@ export function renderLockedPage(options: { nonce: string; t?: Strings }): strin
 <p>${escapeHtml(t.pin.locked)}</p>
 </div>
 </main>`;
-  return document({ nonce: options.nonce, title: t.pin.lockedTitle, body });
+  return document({ nonce: options.nonce, lang: t.htmlLang, title: t.pin.lockedTitle, body });
+}
+
+/** Why the confirmation page is being shown again: the key of the sentence in `t.unlink`. */
+export type UnlinkError = "expired" | "locked" | "wrongPin" | "wrongLabel";
+
+export interface UnlinkPageOptions {
+  nonce: string;
+  view: InstanceView;
+  /** The form's anti-forgery token for this session and number. */
+  csrf: string;
+  /** Show this refusal above the form. */
+  error?: UnlinkError | null;
+  t?: Strings;
+}
+
+/** The confirmation page: what unlinking does, the restriction rule, and the form that does it. */
+export function renderUnlinkPage(options: UnlinkPageOptions): string {
+  const t = options.t ?? en;
+  const { view } = options;
+  const label = escapeHtml(view.label);
+  const who = [
+    view.description,
+    view.phone_last4 ? fill(t.numberEnding, { last4: view.phone_last4 }) : null,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .map(escapeHtml)
+    .join(" · ");
+  const error = options.error
+    ? `<p class="error" role="alert">${escapeHtml(t.unlink[options.error])}</p>`
+    : "";
+  const body = `<main class="gate">
+<form class="gate-card unlink" method="post" action="/_hub/unlink/${label}">
+<h1>${escapeHtml(fill(t.unlink.title, { label: view.label }))}</h1>
+${who ? `<p class="who">${who}</p>` : ""}
+${error}
+<section class="warning" role="note">
+<h2>${escapeHtml(t.unlink.warningTitle)}</h2>
+<p>${escapeHtml(t.unlink.warning)}</p>
+</section>
+<p class="effect">${escapeHtml(fill(t.unlink.effect, { label: view.label }))}</p>
+<label for="pin">${escapeHtml(t.unlink.pinField)}</label>
+<input id="pin" class="pin" name="pin" type="password" autocomplete="current-password" required>
+<label for="label">${escapeHtml(fill(t.unlink.labelField, { label: view.label }))}</label>
+<input id="label" class="pin" name="label" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+<input type="hidden" name="csrf" value="${escapeHtml(options.csrf)}">
+<button class="btn btn-danger" type="submit">${escapeHtml(fill(t.unlink.submit, { label: view.label }))}</button>
+<a class="cancel" href="/">${escapeHtml(t.unlink.cancel)}</a>
+</form>
+</main>`;
+  return document({
+    nonce: options.nonce,
+    lang: t.htmlLang,
+    title: fill(t.unlink.title, { label: view.label }),
+    body,
+  });
+}
+
+/** What the hub says after it asked: never the instance's own words, only these. */
+export function renderUnlinkResult(options: {
+  nonce: string;
+  label: string;
+  outcome: UnlinkOutcome;
+  t?: Strings;
+}): string {
+  const t = options.t ?? en;
+  const words = {
+    unlinked: [t.unlink.unlinkedTitle, t.unlink.unlinked],
+    not_connected: [t.unlink.notConnectedTitle, t.unlink.notConnected],
+    failed: [t.unlink.failedTitle, t.unlink.failed],
+  }[options.outcome];
+  const [title, sentence] = words;
+  const body = `<main class="gate">
+<div class="gate-card">
+<h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(fill(sentence, { label: options.label }))}</p>
+<a class="btn" href="/">${escapeHtml(t.unlink.back)}</a>
+</div>
+</main>`;
+  return document({ nonce: options.nonce, lang: t.htmlLang, title, body });
 }

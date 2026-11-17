@@ -3,33 +3,30 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type E2eServer, startServer } from "./support/server.ts";
 
+const SECRET = "e2e-qr-instance-secret-0123456789abcdef";
+
 let server: E2eServer;
+let unlinkable: E2eServer; // started with the secret a hub would share with it
 
 beforeAll(async () => {
-  server = await startServer();
+  [server, unlinkable] = await Promise.all([
+    startServer(),
+    startServer({ env: { HUB_INSTANCE_SECRET: SECRET } }),
+  ]);
 });
 
 afterAll(async () => {
-  await server?.stop();
+  await Promise.all([server?.stop(), unlinkable?.stop()]);
 });
 
-describe("QR page", () => {
-  it("serves the page and says the instance is not paired", async () => {
-    const res = await fetch(`${server.qrUrl}/`);
-    const html = await res.text();
+describe("QR server", () => {
+  it("has no page: / and /index.html are 404 on the status port", async () => {
+    for (const path of ["/", "/index.html"]) {
+      const res = await fetch(`${server.qrUrl}${path}`);
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain("<h1>disconnected</h1>");
-    expect(html).toContain("status: disconnected");
-    expect(html).not.toContain("/qr.png"); // no QR to scan: nothing has connected
-  });
-
-  it("serves the same page at /index.html", async () => {
-    const res = await fetch(`${server.qrUrl}/index.html`);
-
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("<h1>disconnected</h1>");
+      expect(res.status, path).toBe(404);
+      expect(await res.text()).toBe("not found");
+    }
   });
 
   it("answers /live with 200 whatever the WhatsApp socket is doing (Docker healthcheck)", async () => {
@@ -72,5 +69,46 @@ describe("no WhatsApp connection", () => {
     expect(fs.existsSync(path.join(server.dataDir, "auth_info"))).toBe(false);
     const health = await (await fetch(`${server.qrUrl}/health`)).json();
     expect(health.status).toBe("disconnected");
+  });
+});
+
+describe("POST /internal/unlink", () => {
+  const post = (target: E2eServer, authorization?: string) =>
+    fetch(`${target.qrUrl}/internal/unlink`, {
+      method: "POST",
+      headers: authorization ? { authorization } : {},
+    });
+
+  it("does not exist on a server started without HUB_INSTANCE_SECRET, whatever it is sent", async () => {
+    const res = await post(server, `Bearer ${SECRET}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it.each([
+    ["no Authorization header", undefined],
+    ["a wrong secret", "Bearer not-the-secret"],
+    ["the secret without the Bearer word", SECRET],
+  ])("refuses %s with 401 and an empty body", async (_what, authorization) => {
+    const res = await post(unlinkable, authorization);
+
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("");
+  });
+
+  it("answers the right secret with unlinked:false, as nothing is connected, and touches no pairing", async () => {
+    const res = await post(unlinkable, `Bearer ${SECRET}`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ unlinked: false });
+    expect(fs.existsSync(path.join(unlinkable.dataDir, "auth_info"))).toBe(false);
+  });
+
+  it("is a POST route only", async () => {
+    const res = await fetch(`${unlinkable.qrUrl}/internal/unlink`, {
+      headers: { authorization: `Bearer ${SECRET}` },
+    });
+
+    expect(res.status).toBe(405);
   });
 });

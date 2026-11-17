@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { type NtfyConfig, resolveNtfyConfig } from "../ntfy.ts";
+import { HUB_LANGS, type HubLang } from "./strings.ts";
 
 /** One WhatsApp number the hub shows: its label and where its server answers. */
 export interface HubInstance {
@@ -16,6 +17,13 @@ export interface HubConfig {
   host: string;
   port: number;
   ntfy: NtfyConfig | null;
+  /** The language of every page. */
+  lang: HubLang;
+  /**
+   * The secret the hub presents to an instance to unlink its number, shared with every
+   * instance's `HUB_INSTANCE_SECRET`. `null` when unset: the unlink action does not exist.
+   */
+  instanceSecret: string | null;
 }
 
 /**
@@ -103,6 +111,35 @@ function parsePort(raw: string | undefined, problems: string[]): number {
   return port;
 }
 
+/** `HUB_LANG`: `en` when unset or empty, otherwise exactly one of the languages the hub has. */
+function parseLang(raw: string | undefined, problems: string[]): HubLang {
+  if (!raw) return HUB_LANGS[0];
+  const lang = HUB_LANGS.find((candidate) => candidate === raw);
+  if (lang) return lang;
+  problems.push(`HUB_LANG must be one of: ${HUB_LANGS.join(", ")}`);
+  return HUB_LANGS[0];
+}
+
+/**
+ * The shortest unlink secret the hub accepts. An instance ignores a shorter one. The number is
+ * written here and again as `MIN_HUB_SECRET_LENGTH` in `src/hub-instance-secret.ts` on purpose:
+ * the hub shares no module with a number's server but `ntfy.ts`. A test on each side pins 31
+ * and 32.
+ */
+const MIN_INSTANCE_SECRET_LENGTH = 32;
+
+/** `HUB_INSTANCE_SECRET`: unset or empty turns unlinking off, anything else must be long enough. */
+function parseInstanceSecret(raw: string | undefined, problems: string[]): string | null {
+  if (!raw) return null;
+  if (raw.length < MIN_INSTANCE_SECRET_LENGTH) {
+    problems.push(
+      `HUB_INSTANCE_SECRET must be at least ${MIN_INSTANCE_SECRET_LENGTH} characters (leave it unset to turn unlinking off)`,
+    );
+    return null;
+  }
+  return raw;
+}
+
 function checkStateDir(dir: string | undefined, problems: string[]): void {
   let usable = false;
   try {
@@ -133,6 +170,8 @@ export function loadHubConfig(env: Env): HubConfig {
   const instances = parseInstances(env.HUB_INSTANCES, problems);
   const publicUrl = parsePublicUrl(env.HUB_PUBLIC_URL, problems);
   const port = parsePort(env.HUB_PORT, problems);
+  const lang = parseLang(env.HUB_LANG, problems);
+  const instanceSecret = parseInstanceSecret(env.HUB_INSTANCE_SECRET, problems);
   checkStateDir(env.HUB_STATE_DIR, problems);
 
   if (problems.length > 0) throw new HubConfigError(problems);
@@ -146,5 +185,7 @@ export function loadHubConfig(env: Env): HubConfig {
     host: env.HUB_HOST || "0.0.0.0",
     port,
     ntfy: resolveNtfyConfig(env),
+    lang,
+    instanceSecret,
   };
 }

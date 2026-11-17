@@ -4,6 +4,7 @@ import { PAGE_POLL_INTERVAL_MS } from "../hub/page.ts";
 import { createPoller, POLL_INTERVAL_MS } from "../hub/poller.ts";
 import { clientAddress, isLoopbackPeer, safeNext } from "../hub/server.ts";
 import { type FakeInstance, qrPng, startFakeInstance } from "./helpers/fake-instance.ts";
+import { englishLeaks } from "./helpers/hub-english.ts";
 import {
   type HubHarness,
   loginForm,
@@ -11,6 +12,7 @@ import {
   startHubHarness,
   TEST_COOKIE_KEY,
   TEST_PIN,
+  TEST_PUBLIC_URL,
   withoutNonce,
 } from "./helpers/hub-harness.ts";
 
@@ -224,7 +226,10 @@ describe("headers on every response", () => {
       expect(res.headers.get("cache-control")).toBe("no-store");
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("x-frame-options")).toBe("DENY");
-      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      // Not "no-referrer": with it a browser sends `Origin: null` on every form post, and the
+      // unlink form's Origin check would refuse the page's own submit. "same-origin" shares
+      // nothing with other sites and keeps the real Origin on a post to the hub itself.
+      expect(res.headers.get("referrer-policy")).toBe("same-origin");
     }
   });
 
@@ -258,7 +263,11 @@ describe("headers on every response", () => {
 
     const nonce = /<style nonce="([^"]+)">/.exec(res.body)?.[1];
     expect(res.body).toContain(`<script nonce="${nonce}">`);
-    expect(res.body).not.toMatch(/https?:\/\//);
+    // The only addresses on the page are the hub's own, written out as text in the snippets.
+    const addresses = res.body.match(/https?:\/\/[^\s"&<]+/g) ?? [];
+    expect(addresses.length).toBeGreaterThan(0);
+    for (const address of addresses) expect(address.startsWith(TEST_PUBLIC_URL)).toBe(true);
+    expect(res.body).not.toMatch(/\s(?:src|href|action)="https?:/);
     expect(res.body).not.toMatch(/<link\b|@import|<iframe|<object|<embed/i);
     expect(res.body).not.toMatch(/\sstyle=/); // an inline style attribute would need unsafe-inline
     expect(res.body.match(/<script\b/g)).toHaveLength(1);
@@ -564,6 +573,22 @@ describe("with a session", () => {
     }
   });
 
+  it("shows each number's own MCP address and snippets, and no token", async () => {
+    const h = await startHub();
+    const cookie = await h.login();
+
+    const res = await request(h.url, "/", { cookie });
+
+    for (const label of ["personal", "empresa"]) {
+      expect(res.body).toContain(`${TEST_PUBLIC_URL}/${label}/mcp`);
+      expect(res.body).toContain(`claude mcp add --transport http whatsapp-${label} `);
+      expect(res.body).toContain(`&quot;whatsapp-${label}&quot;: {`);
+    }
+    expect(res.body).toContain("Connect a client");
+    expect(res.body.match(/Bearer &lt;token&gt;/g)).toHaveLength(4);
+    expect(res.body.match(/Bearer (?!&lt;token&gt;)/g)).toBeNull();
+  });
+
   it("shows the QR of the waiting number inline, wide enough to scan, with a sentence naming the phone", async () => {
     const h = await startHub();
     const cookie = await h.login();
@@ -651,6 +676,7 @@ describe("with a session", () => {
           state: "connected",
           down_for_s: null,
           qr_rev: null,
+          mcp_url: `${TEST_PUBLIC_URL}/personal/mcp`,
         },
         {
           label: "empresa",
@@ -659,6 +685,7 @@ describe("with a session", () => {
           state: "waiting_qr",
           down_for_s: null,
           qr_rev: rev,
+          mcp_url: `${TEST_PUBLIC_URL}/empresa/mcp`,
         },
       ],
     });
@@ -742,5 +769,69 @@ describe("with a session", () => {
 
     expect(res.status).toBe(500);
     expect(res.body).toBe("internal error");
+  });
+});
+
+describe("in Brazilian Portuguese", () => {
+  async function startPortuguese(): Promise<HubHarness> {
+    hub = await startHubHarness({
+      instances: [
+        { label: "personal", baseUrl: personal.url },
+        { label: "empresa", baseUrl: empresa.url },
+      ],
+      lang: "pt-BR",
+    });
+    await hub.poller.pollOnce();
+    return hub;
+  }
+
+  it("asks for the PIN, answers a wrong one and a locked form in Portuguese", async () => {
+    const h = await startPortuguese();
+
+    const form = await request(h.url, "/");
+    const wrong = await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+    for (let i = 0; i < 4; i++) {
+      await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+    }
+    const locked = await request(h.url, "/_hub/login", { method: "POST", body: loginForm("nope") });
+
+    expect(form.status).toBe(401);
+    expect(form.body).toContain('<html lang="pt-BR">');
+    expect(form.body).toContain("<h1>Digite o PIN</h1>");
+    expect(wrong.body).toContain("Esse PIN não funcionou.");
+    expect(locked.status).toBe(429);
+    expect(locked.body).toContain("Muitos PINs errados");
+    for (const res of [form, wrong, locked]) expect(englishLeaks(res.body)).toEqual([]);
+  });
+
+  it("shows the cards, the QR sentence and an unknown number's notice in Portuguese", async () => {
+    const h = await startPortuguese();
+    const cookie = await h.login();
+
+    const front = await request(h.url, "/", { cookie });
+    const unknown = await request(h.url, "/nobody", { cookie });
+
+    expect(front.body).toContain('<html lang="pt-BR">');
+    for (const text of [
+      "Conectado",
+      "número terminado em 5678",
+      "Aguardando você escanear o QR code",
+      "Pegue o celular do número &quot;empresa&quot; (terminado em 1234) e escaneie este código",
+    ]) {
+      expect(front.body).toContain(text);
+    }
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toContain("Não existe nenhum número chamado &quot;nobody&quot;.");
+    for (const res of [front, unknown]) expect(englishLeaks(res.body)).toEqual([]);
+  });
+
+  it("stays in English when no language is asked for", async () => {
+    const h = await startHub();
+    const cookie = await h.login();
+
+    const res = await request(h.url, "/", { cookie });
+
+    expect(res.body).toContain('<html lang="en">');
+    expect(res.body).toContain("Waiting for you to scan the QR code");
   });
 });

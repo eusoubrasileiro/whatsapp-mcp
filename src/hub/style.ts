@@ -102,6 +102,38 @@ body {
 .qr-frame { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px; }
 .qr-img { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; aspect-ratio: 1; image-rendering: pixelated; }
 
+.connect { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 4px; }
+.connect summary {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer;
+  font-weight: 650; list-style: none; border-radius: 8px;
+}
+.connect summary::-webkit-details-marker { display: none; }
+.connect summary::before {
+  content: ""; flex: none; width: 8px; height: 8px; margin: 0 4px 2px 2px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg); transition: transform 0.12s ease;
+}
+.connect[open] summary::before { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { .connect summary::before { transition: none; } }
+.connect-body { display: grid; gap: 14px; padding: 6px 0 4px; }
+.snippet-title { margin: 0 0 6px; font-size: 0.875rem; font-weight: 650; color: var(--muted); }
+.snippet-box { display: grid; gap: 8px; }
+.code {
+  margin: 0; padding: 10px 12px; background: var(--page); border: 1px solid var(--line); border-radius: 12px;
+  font: 0.8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.copy {
+  justify-self: start; min-height: 44px; padding: 8px 16px; font: inherit; font-size: 0.9rem; font-weight: 650;
+  color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+}
+.token-note { margin: 0; color: var(--muted); font-size: 0.875rem; }
+
+.unlink-link {
+  display: inline-flex; align-items: center; min-height: 44px; margin-top: 4px; padding: 0 2px;
+  color: var(--down-fg); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; border-radius: 8px;
+}
+
 .gate { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
 .gate-card {
   width: 100%; max-width: 380px; padding: 24px 20px;
@@ -119,6 +151,23 @@ body {
 .btn {
   width: 100%; margin-top: 14px; padding: 14px; font: inherit; font-weight: 700;
   color: var(--surface); background: var(--ink); border: 0; border-radius: 12px; cursor: pointer;
+}
+
+.who { margin: -8px 0 16px !important; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.warning {
+  margin: 0 0 16px; padding: 12px 14px; border-radius: 12px;
+  background: var(--waiting-bg); color: var(--waiting-fg); border-left: 6px solid var(--waiting-bar);
+}
+.warning h2 { margin: 0 0 8px; font-size: 1.1rem; font-weight: 800; line-height: 1.25; }
+.warning p { margin: 0; font-weight: 500; line-height: 1.5; }
+.effect { margin: 0 0 18px !important; color: var(--muted); }
+.unlink .pin { margin-bottom: 14px; letter-spacing: normal; }
+.unlink label { margin-top: 2px; }
+.btn { display: block; text-align: center; text-decoration: none; }
+.btn-danger { background: var(--down-fg); color: var(--surface); }
+.cancel {
+  display: flex; align-items: center; justify-content: center; min-height: 44px; margin-top: 6px;
+  color: var(--muted); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; border-radius: 8px;
 }
 
 @media (min-width: 720px) {

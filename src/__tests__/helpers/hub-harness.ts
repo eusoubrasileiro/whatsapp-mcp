@@ -3,14 +3,20 @@ import http, { type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import pino from "pino";
+import pino, { type Logger } from "pino";
 import { createPinGate, type PinGate } from "../../hub/auth.ts";
 import { createPoller, type Poller } from "../../hub/poller.ts";
 import { createHubListener } from "../../hub/server.ts";
+import { type HubLang, stringsFor } from "../../hub/strings.ts";
+import { createUnlinker } from "../../hub/unlink.ts";
 import type { NtfyMessage } from "../../ntfy.ts";
 
 export const TEST_PIN = "correct-test-pin";
 export const TEST_COOKIE_KEY = "test-signing-key-0123456789abcdef-xyz";
+/** What the harness's hub believes its own public address is (it really listens on loopback). */
+export const TEST_PUBLIC_URL = "https://hub.example.com";
+/** The secret the harness's hub and its fake instances share when a test turns unlinking on. */
+export const TEST_INSTANCE_SECRET = "shared-instance-secret-0123456789-abcdef";
 
 /** A hub's HTTP side, listening on loopback, with a clock the test moves. */
 export interface HubHarness {
@@ -31,6 +37,14 @@ export interface HubHarnessOptions {
   /** Replaces the real poller, e.g. with one that throws. */
   poller?: Poller;
   pollerTimeoutMs?: number;
+  /** The language of every page. Defaults to English. */
+  lang?: HubLang;
+  /** Turns unlinking on, with this shared secret. Without it the action does not exist. */
+  instanceSecret?: string;
+  /** How long the hub waits for an instance to answer an unlink. */
+  unlinkTimeoutMs?: number;
+  /** Where the hub logs. Defaults to silence. */
+  logger?: Logger;
 }
 
 export async function startHubHarness(options: HubHarnessOptions): Promise<HubHarness> {
@@ -54,7 +68,20 @@ export async function startHubHarness(options: HubHarnessOptions): Promise<HubHa
     },
   });
   const server: Server = http.createServer(
-    createHubListener({ poller, gate, logger: pino({ level: "silent" }) }),
+    createHubListener({
+      poller,
+      gate,
+      logger: options.logger ?? pino({ level: "silent" }),
+      publicUrl: TEST_PUBLIC_URL,
+      unlink: options.instanceSecret
+        ? createUnlinker({
+            secret: options.instanceSecret,
+            instances: options.instances,
+            timeoutMs: options.unlinkTimeoutMs,
+          })
+        : null,
+      t: stringsFor(options.lang ?? "en"),
+    }),
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

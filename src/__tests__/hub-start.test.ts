@@ -77,6 +77,91 @@ describe("startHub", () => {
     expect(await res.text()).toContain("Enter the PIN");
   });
 
+  it("answers in Brazilian Portuguese when HUB_LANG says pt-BR", async () => {
+    const env = await environment({ HUB_LANG: "pt-BR" });
+    running = await startHub(env, { logger: silent });
+
+    const res = await fetch(`http://127.0.0.1:${env.HUB_PORT}/`);
+
+    const body = await res.text();
+    expect(body).toContain('<html lang="pt-BR">');
+    expect(body).toContain("Digite o PIN");
+  });
+
+  it("refuses a language it does not have before it binds anything", async () => {
+    const env = await environment({ HUB_LANG: "xx" });
+
+    await expect(startHub(env, { logger: silent })).rejects.toThrow(/HUB_LANG/);
+
+    await expect(fetch(`http://127.0.0.1:${env.HUB_PORT}/live`)).rejects.toThrow();
+  });
+
+  it("refuses a short HUB_INSTANCE_SECRET before it binds anything, and never prints it", async () => {
+    const short = "p".repeat(31);
+    const env = await environment({ HUB_INSTANCE_SECRET: short });
+
+    const error = await startHub(env, { logger: silent }).catch((err) => err);
+
+    expect(error).toBeInstanceOf(HubConfigError);
+    expect(error.message).toContain("HUB_INSTANCE_SECRET");
+    expect(error.message).not.toContain("pppp");
+    await expect(fetch(`http://127.0.0.1:${env.HUB_PORT}/live`)).rejects.toThrow();
+  });
+
+  describe("the unlink action", () => {
+    const SECRET = "start-test-instance-secret-0123456789ab";
+
+    /** Signs in over HTTP and returns the cookie header. */
+    async function signIn(port: string): Promise<string> {
+      const res = await fetch(`http://127.0.0.1:${port}/_hub/login`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ pin: PIN }),
+      });
+      return (res.headers.get("set-cookie") ?? "").split(";")[0];
+    }
+
+    it.each([
+      ["unset", {}],
+      ["empty", { HUB_INSTANCE_SECRET: "" }],
+    ])("does not exist when HUB_INSTANCE_SECRET is %s", async (_name, extra) => {
+      const env = await environment(extra);
+      running = await startHub(env, { logger: silent });
+      const headers = { cookie: await signIn(env.HUB_PORT) };
+
+      const page = await fetch(`http://127.0.0.1:${env.HUB_PORT}/`, { headers });
+      const form = await fetch(`http://127.0.0.1:${env.HUB_PORT}/_hub/unlink/personal`, {
+        headers,
+      });
+
+      expect(await page.text()).not.toContain("/_hub/unlink/");
+      expect(form.status).toBe(404);
+    });
+
+    it("is wired to the instances with the shared secret when HUB_INSTANCE_SECRET is set", async () => {
+      const env = await environment({ HUB_INSTANCE_SECRET: SECRET });
+      running = await startHub(env, { logger: silent });
+      const headers = { cookie: await signIn(env.HUB_PORT) };
+      const base = `http://127.0.0.1:${env.HUB_PORT}`;
+      await expect
+        .poll(async () => (await fetch(base, { headers })).text())
+        .toContain('href="/_hub/unlink/personal"');
+      const confirmation = await (await fetch(`${base}/_hub/unlink/personal`, { headers })).text();
+      const csrf = /name="csrf" value="([0-9a-f]{64})"/.exec(confirmation)?.[1] ?? "";
+
+      const res = await fetch(`${base}/_hub/unlink/personal`, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ csrf, pin: PIN, label: "personal" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("was disconnected");
+      expect(fake?.unlinkRequests).toEqual([{ method: "POST", authorization: `Bearer ${SECRET}` }]);
+    });
+  });
+
   it("refuses unusable settings before it binds anything", async () => {
     const env = await environment({ HUB_PIN: "123" });
 

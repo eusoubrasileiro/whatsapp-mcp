@@ -12,9 +12,10 @@ export type NotifierHandlers = {
 };
 
 /**
- * URL of the QR page that ntfy pushes link to. `PUBLIC_QR_URL` wins; without
- * it, fall back to this instance's own QR server (same bind defaults as
+ * URL that ntfy pushes link to for scanning. `PUBLIC_QR_URL` wins; without
+ * it, fall back to this instance's own QR image (same bind defaults as
  * `main.ts`), so an unconfigured deployment never links to someone else's page.
+ * The QR server has no page of its own, so the fallback is the image itself.
  */
 export function resolvePublicQrUrl(env: Record<string, string | undefined> = process.env): string {
   if (env.PUBLIC_QR_URL) return env.PUBLIC_QR_URL;
@@ -23,7 +24,7 @@ export function resolvePublicQrUrl(env: Record<string, string | undefined> = pro
   let host = bind;
   if (bind === "0.0.0.0" || bind === "::") host = "localhost";
   else if (bind.includes(":")) host = `[${bind}]`;
-  return `http://${host}:${port}/`;
+  return `http://${host}:${port}/qr.png`;
 }
 
 /**

@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import type { Server } from "node:http";
 import pino, { type Logger } from "pino";
+import { executeLogout } from "./actions.ts";
 import { initializeDatabase, setDatabaseLogger } from "./database.ts";
+import { readHubInstanceSecret } from "./hub-instance-secret.ts";
 import { readInstanceIdentity } from "./instance-identity.ts";
 import { startMcpServer } from "./mcp.ts";
 import { createQrServer } from "./qr-server.ts";
@@ -47,7 +49,7 @@ export interface StartServersDeps {
 }
 
 export interface RunningServers {
-  /** QR page + `/health` + `/live`. */
+  /** `/health`, `/live`, `/qr.png` and, with a hub secret, `POST /internal/unlink`. */
   qr: Server;
   /** `POST /upload`; `null` unless `S3_ENABLED=true`. */
   upload: Server | null;
@@ -114,10 +116,22 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
   await startMcpServer(mcpLogger, waLogger, identity);
   mcpLogger.info("MCP Server started and listening.");
 
-  // QR web server — port 39002 by default.
+  // The hub's unlink button reaches this instance only when it holds the shared secret. A short
+  // secret is warned about and ignored, never fatal: refusing to start would take a number down.
+  const hubSecret = readHubInstanceSecret(process.env, mcpLogger);
+
+  // QR status server — port 39002 by default. It has no page: the hub shows the QR.
   const qr = createQrServer(waLogger, getConnectionState, {
     identity,
     pairedUserId: () => socketState.socket?.user?.id,
+    unlink: hubSecret
+      ? {
+          secret: hubSecret,
+          // The same logout the MCP `logout` tool runs. It reports in words, so "logged out"
+          // is what separates a number that was unlinked from one that was not connected.
+          run: async () => /^logged out/i.test(await executeLogout()),
+        }
+      : null,
   });
 
   // Upload server — only if S3 plane is enabled. Lets agents POST host-disk files and

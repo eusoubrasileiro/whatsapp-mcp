@@ -632,6 +632,7 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
           state: "disconnected",
           down_for_s: null,
           qr_rev: null,
+          mcp_url: `https://${HOST}/${label}/mcp`,
         })),
       );
       expect(deepLink.body).toMatch(/<article class="card is-target" id="card-pessoal"/);

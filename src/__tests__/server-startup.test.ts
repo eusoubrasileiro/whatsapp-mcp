@@ -46,6 +46,7 @@ vi.mock("../whatsapp.ts", () => ({
 }));
 
 import { createAppLoggers, type RunningServers, startServers } from "../server-startup.ts";
+import { recordingLogger } from "./helpers/recording-logger.ts";
 
 const silent = (): Logger => pino({ level: "silent" });
 
@@ -104,6 +105,7 @@ describe("startServers", () => {
     vi.stubEnv("INSTANCE_LABEL", undefined);
     vi.stubEnv("INSTANCE_DESCRIPTION", undefined);
     vi.stubEnv("EXPECTED_WA_NUMBER", undefined);
+    vi.stubEnv("HUB_INSTANCE_SECRET", undefined);
     h.socketState.socket = null;
   });
 
@@ -160,19 +162,16 @@ describe("startServers", () => {
   describe("instance identity", () => {
     const qrUrl = (r: RunningServers, route: string) => `http://127.0.0.1:${portOf(r.qr)}${route}`;
 
-    it("passes no identity on, and leaves the QR page and /health unlabelled, without INSTANCE_LABEL", async () => {
+    it("passes no identity on, and leaves /health unlabelled, without INSTANCE_LABEL", async () => {
       vi.stubEnv("INSTANCE_DESCRIPTION", "orphan description");
 
       running = await startServers({ mcpLogger: silent(), waLogger: silent() });
 
       expect(h.startMcpServer).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
-      expect(await (await fetch(qrUrl(running, "/"))).text()).toContain(
-        "<title>WhatsApp MCP \u2014 disconnected</title>",
-      );
       expect(await (await fetch(qrUrl(running, "/health"))).json()).not.toHaveProperty("instance");
     });
 
-    it("reads the identity once and hands it to the MCP server, the QR page and /health", async () => {
+    it("reads the identity once and hands it to the MCP server and /health", async () => {
       vi.stubEnv("INSTANCE_LABEL", " Empresa ");
       vi.stubEnv("INSTANCE_DESCRIPTION", "the company line");
 
@@ -180,9 +179,6 @@ describe("startServers", () => {
 
       const identity = { label: "empresa", description: "the company line" };
       expect(h.startMcpServer).toHaveBeenCalledWith(expect.anything(), expect.anything(), identity);
-      expect(await (await fetch(qrUrl(running, "/"))).text()).toContain(
-        "<title>WhatsApp MCP [empresa] \u2014 disconnected</title>",
-      );
       expect((await (await fetch(qrUrl(running, "/health"))).json()).instance).toEqual(identity);
     });
 
@@ -380,6 +376,95 @@ describe("startServers", () => {
     } finally {
       await new Promise<void>((resolve) => taken.close(() => resolve()));
     }
+  });
+
+  describe("hub unlink route", () => {
+    const SECRET = "hub-secret-0123456789abcdef-0123456789";
+    const unlink = (r: RunningServers, authorization?: string) =>
+      fetch(`http://127.0.0.1:${portOf(r.qr)}/internal/unlink`, {
+        method: "POST",
+        headers: authorization === undefined ? {} : { authorization },
+      });
+    const fakeSocket = () => {
+      const logout = vi.fn(async () => undefined);
+      h.socketState.socket = { logout } as unknown as typeof h.socketState.socket;
+      return logout;
+    };
+
+    it.each([
+      ["unset", undefined],
+      ["empty", ""],
+    ])("does not exist when HUB_INSTANCE_SECRET is %s", async (_name, value) => {
+      if (value !== undefined) vi.stubEnv("HUB_INSTANCE_SECRET", value);
+      const logout = fakeSocket();
+
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      expect((await unlink(running, `Bearer ${SECRET}`)).status).toBe(404);
+      expect(logout).not.toHaveBeenCalled();
+    });
+
+    it("does not exist for a 31-character secret, warns once without the value, and still starts", async () => {
+      const short = "q".repeat(31);
+      vi.stubEnv("HUB_INSTANCE_SECRET", short);
+      const logout = fakeSocket();
+      const { logger, lines } = recordingLogger("warn");
+
+      running = await startServers({ mcpLogger: logger, waLogger: silent() });
+
+      expect((await unlink(running, `Bearer ${short}`)).status).toBe(404);
+      expect(logout).not.toHaveBeenCalled();
+      const warnings = lines.filter((line) => line.includes("HUB_INSTANCE_SECRET"));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).not.toContain("qqqq");
+    });
+
+    it("refuses a missing or wrong bearer with 401 and never touches the socket", async () => {
+      vi.stubEnv("HUB_INSTANCE_SECRET", SECRET);
+      const logout = fakeSocket();
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      for (const header of [undefined, "Bearer wrong", `Bearer ${SECRET.slice(1)}`]) {
+        const res = await unlink(running, header);
+        expect(res.status).toBe(401);
+        expect(await res.text()).toBe("");
+      }
+      expect(logout).not.toHaveBeenCalled();
+    });
+
+    it("runs the very logout the MCP tool runs, once, and says the number was unlinked", async () => {
+      vi.stubEnv("HUB_INSTANCE_SECRET", SECRET);
+      const logout = fakeSocket();
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      const res = await unlink(running, `Bearer ${SECRET}`);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ unlinked: true });
+      expect(logout).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["says the number was not connected when there is no socket", null, 200, false],
+      [
+        "answers 502 when the logout itself fails",
+        {
+          logout: async () => {
+            throw new Error("boom");
+          },
+        },
+        502,
+        false,
+      ],
+    ])("%s", async (_name, socket, status, unlinked) => {
+      vi.stubEnv("HUB_INSTANCE_SECRET", SECRET);
+      h.socketState.socket = socket as typeof h.socketState.socket;
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      const res = await unlink(running, `Bearer ${SECRET}`);
+
+      expect([res.status, await res.json()]).toEqual([status, { unlinked }]);
+    });
   });
 });
 
