@@ -75,13 +75,22 @@ function tools(identity?: { label: string; description?: string } | null) {
 
 const GOOD = { jid: "551100000011@s.whatsapp.net", exists: true, lid: "10000000000005@lid" };
 
+/**
+ * A fresh ack bus and recipient cache, and happy-path send mocks. `ackWaitMs`, when given,
+ * sets how long a send waits for a rejection ack.
+ */
+function armSendMocks(ackWaitMs?: string) {
+  resetAckBus();
+  resetRecipientCache();
+  sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
+  sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
+  onWhatsApp.mockReset().mockResolvedValue([GOOD]);
+  if (ackWaitMs !== undefined) process.env.SEND_ACK_WAIT_MS = ackWaitMs;
+}
+
 describe("send_message guards", () => {
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
+    armSendMocks();
     delete process.env.SEND_ACK_WAIT_MS;
     delete process.env.SEND_PRESEND_CHECK;
   });
@@ -186,11 +195,7 @@ describe("send_message guards", () => {
 
 describe("send_file guards", () => {
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
-    process.env.SEND_ACK_WAIT_MS = "50";
+    armSendMocks("50");
   });
 
   afterEach(() => {
@@ -232,12 +237,7 @@ describe("send_file guards", () => {
 /** Which line a send came from, at the tool boundary (instance identity). */
 describe("send results name the line", () => {
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
-    process.env.SEND_ACK_WAIT_MS = "10";
+    armSendMocks("10");
   });
 
   afterEach(() => {
@@ -300,12 +300,7 @@ describe("anti-ban guards", () => {
   }
 
   beforeEach(() => {
-    resetAckBus();
-    resetRecipientCache();
-    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
-    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
-    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
-    process.env.SEND_ACK_WAIT_MS = "0";
+    armSendMocks("0");
     // Opt back in to the cold-contact guard; keep pacing/typing off unless the
     // test is about them.
     delete process.env.SEND_COLD_CONTACT_GUARD;
