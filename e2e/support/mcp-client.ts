@@ -25,15 +25,23 @@ function parseBody(text: string, contentType: string): RpcResponse["message"] {
   return data ? JSON.parse(data) : null;
 }
 
+/**
+ * What a client sends requests with. The global `fetch` by default; a spec that talks to the
+ * servers through a reverse proxy passes its own (it must set the `Host` header, which `fetch`
+ * does not let a caller do).
+ */
+export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+
 /** One raw JSON-RPC POST; `token: undefined` sends no Authorization header at all. */
 export async function post(
   url: string,
   body: unknown,
   headers: Record<string, string | undefined> = {},
+  send: Fetcher = fetch,
 ): Promise<RpcResponse> {
   const sent: Record<string, string> = { "content-type": "application/json", accept: ACCEPT };
   for (const [name, value] of Object.entries(headers)) if (value !== undefined) sent[name] = value;
-  const res = await fetch(url, { method: "POST", headers: sent, body: JSON.stringify(body) });
+  const res = await send(url, { method: "POST", headers: sent, body: JSON.stringify(body) });
   return {
     status: res.status,
     sessionId: res.headers.get("mcp-session-id"),
@@ -59,24 +67,30 @@ interface ToolResult {
 
 export interface McpSession {
   serverInfo: { name: string; version: string };
+  /** The server `instructions` of the `initialize` result; empty when the server sent none. */
+  instructions: string;
   listTools(): Promise<string[]>;
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
 }
 
 /** Opens a session with the Bearer token; throws if the server does not accept it. */
-export async function openSession(url: string, token: string): Promise<McpSession> {
+export async function openSession(
+  url: string,
+  token: string,
+  send: Fetcher = fetch,
+): Promise<McpSession> {
   const auth = `Bearer ${token}`;
-  const init = await post(url, initializeRequest, { authorization: auth });
+  const init = await post(url, initializeRequest, { authorization: auth }, send);
   if (init.status !== 200 || !init.sessionId || !init.message?.result) {
     throw new Error(`initialize failed: HTTP ${init.status} ${JSON.stringify(init.message)}`);
   }
   const headers = { authorization: auth, "mcp-session-id": init.sessionId };
-  await post(url, { jsonrpc: "2.0", method: "notifications/initialized" }, headers);
+  await post(url, { jsonrpc: "2.0", method: "notifications/initialized" }, headers, send);
 
   let nextId = 2;
   const request = async (method: string, params?: unknown) => {
-    const res = await post(url, { jsonrpc: "2.0", id: nextId++, method, params }, headers);
+    const res = await post(url, { jsonrpc: "2.0", id: nextId++, method, params }, headers, send);
     if (res.status !== 200 || res.message?.error) {
       throw new Error(`${method} failed: HTTP ${res.status} ${JSON.stringify(res.message)}`);
     }
@@ -85,6 +99,7 @@ export async function openSession(url: string, token: string): Promise<McpSessio
 
   return {
     serverInfo: init.message.result.serverInfo,
+    instructions: init.message.result.instructions ?? "",
     async listTools() {
       const result = await request("tools/list");
       return (result.tools as Array<{ name: string }>).map((t) => t.name);
@@ -98,7 +113,7 @@ export async function openSession(url: string, token: string): Promise<McpSessio
       return { isError: Boolean(result.isError), text };
     },
     async close() {
-      await fetch(url, { method: "DELETE", headers });
+      await send(url, { method: "DELETE", headers });
     },
   };
 }

@@ -47,6 +47,8 @@ export interface E2eServer {
   qrUrl: string;
   /** Base URL of the upload server; `null` unless started with `s3: true`. */
   uploadUrl: string | null;
+  /** Base URL of the `follow_chat` stream server (the WebSocket lives at `/stream`). */
+  streamUrl: string;
   /** The Bearer token the MCP endpoint and `/upload` require. */
   token: string;
   /** The server's `WHATSAPP_MCP_DATA_DIR` (SQLite file at `data/whatsapp.db`). */
@@ -59,7 +61,7 @@ export interface E2eServer {
 }
 
 /** A TCP port that was free a moment ago. FastMCP cannot report an ephemeral port back. */
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   const probe = net.createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const { port } = probe.address() as net.AddressInfo;
@@ -79,6 +81,7 @@ interface Ready {
   mcp: number;
   qr: number;
   upload: number | null;
+  stream: number;
 }
 
 /** Resolves with the ports from the child's `{"e2e":"ready"}` line, or rejects with the evidence. */
@@ -177,6 +180,7 @@ export async function startServer(
     mcpUrl: `http://127.0.0.1:${ready.mcp}/mcp`,
     qrUrl: `http://127.0.0.1:${ready.qr}`,
     uploadUrl: ready.upload === null ? null : `http://127.0.0.1:${ready.upload}`,
+    streamUrl: `http://127.0.0.1:${ready.stream}`,
     token,
     dataDir,
     async stop() {
