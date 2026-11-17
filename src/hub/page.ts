@@ -62,7 +62,50 @@ function qrUrl(view: InstanceView): string {
   return `/_hub/qr/${view.label}.png?rev=${view.qr_rev}`;
 }
 
-function renderCard(view: InstanceView, target: string | null, t: Strings): string {
+/** Where an MCP client reaches the number `label` through this hub's public address. */
+export function mcpUrl(publicUrl: string, label: string): string {
+  return `${publicUrl}/${label}/mcp`;
+}
+
+/** The token is never known here: every snippet carries this placeholder in its place. */
+const TOKEN_PLACEHOLDER = "<token>";
+
+/** One titled snippet and the button that copies it. */
+function snippet(id: string, title: string, text: string, t: Strings): string {
+  return `<div class="snippet">
+<p class="snippet-title">${escapeHtml(title)}</p>
+<div class="snippet-box"><pre class="code" id="${escapeHtml(id)}">${escapeHtml(text)}</pre><button class="copy" type="button" data-copy="${escapeHtml(id)}">${escapeHtml(t.connect.copy)}</button></div>
+</div>`;
+}
+
+/** The collapsed "connect a client" block: the address and the two documented config forms. */
+function renderConnect(view: InstanceView, publicUrl: string, t: Strings): string {
+  const url = mcpUrl(publicUrl, view.label);
+  const name = `whatsapp-${view.label}`;
+  const entry = `${JSON.stringify(name)}: ${JSON.stringify(
+    { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_PLACEHOLDER}` } },
+    null,
+    2,
+  )}`;
+  const command = `claude mcp add --transport http ${name} ${url} --header "Authorization: Bearer ${TOKEN_PLACEHOLDER}"`;
+  const id = (part: string) => `snip-${view.label}-${part}`;
+  return `<details class="connect">
+<summary>${escapeHtml(t.connect.summary)}</summary>
+<div class="connect-body">
+${snippet(id("url"), t.connect.addressTitle, url, t)}
+${snippet(id("entry"), t.connect.jsonTitle, entry, t)}
+${snippet(id("command"), t.connect.commandTitle, command, t)}
+<p class="token-note">${escapeHtml(t.connect.tokenNote)}</p>
+</div>
+</details>`;
+}
+
+function renderCard(
+  view: InstanceView,
+  target: string | null,
+  publicUrl: string,
+  t: Strings,
+): string {
   const showQr = view.state === "waiting_qr" && view.qr_rev !== null;
   const label = escapeHtml(view.label);
   const classes = view.label === target ? "card is-target" : "card";
@@ -75,6 +118,7 @@ function renderCard(view: InstanceView, target: string | null, t: Strings): stri
 <p class="qr-help" data-role="qr-help">${escapeHtml(scanSentence(view, t))}</p>
 <div class="qr-frame"><img class="qr-img" data-role="qr-img" width="512" height="512" alt="${escapeHtml(fill(t.scan.imageAlt, { label: view.label }))}"${showQr ? ` src="${escapeHtml(qrUrl(view))}"` : ""}></div>
 </div>
+${renderConnect(view, publicUrl, t)}
 </article>`;
 }
 
@@ -85,6 +129,7 @@ function clientScript(t: Strings): string {
     durations: t.durations,
     numberEnding: t.numberEnding,
     scan: t.scan,
+    connect: { copy: t.connect.copy, copied: t.connect.copied, selected: t.connect.selected },
   }).replace(/</g, "\\u003c");
   return `(function () {
 var T = ${words};
@@ -119,6 +164,29 @@ function patch(card, v) {
   var src = "/_hub/qr/" + v.label + ".png?rev=" + v.qr_rev;
   if (img.getAttribute("src") !== src) img.setAttribute("src", src);
 }
+function say(button, text) {
+  button.textContent = text;
+  clearTimeout(button.resetTimer);
+  button.resetTimer = setTimeout(function () { button.textContent = T.connect.copy; }, 2000);
+}
+function selectText(node) {
+  var range = document.createRange();
+  range.selectNodeContents(node);
+  var selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+document.addEventListener("click", function (event) {
+  var button = event.target && event.target.closest ? event.target.closest("[data-copy]") : null;
+  var source = button && document.getElementById(button.getAttribute("data-copy"));
+  if (!source) return;
+  var fallback = function () { selectText(source); say(button, T.connect.selected); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(source.textContent).then(function () { say(button, T.connect.copied); }, fallback);
+  } else {
+    fallback();
+  }
+});
 var busy = false;
 var offline = document.getElementById("offline");
 function poll() {
@@ -174,6 +242,8 @@ ${options.script ? `<script nonce="${nonce}">${options.script}</script>` : ""}
 export interface HubPageOptions {
   nonce: string;
   views: InstanceView[];
+  /** The hub's own public origin: the MCP addresses on the cards are built from it. */
+  publicUrl: string;
   /** The label to highlight and scroll to, when the address was `/<label>`. */
   target?: string | null;
   /** A label that was asked for and does not exist; the page says so. */
@@ -191,7 +261,7 @@ export function renderHubPage(options: HubPageOptions): string {
 <p class="offline" id="offline" role="alert" hidden>${escapeHtml(t.offline)}</p>
 ${notice}
 <main class="cards">
-${options.views.map((view) => renderCard(view, options.target ?? null, t)).join("\n")}
+${options.views.map((view) => renderCard(view, options.target ?? null, options.publicUrl, t)).join("\n")}
 </main>
 </div>`;
   return document({

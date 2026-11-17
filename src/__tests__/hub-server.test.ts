@@ -12,6 +12,7 @@ import {
   startHubHarness,
   TEST_COOKIE_KEY,
   TEST_PIN,
+  TEST_PUBLIC_URL,
   withoutNonce,
 } from "./helpers/hub-harness.ts";
 
@@ -259,7 +260,11 @@ describe("headers on every response", () => {
 
     const nonce = /<style nonce="([^"]+)">/.exec(res.body)?.[1];
     expect(res.body).toContain(`<script nonce="${nonce}">`);
-    expect(res.body).not.toMatch(/https?:\/\//);
+    // The only addresses on the page are the hub's own, written out as text in the snippets.
+    const addresses = res.body.match(/https?:\/\/[^\s"&<]+/g) ?? [];
+    expect(addresses.length).toBeGreaterThan(0);
+    for (const address of addresses) expect(address.startsWith(TEST_PUBLIC_URL)).toBe(true);
+    expect(res.body).not.toMatch(/\s(?:src|href|action)="https?:/);
     expect(res.body).not.toMatch(/<link\b|@import|<iframe|<object|<embed/i);
     expect(res.body).not.toMatch(/\sstyle=/); // an inline style attribute would need unsafe-inline
     expect(res.body.match(/<script\b/g)).toHaveLength(1);
@@ -553,6 +558,22 @@ describe("with a session", () => {
     }
   });
 
+  it("shows each number's own MCP address and snippets, and no token", async () => {
+    const h = await startHub();
+    const cookie = await h.login();
+
+    const res = await request(h.url, "/", { cookie });
+
+    for (const label of ["personal", "empresa"]) {
+      expect(res.body).toContain(`${TEST_PUBLIC_URL}/${label}/mcp`);
+      expect(res.body).toContain(`claude mcp add --transport http whatsapp-${label} `);
+      expect(res.body).toContain(`&quot;whatsapp-${label}&quot;: {`);
+    }
+    expect(res.body).toContain("Connect a client");
+    expect(res.body.match(/Bearer &lt;token&gt;/g)).toHaveLength(4);
+    expect(res.body.match(/Bearer (?!&lt;token&gt;)/g)).toBeNull();
+  });
+
   it("shows the QR of the waiting number inline, wide enough to scan, with a sentence naming the phone", async () => {
     const h = await startHub();
     const cookie = await h.login();
@@ -640,6 +661,7 @@ describe("with a session", () => {
           state: "connected",
           down_for_s: null,
           qr_rev: null,
+          mcp_url: `${TEST_PUBLIC_URL}/personal/mcp`,
         },
         {
           label: "empresa",
@@ -648,6 +670,7 @@ describe("with a session", () => {
           state: "waiting_qr",
           down_for_s: null,
           qr_rev: rev,
+          mcp_url: `${TEST_PUBLIC_URL}/empresa/mcp`,
         },
       ],
     });

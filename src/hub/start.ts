@@ -43,7 +43,13 @@ export async function startHub(
   });
   const poller = createPoller({ instances: config.instances, now: options.now });
   const server = http.createServer(
-    createHubListener({ poller, gate, logger, t: stringsFor(config.lang) }),
+    createHubListener({
+      poller,
+      gate,
+      logger,
+      publicUrl: config.publicUrl,
+      t: stringsFor(config.lang),
+    }),
   );
   server.requestTimeout = REQUEST_TIMEOUT_MS;
 

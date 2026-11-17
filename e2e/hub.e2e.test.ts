@@ -117,6 +117,7 @@ describe("with a session", () => {
         state: "disconnected",
         down_for_s: null,
         qr_rev: null,
+        mcp_url: `${hub.url}/${label}/mcp`,
       })),
     });
   });

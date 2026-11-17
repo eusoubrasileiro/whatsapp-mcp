@@ -12,6 +12,8 @@ import type { NtfyMessage } from "../../ntfy.ts";
 
 export const TEST_PIN = "correct-test-pin";
 export const TEST_COOKIE_KEY = "test-signing-key-0123456789abcdef-xyz";
+/** What the harness's hub believes its own public address is (it really listens on loopback). */
+export const TEST_PUBLIC_URL = "https://hub.example.com";
 
 /** A hub's HTTP side, listening on loopback, with a clock the test moves. */
 export interface HubHarness {
@@ -61,6 +63,7 @@ export async function startHubHarness(options: HubHarnessOptions): Promise<HubHa
       poller,
       gate,
       logger: pino({ level: "silent" }),
+      publicUrl: TEST_PUBLIC_URL,
       t: stringsFor(options.lang ?? "en"),
     }),
   );

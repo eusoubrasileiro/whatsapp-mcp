@@ -7,7 +7,7 @@ import type {
 } from "node:http";
 import type { Logger } from "pino";
 import type { PinGate } from "./auth.ts";
-import { renderHubPage, renderLockedPage, renderPinForm } from "./page.ts";
+import { mcpUrl, renderHubPage, renderLockedPage, renderPinForm } from "./page.ts";
 import type { Poller } from "./poller.ts";
 import { en, type Strings } from "./strings.ts";
 
@@ -22,6 +22,8 @@ export interface HubListenerOptions {
   poller: Pick<Poller, "views" | "qrPng">;
   gate: PinGate;
   logger: Logger;
+  /** The hub's own public origin, without a trailing slash. The MCP addresses are built from it. */
+  publicUrl: string;
   /** The words of every page. Defaults to English. */
   t?: Strings;
 }
@@ -128,7 +130,7 @@ function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
 }
 
 export function createHubListener(options: HubListenerOptions): RequestListener {
-  const { poller, gate, logger } = options;
+  const { poller, gate, logger, publicUrl } = options;
   const t = options.t ?? en;
 
   async function login(req: IncomingMessage, res: ServerResponse, nonce: string): Promise<void> {
@@ -172,6 +174,7 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
         views,
         target: asked,
         unknownLabel: known ? null : asked,
+        publicUrl,
         t,
       }),
     );
@@ -204,7 +207,10 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
     if (method !== "GET") return notFound(res);
 
     if (path === "/_hub/status.json") {
-      const json = JSON.stringify({ instances: poller.views() });
+      const instances = poller
+        .views()
+        .map((view) => ({ ...view, mcp_url: mcpUrl(publicUrl, view.label) }));
+      const json = JSON.stringify({ instances });
       send(res, 200, { "content-type": "application/json; charset=utf-8" }, json);
       return;
     }
