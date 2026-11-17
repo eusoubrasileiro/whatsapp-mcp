@@ -66,22 +66,6 @@ export function getConnectionState(): ConnectionState {
 }
 
 /**
- * Logout and re-pair: unlinks the device so WhatsApp issues a new device ID
- * on the next QR scan, which triggers a full fresh history sync.
- * The connection-handler detects the `loggedOut` status code, wipes auth_info,
- * and reconnects — producing a new QR code.
- */
-export async function triggerRepair(logger: P.Logger): Promise<void> {
-  const sock = socketState.socket;
-  if (!sock) {
-    logger.warn("triggerRepair: no active socket");
-    return;
-  }
-  logger.info("triggerRepair: logging out to force re-pair with fresh history sync");
-  await sock.logout();
-}
-
-/**
  * Feed a parsed message's LID/phone-number twin identifiers into the alias
  * table so the chat resolves to a single canonical identity. Runs before
  * `storeMessage`, which then writes under the canonical JID.

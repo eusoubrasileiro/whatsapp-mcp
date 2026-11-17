@@ -70,7 +70,7 @@ describe("createQrServer", () => {
       await new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),
       );
-      server = createQrServer(makeSilentLogger(), () => state, undefined, options);
+      server = createQrServer(makeSilentLogger(), () => state, options);
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     }
@@ -286,38 +286,50 @@ describe("createQrServer", () => {
     expect(res.status).toBe(404);
   });
 
-  it("POST /repair calls onRepair and redirects to /", async () => {
-    let repaired = false;
-    await new Promise<void>((resolve, reject) =>
-      server.close((err) => (err ? reject(err) : resolve())),
-    );
-    server = createQrServer(
-      makeSilentLogger(),
-      () => state,
-      async () => {
-        repaired = true;
-      },
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-
-    const res = await fetch(`${baseUrl}/repair`, { method: "POST", redirect: "manual" });
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
-    expect(repaired).toBe(true);
+  it("answers POST /repair with 404 in every connection status", async () => {
+    const statuses: ConnectionState["status"][] = [
+      "connected",
+      "qr_pending",
+      "connecting",
+      "syncing",
+      "disconnected",
+    ];
+    for (const status of statuses) {
+      state.status = status;
+      const res = await fetch(`${baseUrl}/repair`, { method: "POST", redirect: "manual" });
+      expect(res.status, status).toBe(404);
+    }
   });
 
-  it("POST /repair without onRepair callback returns 204", async () => {
-    const res = await fetch(`${baseUrl}/repair`, { method: "POST", redirect: "manual" });
-    expect(res.status).toBe(204);
-  });
-
-  it("GET / shows Re-pair button when connected", async () => {
+  it("answers GET /repair with 404", async () => {
     state.status = "connected";
-    state.user = "5511900000002@s.whatsapp.net";
+    const res = await fetch(`${baseUrl}/repair`, { redirect: "manual" });
+    expect(res.status).toBe(404);
+  });
+
+  it("accepts no write on any path: every POST, PUT, PATCH and DELETE is 404 or 405", async () => {
+    state.status = "qr_pending";
+    state.qrCode = "2@abc123,def456,ghi789==,hex";
+    const paths = ["/", "/index.html", "/health", "/live", "/qr.png", "/repair"];
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      for (const path of paths) {
+        const res = await fetch(`${baseUrl}${path}`, { method, redirect: "manual" });
+        expect([404, 405], `${method} ${path}`).toContain(res.status);
+      }
+    }
+  });
+
+  it("GET / renders a read-only connected page: no form, no button, no re-pair wording", async () => {
+    state.status = "connected";
+    state.user = `5511900000002<b>&"'@s.whatsapp.net`;
     const res = await fetch(`${baseUrl}/`);
     const body = await res.text();
-    expect(body).toContain('action="/repair"');
-    expect(body).toContain("Re-pair device");
+    expect(body).toContain("Connected");
+    expect(body).toContain("5511900000002&lt;b&gt;&amp;&quot;&#39;@s.whatsapp.net");
+    expect(body).not.toContain("<b>");
+    expect(body).not.toMatch(/<form/i);
+    expect(body).not.toMatch(/<button/i);
+    expect(body).not.toMatch(/method="post"/i);
+    expect(body).not.toMatch(/re-?pair/i);
   });
 });
