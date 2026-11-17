@@ -1,17 +1,17 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
-import type { IncomingHttpHeaders } from "node:http";
+import http, { type IncomingHttpHeaders } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { identityParagraph } from "../src/instance-identity.ts";
-import { type RenderedService, renderCompose } from "./support/compose.ts";
+import { type RenderedCompose, type RenderedService, renderCompose } from "./support/compose.ts";
 import { type E2eHub, startHub } from "./support/hub.ts";
 import { type Fetcher, initializeRequest, openSession, post } from "./support/mcp-client.ts";
-import { DEV_S3_URL, devS3 } from "./support/s3.ts";
 import { type E2eServer, startServer } from "./support/server.ts";
+import { type E2eStore, startStore } from "./support/store.ts";
 import {
   type DynamicConfig,
   dynamicConfigFromLabels,
@@ -22,18 +22,20 @@ import {
 } from "./support/traefik.ts";
 
 /**
- * Two WhatsApp numbers and the hub page behind ONE hostname, on the real proxy.
+ * Two WhatsApp numbers, each with its OWN media store, and the hub page behind ONE hostname,
+ * on the real proxy.
  *
- * Production routes everything by the Traefik labels in `deploy/docker-compose.yaml` and
- * `deploy/docker-compose.instance.yaml`. This spec renders those files with the real
- * `docker compose config`, converts the rendered labels mechanically into a configuration for
- * the same Traefik version production runs (`support/traefik.ts`; no rule, priority or name is
- * written here), starts two real servers and the real hub behind it, and checks what a client
- * of https://wa.e2e.test sees. WhatsApp is never connected, and no spec calls
- * `get_connection_status`.
+ * Production routes everything by the Traefik labels in `deploy/docker-compose.yaml` (the hub)
+ * and `deploy/docker-compose.instance.yaml` (a number and its store). This spec renders those
+ * files with the real `docker compose config`, converts the rendered labels mechanically into a
+ * configuration for the same Traefik version production runs (`support/traefik.ts`; no rule,
+ * priority or name is written here), starts two real stores from the rendered `minio` service
+ * (`support/store.ts`, each with its own pair), two real servers and the real hub behind it, and
+ * checks what a client of https://wa.e2e.test sees. WhatsApp is never connected, and no spec
+ * calls `get_connection_status`.
  *
- * Needs Docker with the image `traefik:v3.6.6` and the dev RustFS (`pnpm test:e2e:deps`); it
- * fails, never skips, without them.
+ * Needs Docker with the images `traefik:v3.6.6` and `rustfs/rustfs:latest` (nothing is pulled);
+ * it fails, never skips, without them.
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -53,6 +55,10 @@ const DESCRIPTION: Record<Label, string> = {
 const TENANT: Record<Label, string> = { pessoal: "default", empresa: "empresa" };
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PIN_FORM = 'action="/_hub/login"';
+/** A bucket of its own in a store, readable by anyone: the target a path traversal would aim at. */
+const NEIGHBOUR_BUCKET = "neighbour-e2e";
+const MIB = 1024 * 1024;
+const REFUSED = [403, 404];
 
 const secret = (bytes = 16) => randomBytes(bytes).toString("hex");
 const url = (pathAndQuery: string) => `https://${HOST}${pathAndQuery}`;
@@ -193,6 +199,8 @@ describe("the label converter", () => {
 describe("two numbers and the hub behind one host, on Traefik", () => {
   const pin = secret(6);
   const servers = {} as Record<Label, E2eServer>;
+  const stores = {} as Record<Label, E2eStore>;
+  const compose = {} as Record<Label, RenderedCompose>;
   const rendered = {} as Record<Label, RenderedService>;
   const uploads = {} as Record<Label, { key: string; url: string; bytes: Buffer }>;
   /** Everything the hub (or the proxy itself) answered, for the last test. */
@@ -200,15 +208,14 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
   let dataDirOfPessoal: string;
   let hub: E2eHub;
   let hubService: RenderedService;
-  let mediaService: RenderedService;
   let config: DynamicConfig;
   let proxy: TraefikProxy;
   let bucket: string;
 
   const viaProxy: Fetcher = (target, init) => proxy.fetch(target, init);
 
-  function renderInstance(label: Label, extra: Record<string, string> = {}): RenderedService {
-    const cfg = renderCompose({
+  function renderInstance(label: Label, extra: Record<string, string> = {}): RenderedCompose {
+    return renderCompose({
       file: INSTANCE_FILE,
       env: {
         COMPOSE_FILE: "docker-compose.instance.yaml",
@@ -222,7 +229,18 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
         ...extra,
       },
     });
-    return only(cfg.services, "whatsapp-mcp-instance");
+  }
+
+  /** Where a server of this harness finds its own number's store: loopback, that store's pair. */
+  function storeEnv(label: Label): Record<string, string> {
+    const env = rendered[label].environment ?? {};
+    return {
+      S3_ENDPOINT: "127.0.0.1",
+      S3_PORT: String(stores[label].port),
+      S3_USE_SSL: "false",
+      S3_ACCESS_KEY: env.S3_ACCESS_KEY as string,
+      S3_SECRET_KEY: env.S3_SECRET_KEY as string,
+    };
   }
 
   /** Container port (from the instance's own env) to the local process that stands in for it. */
@@ -242,22 +260,30 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
       file: SHARED_FILE,
       env: {
         PUBLIC_DOMAIN: HOST,
-        MINIO_ROOT_USER: secret(),
-        MINIO_ROOT_PASSWORD: secret(),
         HUB_PIN: pin,
         HUB_COOKIE_KEY: secret(32),
         HUB_INSTANCES: LABELS.join(","),
       },
     });
     hubService = only(shared.services, "hub");
-    mediaService = only(shared.services, "minio");
     // The personal number as it will be deployed: its old data directory and media prefix.
-    rendered.pessoal = renderInstance("pessoal", {
+    compose.pessoal = renderInstance("pessoal", {
       INSTANCE_DATA_DIR: dataDirOfPessoal,
       TENANT_ID: "default",
     });
-    rendered.empresa = renderInstance("empresa");
+    compose.empresa = renderInstance("empresa");
+    for (const label of LABELS)
+      rendered[label] = only(compose[label].services, "whatsapp-mcp-instance");
     bucket = rendered.pessoal.environment?.S3_BUCKET as string;
+
+    // Each number's store first (the server ensures its bucket at start), from the rendered
+    // service and that number's own pair.
+    const storesUp = await Promise.allSettled(
+      LABELS.map(async (label) => {
+        stores[label] = await startStore(compose[label]);
+      }),
+    );
+    for (const result of storesUp) if (result.status === "rejected") throw result.reason;
 
     const started = await Promise.allSettled(
       LABELS.map(async (label) => {
@@ -265,7 +291,7 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
         servers[label] = await startServer({
           s3: true,
           dataDir,
-          env: pick(rendered[label], APP_SETTINGS),
+          env: { ...pick(rendered[label], APP_SETTINGS), ...storeEnv(label) },
         });
       }),
     );
@@ -279,29 +305,27 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
     });
 
     const routed: RoutedService[] = [
-      { service: mediaService, ports: { "9000": DEV_S3_URL } },
       { service: hubService, ports: { "39002": hub.url } },
-      ...LABELS.map((label) => ({
-        service: rendered[label],
-        ports: portsOf(rendered[label], servers[label]),
-      })),
+      ...LABELS.flatMap((label) => [
+        { service: rendered[label], ports: portsOf(rendered[label], servers[label]) },
+        { service: only(compose[label].services, "minio"), ports: { "9000": stores[label].url } },
+      ]),
     ];
     config = dynamicConfigFromLabels(routed);
     proxy = await startTraefik(config);
-  });
+  }, 180_000);
 
   afterAll(async () => {
-    const keys = Object.values(uploads).map((upload) => upload.key);
     const results = await Promise.allSettled([
       proxy?.stop(),
       hub?.stop(),
       ...Object.values(servers).map((server) => server.stop()),
-      keys.length > 0 ? devS3().removeObjects(bucket, keys) : undefined,
+      ...Object.values(stores).map((store) => store.stop()),
     ]);
     fs.rmSync(dataDirOfPessoal, { recursive: true, force: true });
     const failed = results.find((result) => result.status === "rejected");
     if (failed) throw failed.reason;
-  });
+  }, 90_000);
 
   /** A request the hub is expected to answer: recorded for the leak check. */
   async function hubAnswer(pathAndQuery: string, init?: RequestInit) {
@@ -329,8 +353,8 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
       const written = Object.entries(config.http.routers);
       const loaded = (await proxy.routers()).filter((router) => router.provider === "file");
 
-      // Per number: mcp, upload, stream; shared: the media route and the hub.
-      expect(written).toHaveLength(LABELS.length * 3 + 2);
+      // Per number: mcp, upload, stream and its own media route; shared: the hub.
+      expect(written).toHaveLength(LABELS.length * 4 + 1);
       expect(loaded.map((router) => router.name).sort()).toEqual(
         written.map(([name]) => `${name}@file`).sort(),
       );
@@ -351,7 +375,9 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
 
       for (const label of LABELS) expect(targets).not.toContain(servers[label].qrUrl);
       expect(targets).toContain(hub.url);
-      expect(targets).toContain(DEV_S3_URL);
+      // Each number's media route leads to that number's own store, and to no other.
+      for (const label of LABELS) expect(targets).toContain(stores[label].url);
+      expect(new Set(targets).size).toBe(targets.length);
     });
   });
 
@@ -419,8 +445,28 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
     });
   });
 
-  describe("3. media", () => {
-    it("serves the object a number uploaded through the shared route, byte for byte", async () => {
+  describe("3. media: each label reaches its own store, and only that one", () => {
+    /** One GET with the path exactly as written: `fetch` would fold `..` and `%2e%2e` away. */
+    function rawGet(target: string): Promise<{ status: number; body: Buffer }> {
+      return new Promise((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port: proxy.port, path: target, headers: { host: HOST } },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () =>
+              resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks) }),
+            );
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    }
+
+    const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+    it("serves the object a number uploaded through its own route, byte for byte", async () => {
       for (const label of LABELS) {
         const upload = uploads[label];
         expect(upload.url.startsWith(url(`/${label}/media/`))).toBe(true);
@@ -433,33 +479,101 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
       }
     });
 
-    it("rewrites into the bucket the servers write to, with a single $ in the replacement", () => {
-      const rewrites = Object.values(config.http.middlewares).filter(
-        (middleware) => "replacePathRegex" in middleware,
-      );
+    it.each(LABELS)(
+      "%s: the same path under the other label answers 403 or 404, never the bytes",
+      async (label) => {
+        const res = await proxy.fetch(url(`/${OTHER[label]}/media/${uploads[label].key}`));
 
-      expect(rewrites).toHaveLength(1);
-      expect(rewrites[0]).toMatchObject({
-        replacePathRegex: { replacement: `/${bucket}/$1` },
-      });
-    });
-
-    it.each(["/empresa/media/", "/empresa/media/?list-type=2"])(
-      "answers %s with the hub's PIN form, never with the bucket",
-      async (target) => {
-        const res = await hubAnswer(target);
-
-        expect(res.status).toBe(401);
-        expect(res.body).toContain(PIN_FORM);
-        expect(res.body).not.toContain(uploads.empresa.key);
-        expect(res.body).not.toContain("ListBucketResult");
-        expect(res.body).not.toContain(bucket);
+        expect(REFUSED).toContain(res.status);
+        expect(Buffer.from(await res.arrayBuffer()).equals(uploads[label].bytes)).toBe(false);
       },
     );
 
-    it.each(["/empresa/media/t/", "/empresa/media/t/?list-type=2", "/empresa/media/t/empresa/"])(
-      "lets %s reach the bucket, which refuses to list anything",
-      async (target) => {
+    it.each(LABELS)(
+      "%s: an object written straight into its store is served on its label and on no other",
+      async (label) => {
+        const key = `t/${TENANT[label]}/direct-${label}.png`;
+        const bytes = Buffer.concat([PNG_MAGIC, randomBytes(256)]);
+        await stores[label].client().putObject(bucket, key, bytes, bytes.length, {
+          "Content-Type": "image/png",
+        });
+
+        const own = await proxy.fetch(url(`/${label}/media/${key}`));
+        const other = await proxy.fetch(url(`/${OTHER[label]}/media/${key}`));
+
+        expect(own.status).toBe(200);
+        expect(Buffer.from(await own.arrayBuffer()).equals(bytes)).toBe(true);
+        expect(REFUSED).toContain(other.status);
+        expect(Buffer.from(await other.arrayBuffer()).equals(bytes)).toBe(false);
+      },
+    );
+
+    it("keeps one key's bytes apart when both stores hold that key", async () => {
+      const key = "t/shared/same-key.bin";
+      const written = {} as Record<Label, Buffer>;
+      for (const label of LABELS) {
+        written[label] = randomBytes(512);
+        await stores[label].client().putObject(bucket, key, written[label], written[label].length);
+      }
+
+      for (const label of LABELS) {
+        const res = await proxy.fetch(url(`/${label}/media/${key}`));
+        const got = Buffer.from(await res.arrayBuffer());
+
+        expect(res.status).toBe(200);
+        expect(sha(got)).toBe(sha(written[label]));
+        expect(sha(got)).not.toBe(sha(written[OTHER[label]]));
+      }
+    });
+
+    it.each(LABELS)(
+      "%s: its store refuses the other number's pair on a signed call, and takes its own",
+      async (label) => {
+        const theirs = stores[OTHER[label]];
+
+        await expect(
+          stores[label]
+            .client({ accessKey: theirs.accessKey, secretKey: theirs.secretKey })
+            .bucketExists(bucket),
+        ).rejects.toMatchObject({ code: "InvalidAccessKeyId" });
+        expect(await stores[label].client().bucketExists(bucket)).toBe(true);
+      },
+    );
+
+    it("rewrites into the bucket the servers write to, one rule per label, with a single $", () => {
+      const rewrites = Object.entries(config.http.middlewares).filter(
+        ([, middleware]) => "replacePathRegex" in middleware,
+      );
+
+      expect(rewrites.map(([name]) => name).sort()).toEqual(
+        LABELS.map((label) => `wa-${label}-media-rewrite`).sort(),
+      );
+      for (const label of LABELS) {
+        expect(config.http.middlewares[`wa-${label}-media-rewrite`]).toEqual({
+          replacePathRegex: { regex: `^/${label}/media/(.*)`, replacement: `/${bucket}/$1` },
+        });
+      }
+    });
+
+    describe.each(LABELS)("%s: listing stays closed", (label) => {
+      it.each([`/${label}/media/`, `/${label}/media/?list-type=2`])(
+        "answers %s with the hub's PIN form, never with the bucket",
+        async (target) => {
+          const res = await hubAnswer(target);
+
+          expect(res.status).toBe(401);
+          expect(res.body).toContain(PIN_FORM);
+          expect(res.body).not.toContain(uploads[label].key);
+          expect(res.body).not.toContain("ListBucketResult");
+          expect(res.body).not.toContain(bucket);
+        },
+      );
+
+      it.each([
+        `/${label}/media/t/`,
+        `/${label}/media/t/?list-type=2`,
+        `/${label}/media/t/${TENANT[label]}/`,
+      ])("lets %s reach the bucket, which refuses to list anything", async (target) => {
         const res = await proxy.fetch(url(target));
         const body = await res.text();
 
@@ -467,9 +581,68 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
         expect(body).toContain("<Error>");
         expect(body).not.toContain("ListBucketResult");
         expect(body).not.toContain("<Key>");
-        expect(body).not.toContain(uploads.empresa.key);
+        expect(body).not.toContain(uploads[label].key);
+      });
+    });
+
+    it.each(["/outro/media/t/default/a.png", "/outro/media/", "/media/t/default/a.png"])(
+      "answers %s, a label no number has, with the hub's PIN form",
+      async (target) => {
+        const res = await hubAnswer(target);
+
+        expect(res.status).toBe(401);
+        expect(res.body).toContain(PIN_FORM);
       },
     );
+
+    describe.each(LABELS)("%s: the path cannot be walked out of its bucket", (label) => {
+      const hidden = randomBytes(24).toString("hex");
+
+      beforeAll(async () => {
+        const client = stores[label].client();
+        await client.makeBucket(NEIGHBOUR_BUCKET, "us-east-1");
+        await client.setBucketPolicy(
+          NEIGHBOUR_BUCKET,
+          JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+              {
+                Effect: "Allow",
+                Principal: "*",
+                Action: "s3:GetObject",
+                Resource: `arn:aws:s3:::${NEIGHBOUR_BUCKET}/*`,
+              },
+            ],
+          }),
+        );
+        await client.putObject(NEIGHBOUR_BUCKET, "public.txt", Buffer.from(hidden));
+      });
+
+      it("has a neighbour bucket that anyone can read straight from the store, as the control", async () => {
+        const res = await fetch(`${stores[label].url}/${NEIGHBOUR_BUCKET}/public.txt`);
+
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe(hidden);
+      });
+
+      // The proxy folds `..` and `%2e%2e` away (the path then matches no media route and falls
+      // through to the hub) and refuses an encoded slash with 400; whichever it does, the
+      // neighbour's bytes must never come back.
+      const walks = [
+        `/${label}/media/t/../../${NEIGHBOUR_BUCKET}/public.txt`,
+        `/${label}/media/t/%2e%2e/%2e%2e/${NEIGHBOUR_BUCKET}/public.txt`,
+        `/${label}/media/t/..%2f..%2f${NEIGHBOUR_BUCKET}/public.txt`,
+        `/${label}/media/t/%2e%2e%2f%2e%2e%2f${NEIGHBOUR_BUCKET}/public.txt`,
+        `/${label}/media/t//../../${NEIGHBOUR_BUCKET}/public.txt`,
+      ];
+
+      it.each(walks)("never lets %s read it through the proxy", async (target) => {
+        const res = await rawGet(target);
+
+        expect(res.body.toString("utf8")).not.toContain(hidden);
+        expect([400, 401, 403, 404]).toContain(res.status);
+      });
+    });
   });
 
   describe("4. stream", () => {
@@ -722,8 +895,63 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
       for (const label of LABELS) {
         expect(everything).not.toContain(servers[label].token);
         expect(longestShared(everything, FAKE_NUMBER[label])).toBeLessThanOrEqual(4);
+        expect(everything).not.toContain(stores[label].accessKey);
+        expect(everything).not.toContain(stores[label].secretKey);
       }
       expect(everything).not.toContain(pin);
     });
+  });
+
+  describe("9. each store keeps to its 150 MiB ceiling", () => {
+    const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+    it.each(LABELS)(
+      "%s: the store the rendered service describes is capped and healthy",
+      (label) => {
+        expect(stores[label].inspect()).toMatchObject({
+          memory: 157286400,
+          health: "healthy",
+          running: true,
+          oomKilled: false,
+          restarts: 0,
+        });
+      },
+    );
+
+    it("takes four 16 MiB objects in parallel on each store, hands them back identical, and survives", async () => {
+      const objects = LABELS.flatMap((label) =>
+        [0, 1, 2, 3].map((n) => ({
+          label,
+          key: `t/e2e-ceiling/${n}.bin`,
+          bytes: randomBytes(16 * MIB),
+        })),
+      );
+
+      await Promise.all(
+        objects.map(({ label, key, bytes }) =>
+          stores[label].client().putObject(bucket, key, bytes, bytes.length),
+        ),
+      );
+      const back = await Promise.all(
+        objects.map(async ({ label, key }) => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of await stores[label].client().getObject(bucket, key)) {
+            chunks.push(chunk);
+          }
+          return Buffer.concat(chunks);
+        }),
+      );
+
+      expect(back.map(sha)).toEqual(objects.map(({ bytes }) => sha(bytes)));
+      for (const label of LABELS) {
+        expect(stores[label].inspect()).toMatchObject({
+          memory: 157286400,
+          health: "healthy",
+          running: true,
+          oomKilled: false,
+          restarts: 0,
+        });
+      }
+    }, 120_000);
   });
 });
