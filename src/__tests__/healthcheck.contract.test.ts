@@ -15,13 +15,15 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** The `healthcheck:` block of the whatsapp-mcp service in the deploy compose file. */
+/** The `healthcheck:` block of the number's service in the per-number deploy compose file. */
 function composeHealthcheck(): string {
-  const text = readFileSync(join(repoRoot, "deploy", "docker-compose.yaml"), "utf8");
-  const service = text.split(/^ {2}whatsapp-mcp:\n/m)[1]?.split(/^ {2}\S/m)[0];
-  if (!service) throw new Error("deploy/docker-compose.yaml has no whatsapp-mcp service");
+  const text = readFileSync(join(repoRoot, "deploy", "docker-compose.instance.yaml"), "utf8");
+  const service = text.split(/^ {2}whatsapp-mcp-instance:\n/m)[1]?.split(/^ {2}\S/m)[0];
+  if (!service) {
+    throw new Error("deploy/docker-compose.instance.yaml has no whatsapp-mcp-instance service");
+  }
   const block = service.match(/^ {4}healthcheck:\n((?: {6,}.*\n?)+)/m);
-  if (!block) throw new Error("whatsapp-mcp service has no healthcheck: override");
+  if (!block) throw new Error("whatsapp-mcp-instance service has no healthcheck: override");
   return block[1];
 }
 
@@ -40,7 +42,7 @@ describe("Docker healthcheck", () => {
     expect(check).not.toMatch(/\/health\b/);
   });
 
-  it("deploy compose overrides the whatsapp-mcp healthcheck to probe /live", () => {
+  it("deploy compose overrides the number's healthcheck to probe /live", () => {
     const check = composeHealthcheck();
     expect(check).toContain("39002/live");
     expect(check).not.toMatch(/\/health\b/);

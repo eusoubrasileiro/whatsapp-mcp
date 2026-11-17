@@ -16,6 +16,24 @@ const ALLOW_COLD_DESCRIPTION =
   "On an instance configured with SEND_COLD_OVERRIDE=deny this parameter is IGNORED and " +
   "the send is still refused; the refusal says so. Default false.";
 
+const UPLOAD_PLACEHOLDER = "<MCP host>/upload";
+
+/**
+ * Where an agent POSTs bytes before `send_file`: the operator's UPLOAD_PUBLIC_URL when it is an
+ * http(s) URL, otherwise the generic placeholder the hint always used. A deploy that serves each
+ * number under a path (https://host/<label>/upload) cannot be guessed from "<MCP host>".
+ */
+function uploadTarget(configured: string | undefined): string {
+  const value = configured?.trim();
+  if (!value) return UPLOAD_PLACEHOLDER;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:" ? value : UPLOAD_PLACEHOLDER;
+  } catch {
+    return UPLOAD_PLACEHOLDER;
+  }
+}
+
 /**
  * The account's own JIDs — phone-number (`user.id`) and LID (`user.lid`).
  *
@@ -31,6 +49,7 @@ function ownJidsOf(socket: ReturnType<typeof assertSocketActive>): string[] {
 export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger, waLogger } = deps;
   const identity = deps.identity ?? null;
+  const uploadTo = uploadTarget(process.env.UPLOAD_PUBLIC_URL);
 
   /**
    * Verify the recipient exists and upgrade it to its canonical LID.
@@ -101,7 +120,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
       file_path: z
         .string()
         .describe(
-          "http(s) URL, base64 data: URL, or server-side absolute path. To send a local host file with a remote MCP, upload it to <MCP host>/upload first and pass the returned URL. Max 16 MB.",
+          `http(s) URL, base64 data: URL, or server-side absolute path. To send a local host file with a remote MCP, upload it to ${uploadTo} first and pass the returned URL. Max 16 MB.`,
         ),
       caption: z.string().optional().describe("Optional caption for images/videos/documents"),
       type: z

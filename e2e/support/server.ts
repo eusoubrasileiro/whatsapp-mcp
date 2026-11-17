@@ -51,7 +51,10 @@ export interface E2eServer {
   token: string;
   /** The server's `WHATSAPP_MCP_DATA_DIR` (SQLite file at `data/whatsapp.db`). */
   dataDir: string;
-  /** Terminates the server and removes its data dir; throws if it tried to leave loopback. */
+  /**
+   * Terminates the server and removes its data dir (unless the caller supplied it); throws if it
+   * tried to leave loopback.
+   */
   stop(): Promise<void>;
 }
 
@@ -112,10 +115,14 @@ function whenReady(child: ChildProcess, dataDir: string, stderr: () => string): 
 
 /**
  * Boots one server. With `s3: true` it also needs the dev RustFS, and fails (never skips)
- * when that is not reachable.
+ * when that is not reachable. `env` is merged last into the child's environment. `dataDir`
+ * replaces the temp directory: a directory the caller supplies is never deleted by `stop()`.
  */
-export async function startServer(options: { s3?: boolean } = {}): Promise<E2eServer> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-mcp-e2e-"));
+export async function startServer(
+  options: { s3?: boolean; env?: Record<string, string>; dataDir?: string } = {},
+): Promise<E2eServer> {
+  const ownsDataDir = options.dataDir === undefined;
+  const dataDir = options.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-mcp-e2e-"));
   const token = randomBytes(16).toString("hex");
   const mcpPort = await freePort();
 
@@ -144,6 +151,7 @@ export async function startServer(options: { s3?: boolean } = {}): Promise<E2eSe
         STREAM_SERVER_PORT: "0",
         TENANT_ID: `e2e-${randomBytes(4).toString("hex")}`,
         ...(options.s3 ? S3_ENV : {}),
+        ...options.env,
       },
       stdio: ["pipe", "pipe", "pipe"], // stdin stays open: see serve.ts
     },
@@ -161,7 +169,7 @@ export async function startServer(options: { s3?: boolean } = {}): Promise<E2eSe
   try {
     ready = await whenReady(child, dataDir, () => stderrText);
   } catch (err) {
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    if (ownsDataDir) fs.rmSync(dataDir, { recursive: true, force: true });
     throw options.s3 ? new Error(`${(err as Error).message}\n${RUSTFS_HINT}`) : err;
   }
 
@@ -178,7 +186,7 @@ export async function startServer(options: { s3?: boolean } = {}): Promise<E2eSe
         await exited;
         clearTimeout(killer);
       }
-      fs.rmSync(dataDir, { recursive: true, force: true });
+      if (ownsDataDir) fs.rmSync(dataDir, { recursive: true, force: true });
       if (
         stderrText.includes("E2E_EGRESS_BLOCKED") ||
         child.exitCode === EGRESS_BLOCKED_EXIT_CODE
