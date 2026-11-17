@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { CLOCK_RESETTING_STATUSES, LIVE_STATUSES } from "./connection-status.ts";
 import { readNonNegativeNumber } from "./env-config.ts";
 import { createRouter, type Route } from "./http-router.ts";
+import { type InstanceIdentity, phoneLast4 } from "./instance-identity.ts";
 
 function readGraceSeconds(): number {
   return readNonNegativeNumber(process.env.HEALTH_DISCONNECTED_GRACE_S, 300);
@@ -19,9 +20,26 @@ export type QrServerOptions = {
    * entirely, so an operator can stop a restart loop without a redeploy.
    */
   disconnectedGraceS?: number;
+  /**
+   * Which WhatsApp line this server is. When set, the page names it and `/health` gains
+   * `instance` and `phone_last4`; when unset or `null` both are byte-identical to before.
+   */
+  identity?: InstanceIdentity | null;
+  /**
+   * Live accessor for the paired account's own phone-number JID (`socket.user.id`), the source
+   * of `phone_last4` while a user is paired. Without it `phone_last4` can only come from
+   * `EXPECTED_WA_NUMBER`.
+   */
+  pairedUserId?: () => string | null | undefined;
 };
 
-function renderHtml(state: ConnectionState): string {
+/** What the page shows about the line, on top of the connection state. */
+type QrPageOptions = {
+  lineLabel?: string;
+  lineDescription?: string;
+};
+
+function renderHtml(state: ConnectionState, page: QrPageOptions = {}): string {
   const { status, user, qrCode } = state;
 
   let body: string;
@@ -37,13 +55,20 @@ function renderHtml(state: ConnectionState): string {
     body = `<h1>disconnected</h1><p>Waiting for WhatsApp socket to initialize...</p>`;
   }
 
+  const titleLine = page.lineLabel ? ` [${escapeHtml(page.lineLabel)}]` : "";
+  const lineHeader = page.lineLabel
+    ? `<p><strong>WhatsApp line: ${escapeHtml(page.lineLabel)}</strong>${
+        page.lineDescription ? `<br /><small>${escapeHtml(page.lineDescription)}</small>` : ""
+      }</p>\n`
+    : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta http-equiv="refresh" content="3" />
-<title>WhatsApp MCP — ${status}</title>
+<title>WhatsApp MCP${titleLine} — ${status}</title>
 <style>
 body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 3rem auto; padding: 0 1rem; text-align: center; }
 img { margin: 1rem auto; display: block; border: 1px solid #eee; padding: 0.5rem; background: #fff; }
@@ -51,7 +76,7 @@ code { background: #f3f3f3; padding: 0.1rem 0.3rem; border-radius: 3px; }
 </style>
 </head>
 <body>
-${body}
+${lineHeader}${body}
 <hr />
 <small>status: ${status}</small>
 </body>
@@ -77,6 +102,14 @@ function escapeHtml(s: string): string {
   });
 }
 
+/**
+ * The `/health` keys that name the line. `phone_last4` is `undefined` when no number is known,
+ * and `JSON.stringify` drops an `undefined` value, so the key is then absent from the body.
+ */
+function lineFields(identity: InstanceIdentity, pairedUserId: string | null | undefined) {
+  return { instance: { ...identity }, phone_last4: phoneLast4(pairedUserId) };
+}
+
 export function createQrServer(
   logger: Logger,
   getState: () => ConnectionState,
@@ -84,6 +117,10 @@ export function createQrServer(
 ): Server {
   const now = options.now ?? (() => Date.now());
   const graceS = options.disconnectedGraceS ?? readGraceSeconds();
+  const identity = options.identity ?? null;
+  const page: QrPageOptions = identity
+    ? { lineLabel: identity.label, lineDescription: identity.description }
+    : {};
 
   /**
    * When the socket was last observed in a clock-resetting status. Sampled on
@@ -116,6 +153,8 @@ export function createQrServer(
           syncProgress: state.syncProgress,
           disconnected_for_s: disconnectedForS,
           grace_s: graceS,
+          // Public endpoint: the line's name, and the LAST FOUR digits of its number, never more.
+          ...(identity ? lineFields(identity, options.pairedUserId?.()) : {}),
         });
         // Informational only: 503 flags a wedged socket to humans and external
         // monitors. It does NOT restart anything — plain Docker never restarts an
@@ -169,7 +208,7 @@ export function createQrServer(
       path: "/",
       handler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderHtml(getState()));
+        res.end(renderHtml(getState(), page));
       },
     },
     {
@@ -177,7 +216,7 @@ export function createQrServer(
       path: "/index.html",
       handler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderHtml(getState()));
+        res.end(renderHtml(getState(), page));
       },
     },
   ];

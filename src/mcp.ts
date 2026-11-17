@@ -1,6 +1,7 @@
 import { FastMCP } from "fastmcp";
 import type { Logger } from "pino";
 
+import { type InstanceIdentity, identityParagraph } from "./instance-identity.ts";
 import { registerActionsTools } from "./mcp/tools/actions.ts";
 import { registerChatsTools } from "./mcp/tools/chats.ts";
 import { registerConnectionTools } from "./mcp/tools/connection.ts";
@@ -35,7 +36,21 @@ Do NOT loop wait_for_messages to "stay present" — each empty return wastes a t
 blocks all other work. For standing presence use follow_chat.
 `.trim();
 
-export async function startMcpServer(mcpLogger: Logger, waLogger: Logger): Promise<void> {
+/**
+ * The instructions this instance sends. With an identity, its paragraph opens them (one blank
+ * line, then the text above unchanged); without one they are exactly the text above.
+ */
+export function buildServerInstructions(identity: InstanceIdentity | null): string {
+  return identity
+    ? `${identityParagraph(identity)}\n\n${SERVER_INSTRUCTIONS}`
+    : SERVER_INSTRUCTIONS;
+}
+
+export async function startMcpServer(
+  mcpLogger: Logger,
+  waLogger: Logger,
+  identity: InstanceIdentity | null = null,
+): Promise<void> {
   mcpLogger.info("Initializing FastMCP server...");
 
   const authToken = process.env.MCP_AUTH_TOKEN;
@@ -48,7 +63,7 @@ export async function startMcpServer(mcpLogger: Logger, waLogger: Logger): Promi
   const server = new FastMCP({
     name: "whatsapp-baileys-ts",
     version: "0.3.0",
-    instructions: SERVER_INSTRUCTIONS,
+    instructions: buildServerInstructions(identity),
     authenticate: async (request) => {
       // stdio transport passes undefined — trust local invocation.
       if (!request) return {};
@@ -70,7 +85,7 @@ export async function startMcpServer(mcpLogger: Logger, waLogger: Logger): Promi
     },
   });
 
-  const deps: ToolDeps = { mcpLogger, waLogger };
+  const deps: ToolDeps = { mcpLogger, waLogger, identity };
 
   // Per-domain tool registries. Each registry owns the tools listed in its
   // CLAUDE.md section: name, schema, execute body — nothing more.

@@ -1,6 +1,6 @@
 import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createNtfy, resolveNtfyConfig } from "../ntfy.ts";
+import { createNtfy, type NtfyConfig, type NtfyMessage, resolveNtfyConfig } from "../ntfy.ts";
 
 function makeSilentLogger(): Logger {
   return pino({ level: "silent" });
@@ -131,6 +131,63 @@ describe("createNtfy", () => {
     expect(logger.debug).not.toHaveBeenCalled();
   });
 
+  /** Sends one push through a fresh sender and returns what fetch received for it. */
+  async function pushed(
+    config: Partial<NtfyConfig>,
+    msg: NtfyMessage,
+    logger: Logger = makeSilentLogger(),
+  ) {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    await createNtfy(logger, { topicUrl: "https://ntfy.sh/t", ...config })(msg);
+    const init = vi.mocked(globalThis.fetch).mock.lastCall?.[1];
+    return { body: init?.body, headers: new Headers(init?.headers) };
+  }
+
+  it("prefixes every title with the config's titlePrefix", async () => {
+    const config = { titlePrefix: "[empresa] " };
+
+    const down = await pushed(config, { title: "WhatsApp - desconectado", message: "M" });
+    const up = await pushed(config, { title: "WhatsApp - reconectado", message: "M" });
+
+    expect(down.headers.get("Title")).toBe("[empresa] WhatsApp - desconectado");
+    expect(up.headers.get("Title")).toBe("[empresa] WhatsApp - reconectado");
+  });
+
+  it("leaves the body and the other headers alone when it prefixes the title", async () => {
+    const { body, headers } = await pushed(
+      { titlePrefix: "[empresa] " },
+      { title: "T", message: "the body", tags: ["warning"], click: "https://wa.example.com/" },
+    );
+
+    expect(body).toBe("the body");
+    expect(headers.get("Tags")).toBe("warning");
+    expect(headers.get("Click")).toBe("https://wa.example.com/");
+  });
+
+  it("still strips non-Latin-1 characters from a prefixed title", async () => {
+    const { headers } = await pushed(
+      { titlePrefix: "[empresa] " },
+      { title: "WhatsApp \u2014 Escaneie", message: "M" },
+    );
+
+    expect(headers.get("Title")).toBe("[empresa] WhatsApp  Escaneie");
+  });
+
+  it("logs the title that was actually sent, prefix included", async () => {
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() } as unknown as Logger;
+
+    await pushed(
+      { titlePrefix: "[empresa] " },
+      { title: "WhatsApp - fora do ar", message: "M" },
+      logger,
+    );
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "[empresa] WhatsApp - fora do ar" }),
+      "ntfy push sent",
+    );
+  });
+
   it("omits optional headers when not provided", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
 
@@ -162,5 +219,28 @@ describe("resolveNtfyConfig", () => {
       topicUrl: "https://ntfy.sh/t",
       token: undefined,
     });
+  });
+
+  it("adds no titlePrefix key without an identity, even when INSTANCE_DESCRIPTION is set", () => {
+    expect(
+      resolveNtfyConfig({ NTFY_TOPIC_URL: "https://ntfy.sh/t", INSTANCE_DESCRIPTION: "orphan" }),
+    ).toStrictEqual({ topicUrl: "https://ntfy.sh/t", token: undefined });
+    expect(
+      resolveNtfyConfig({ NTFY_TOPIC_URL: "https://ntfy.sh/t", INSTANCE_LABEL: "!!!" }),
+    ).toStrictEqual({ topicUrl: "https://ntfy.sh/t", token: undefined });
+  });
+
+  it("prefixes titles with the normalised label when an identity is set", () => {
+    expect(
+      resolveNtfyConfig({
+        NTFY_TOPIC_URL: "https://ntfy.sh/t",
+        NTFY_TOKEN: "tk_abc",
+        INSTANCE_LABEL: " Empresa ",
+      }),
+    ).toStrictEqual({ topicUrl: "https://ntfy.sh/t", token: "tk_abc", titlePrefix: "[empresa] " });
+  });
+
+  it("stays null without a topic, whatever the identity", () => {
+    expect(resolveNtfyConfig({ INSTANCE_LABEL: "empresa" })).toBeNull();
   });
 });
