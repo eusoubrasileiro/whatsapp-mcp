@@ -166,7 +166,7 @@ export function createHubListener(options: HubListenerOptions): RequestListener 
       renderHubPage({
         nonce,
         views,
-        target: known ? asked : null,
+        target: asked,
         unknownLabel: known ? null : asked,
       }),
     );

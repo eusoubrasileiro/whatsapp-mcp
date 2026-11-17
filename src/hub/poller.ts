@@ -115,7 +115,8 @@ async function readInstance(instance: HubInstance, timeoutMs: number): Promise<R
     const qr = await readQr(instance.baseUrl, timeoutMs);
     return { state: qr ? "waiting_qr" : "starting", description, last4, qr };
   }
-  const state = typeof health.status === "string" ? STATUS_STATES.get(health.status) : undefined;
+  // A Map answers `undefined` for a key that is not in it, whatever the key's type.
+  const state = STATUS_STATES.get(health.status as string);
   return state ? { state, description, last4, qr: null } : null;
 }
 

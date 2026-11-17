@@ -82,7 +82,7 @@ function parseInstances(raw: string | undefined, problems: string[]): HubInstanc
 }
 
 function parsePublicUrl(raw: string | undefined, problems: string[]): string {
-  const url = raw ? parseHttpUrl(raw) : null;
+  const url = parseHttpUrl(raw ?? "");
   const local = url?.hostname === "localhost" || url?.hostname === "127.0.0.1";
   const secure = url?.protocol === "https:" || local;
   if (!url || !secure || url.origin !== raw) {
