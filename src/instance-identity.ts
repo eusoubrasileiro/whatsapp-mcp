@@ -49,8 +49,8 @@ export function readInstanceIdentity(
 }
 
 /**
- * The paragraph that opens the server instructions. Model-facing wording, ratified by the
- * owner: change it only on purpose.
+ * The paragraph that opens the server instructions. Model-facing wording: change it only on
+ * purpose, together with the tests that pin it.
  */
 export function identityParagraph(identity: InstanceIdentity): string {
   const { label, description } = identity;
