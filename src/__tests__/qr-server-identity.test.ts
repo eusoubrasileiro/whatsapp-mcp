@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { ConnectionState } from "@amiticia/baileys-client";
 import pino from "pino";
@@ -27,9 +26,7 @@ async function startQr(state: ConnectionState, options: QrServerOptions = {}) {
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   open.push({ close: () => new Promise((resolve) => server.close(() => resolve())) });
   return {
-    async page(): Promise<string> {
-      return (await fetch(`${url}/`)).text();
-    },
+    url,
     async health(): Promise<{ code: number; text: string; body: Record<string, unknown> }> {
       const res = await fetch(`${url}/health`);
       const text = await res.text();
@@ -42,44 +39,6 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(open.splice(0).map((s) => s.close()));
 });
-
-const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
-
-/**
- * SHA-256 of `GET /` exactly as `main` (9545b86, the read-only pairing page) rendered it before
- * instance identities existed. Computed once by running that revision's `createQrServer` over
- * these states and hashing the response text. With no identity the page must stay byte-identical.
- */
-const TODAYS_PAGE_SHA256: Record<string, { state: Partial<ConnectionState>; sha256: string }> = {
-  connected: {
-    state: { status: "connected", user: "5500000000000@s.whatsapp.net" },
-    sha256: "60ed586c5a503d480d8a11caa91649db87f5e1e732369132590a4f41b6191f66",
-  },
-  "connected, user not known yet": {
-    state: { status: "connected" },
-    sha256: "2a77c4235b04aa360e65f2b64f8c728f51fbe25983d3010e837b3536f7b3b6db",
-  },
-  "qr_pending with a QR code": {
-    state: { status: "qr_pending", qrCode: "2@abc123,def456,ghi789==,hex" },
-    sha256: "982ab81ae29e00b242d02eb1f3f02a74d3c481e64d6804f984640da0f97fa296",
-  },
-  "qr_pending without a QR code": {
-    state: { status: "qr_pending" },
-    sha256: "d2eda64d7acd4065f1eec04bb44b46d5697cdce271ba09036db23eacacee0916",
-  },
-  connecting: {
-    state: { status: "connecting" },
-    sha256: "dbcb766eeddf36ed5b1142ac84d4221ad6326d5647e22dac63cc44adf7a3ba6a",
-  },
-  syncing: {
-    state: { status: "syncing" },
-    sha256: "8128d7b717d3619e0dafc433da77d7fdb1800cfe23d5ae2ea7606bf81c5daddd",
-  },
-  disconnected: {
-    state: { status: "disconnected" },
-    sha256: "ca00117fde1b75a64770dab4cbe57ca6c7f3192756dd79bfd46a74527df8d0f6",
-  },
-};
 
 /** `GET /health` exactly as `main` returned it, fixed clock, grace 300. */
 const TODAYS_HEALTH: Record<(typeof STATUSES)[number], string> = {
@@ -99,72 +58,18 @@ function healthState(status: (typeof STATUSES)[number]): ConnectionState {
   return stateOf({ status, user: status === "connected" ? "Alice" : null });
 }
 
-describe("QR page without an identity", () => {
-  it.each(Object.entries(TODAYS_PAGE_SHA256))("is byte-identical to main: %s", async (_name, c) => {
-    const qr = await startQr(stateOf(c.state));
+describe("the QR server's root", () => {
+  it.each(STATUSES)("is 404 with an identity, and without one, while %s", async (status) => {
+    const labelled = await startQr(healthState(status), { identity: EMPRESA });
+    const bare = await startQr(healthState(status));
 
-    expect(sha256(await qr.page())).toBe(c.sha256);
-  });
-
-  it("is still byte-identical when the identity is null", async () => {
-    const qr = await startQr(stateOf({ status: "connecting" }), { identity: null });
-
-    expect(sha256(await qr.page())).toBe(TODAYS_PAGE_SHA256.connecting?.sha256);
-  });
-});
-
-describe("QR page with an identity", () => {
-  it.each(STATUSES)("shows the label in the title and the body while %s", async (status) => {
-    const qr = await startQr(
-      stateOf({ status, qrCode: status === "qr_pending" ? "2@abc" : null }),
-      {
-        identity: EMPRESA,
-      },
-    );
-
-    const html = await qr.page();
-
-    expect(html).toContain(`<title>WhatsApp MCP [empresa] — ${status}</title>`);
-    const body = html.slice(html.indexOf("<body>"));
-    expect(body).toContain("WhatsApp line: empresa");
-    expect(body).toContain("the company line");
-  });
-
-  it("shows no description line when there is none", async () => {
-    const qr = await startQr(stateOf(), { identity: { label: "empresa" } });
-
-    const html = await qr.page();
-
-    expect(html).toContain("WhatsApp line: empresa");
-    expect(html).not.toContain("<small>the company line");
-    expect(html).not.toContain("undefined");
-  });
-
-  it("only adds to the page: today's markup is still there, in order", async () => {
-    const withLine = await (
-      await startQr(stateOf({ status: "connecting" }), { identity: EMPRESA })
-    ).page();
-
-    expect(withLine).toContain("<h1>connecting...</h1><p>Please wait.</p>");
-    expect(withLine.indexOf("WhatsApp line: empresa")).toBeLessThan(
-      withLine.indexOf("<h1>connecting...</h1>"),
-    );
-    expect(withLine).toContain('<meta http-equiv="refresh" content="3" />');
-  });
-
-  it("escapes a label and a description that carry markup", async () => {
-    const qr = await startQr(stateOf(), {
-      identity: { label: '<b>x</b>"', description: '"><script>alert(1)</script> & <img src=x>' },
-    });
-
-    const html = await qr.page();
-
-    expect(html).not.toContain("<script>");
-    expect(html).not.toContain("<img src=x>");
-    expect(html).not.toContain("<b>x</b>");
-    expect(html).toContain("&lt;b&gt;x&lt;/b&gt;&quot;");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &lt;img src=x&gt;");
-    expect(html).toMatch(/<title>WhatsApp MCP \[&lt;b&gt;x&lt;\/b&gt;&quot;\] /);
+    for (const qr of [labelled, bare]) {
+      for (const path of ["/", "/index.html"]) {
+        const res = await fetch(`${qr.url}${path}`);
+        expect(res.status).toBe(404);
+        expect(await res.text()).toBe("not found");
+      }
+    }
   });
 });
 

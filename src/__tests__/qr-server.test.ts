@@ -248,21 +248,25 @@ describe("createQrServer", () => {
     });
   });
 
-  it("GET / returns HTML with auto-refresh meta", async () => {
-    const res = await fetch(`${baseUrl}/`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const body = await res.text();
-    expect(body).toContain('<meta http-equiv="refresh"');
-    expect(body).toContain("disconnected");
-  });
-
-  it("GET / shows connected message when connected", async () => {
-    state.status = "connected";
-    state.user = "5511900000002@s.whatsapp.net";
-    const res = await fetch(`${baseUrl}/`);
-    const body = await res.text();
-    expect(body).toContain("5511900000002");
+  it("has no page: GET / and GET /index.html are 404 in every connection status", async () => {
+    // The pairing page lives in the hub now. A QR server that still served one would show a
+    // second, unprotected copy of the QR to anyone who can reach this port.
+    const statuses: ConnectionState["status"][] = [
+      "connected",
+      "qr_pending",
+      "connecting",
+      "syncing",
+      "disconnected",
+    ];
+    for (const status of statuses) {
+      state.status = status;
+      state.qrCode = status === "qr_pending" ? "2@abc123,def456,ghi789==,hex" : null;
+      for (const path of ["/", "/index.html"]) {
+        const res = await fetch(`${baseUrl}${path}`);
+        expect(res.status, `${status} ${path}`).toBe(404);
+        expect(await res.text()).toBe("not found");
+      }
+    }
   });
 
   it("GET /qr.png returns 404 when no QR is pending", async () => {
@@ -317,19 +321,5 @@ describe("createQrServer", () => {
         expect([404, 405], `${method} ${path}`).toContain(res.status);
       }
     }
-  });
-
-  it("GET / renders a read-only connected page: no form, no button, no re-pair wording", async () => {
-    state.status = "connected";
-    state.user = `5511900000002<b>&"'@s.whatsapp.net`;
-    const res = await fetch(`${baseUrl}/`);
-    const body = await res.text();
-    expect(body).toContain("Connected");
-    expect(body).toContain("5511900000002&lt;b&gt;&amp;&quot;&#39;@s.whatsapp.net");
-    expect(body).not.toContain("<b>");
-    expect(body).not.toMatch(/<form/i);
-    expect(body).not.toMatch(/<button/i);
-    expect(body).not.toMatch(/method="post"/i);
-    expect(body).not.toMatch(/re-?pair/i);
   });
 });

@@ -13,23 +13,14 @@ afterAll(async () => {
   await server?.stop();
 });
 
-describe("QR page", () => {
-  it("serves the page and says the instance is not paired", async () => {
-    const res = await fetch(`${server.qrUrl}/`);
-    const html = await res.text();
+describe("QR server", () => {
+  it("has no page: / and /index.html are 404 on the status port", async () => {
+    for (const path of ["/", "/index.html"]) {
+      const res = await fetch(`${server.qrUrl}${path}`);
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    expect(html).toContain("<h1>disconnected</h1>");
-    expect(html).toContain("status: disconnected");
-    expect(html).not.toContain("/qr.png"); // no QR to scan: nothing has connected
-  });
-
-  it("serves the same page at /index.html", async () => {
-    const res = await fetch(`${server.qrUrl}/index.html`);
-
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("<h1>disconnected</h1>");
+      expect(res.status, path).toBe(404);
+      expect(await res.text()).toBe("not found");
+    }
   });
 
   it("answers /live with 200 whatever the WhatsApp socket is doing (Docker healthcheck)", async () => {

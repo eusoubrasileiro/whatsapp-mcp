@@ -488,26 +488,26 @@ describe("resolvePublicQrUrl", () => {
     );
   });
 
-  it("falls back to this instance's own QR server, never a hosted deployment's page", () => {
-    expect(resolvePublicQrUrl({})).toBe("http://127.0.0.1:39002/");
+  it("falls back to this instance's own QR image, because the QR server has no page", () => {
+    expect(resolvePublicQrUrl({})).toBe("http://127.0.0.1:39002/qr.png");
   });
 
   it("treats an empty PUBLIC_QR_URL as unset", () => {
-    expect(resolvePublicQrUrl({ PUBLIC_QR_URL: "" })).toBe("http://127.0.0.1:39002/");
+    expect(resolvePublicQrUrl({ PUBLIC_QR_URL: "" })).toBe("http://127.0.0.1:39002/qr.png");
   });
 
   it("follows QR_SERVER_HOST and QR_SERVER_PORT in the fallback", () => {
     expect(resolvePublicQrUrl({ QR_SERVER_HOST: "192.0.2.10", QR_SERVER_PORT: "8080" })).toBe(
-      "http://192.0.2.10:8080/",
+      "http://192.0.2.10:8080/qr.png",
     );
   });
 
   it("maps a wildcard bind address to localhost", () => {
-    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "0.0.0.0" })).toBe("http://localhost:39002/");
-    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::" })).toBe("http://localhost:39002/");
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "0.0.0.0" })).toBe("http://localhost:39002/qr.png");
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::" })).toBe("http://localhost:39002/qr.png");
   });
 
   it("brackets an IPv6 bind address", () => {
-    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::1" })).toBe("http://[::1]:39002/");
+    expect(resolvePublicQrUrl({ QR_SERVER_HOST: "::1" })).toBe("http://[::1]:39002/qr.png");
   });
 });

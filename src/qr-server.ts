@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { CLOCK_RESETTING_STATUSES, LIVE_STATUSES } from "./connection-status.ts";
 import { readNonNegativeNumber } from "./env-config.ts";
 import { createRouter, type Route } from "./http-router.ts";
+import { isBearerOf } from "./hub-instance-secret.ts";
 import { type InstanceIdentity, phoneLast4 } from "./instance-identity.ts";
 
 function readGraceSeconds(): number {
@@ -21,8 +22,8 @@ export type QrServerOptions = {
    */
   disconnectedGraceS?: number;
   /**
-   * Which WhatsApp line this server is. When set, the page names it and `/health` gains
-   * `instance` and `phone_last4`; when unset or `null` both are byte-identical to before.
+   * Which WhatsApp line this server is. When set, `/health` gains `instance` and
+   * `phone_last4`; when unset or `null` it is byte-identical to before.
    */
   identity?: InstanceIdentity | null;
   /**
@@ -31,76 +32,14 @@ export type QrServerOptions = {
    * `EXPECTED_WA_NUMBER`.
    */
   pairedUserId?: () => string | null | undefined;
+  /**
+   * Lets the hub unlink this number: `POST /internal/unlink`, answered only to
+   * `Authorization: Bearer <secret>`. The use case is injected (this module must not reach the
+   * WhatsApp adapter); `run` resolves `true` when it logged a connected number out and `false`
+   * when there was nothing to log out. Unset or `null`: the route does not exist.
+   */
+  unlink?: { secret: string; run: () => Promise<boolean> } | null;
 };
-
-/** What the page shows about the line, on top of the connection state. */
-type QrPageOptions = {
-  lineLabel?: string;
-  lineDescription?: string;
-};
-
-function renderHtml(state: ConnectionState, page: QrPageOptions = {}): string {
-  const { status, user, qrCode } = state;
-
-  let body: string;
-  if (status === "connected") {
-    body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>`;
-  } else if (status === "qr_pending" && qrCode) {
-    body = `<h1>Scan QR with WhatsApp</h1>
-      <img src="/qr.png" width="320" height="320" alt="WhatsApp QR" />
-      <p>Settings &rarr; Linked Devices &rarr; Link a Device</p>`;
-  } else if (status === "connecting" || status === "syncing") {
-    body = `<h1>${status}...</h1><p>Please wait.</p>`;
-  } else {
-    body = `<h1>disconnected</h1><p>Waiting for WhatsApp socket to initialize...</p>`;
-  }
-
-  const titleLine = page.lineLabel ? ` [${escapeHtml(page.lineLabel)}]` : "";
-  const lineHeader = page.lineLabel
-    ? `<p><strong>WhatsApp line: ${escapeHtml(page.lineLabel)}</strong>${
-        page.lineDescription ? `<br /><small>${escapeHtml(page.lineDescription)}</small>` : ""
-      }</p>\n`
-    : "";
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<meta http-equiv="refresh" content="3" />
-<title>WhatsApp MCP${titleLine} — ${status}</title>
-<style>
-body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 3rem auto; padding: 0 1rem; text-align: center; }
-img { margin: 1rem auto; display: block; border: 1px solid #eee; padding: 0.5rem; background: #fff; }
-code { background: #f3f3f3; padding: 0.1rem 0.3rem; border-radius: 3px; }
-</style>
-</head>
-<body>
-${lineHeader}${body}
-<hr />
-<small>status: ${status}</small>
-</body>
-</html>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return c;
-    }
-  });
-}
 
 /**
  * The `/health` keys that name the line. `phone_last4` is `undefined` when no number is known,
@@ -108,6 +47,39 @@ function escapeHtml(s: string): string {
  */
 function lineFields(identity: InstanceIdentity, pairedUserId: string | null | undefined) {
   return { instance: { ...identity }, phone_last4: phoneLast4(pairedUserId) };
+}
+
+/**
+ * `POST /internal/unlink`. The router's own `auth: "bearer"` compares with `===` and answers
+ * with text, so the check is done here: constant time, and a refusal is an empty 401 that
+ * never reaches the use case.
+ */
+function unlinkRoute(
+  unlink: { secret: string; run: () => Promise<boolean> },
+  logger: Logger,
+): Route {
+  return {
+    method: "POST",
+    path: "/internal/unlink",
+    handler: async (req, res) => {
+      if (!isBearerOf(req.headers.authorization, unlink.secret)) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      const json = { "content-type": "application/json; charset=utf-8" };
+      try {
+        const unlinked = await unlink.run();
+        logger.info({ unlinked }, "the hub unlinked this number");
+        res.writeHead(200, json);
+        res.end(JSON.stringify({ unlinked }));
+      } catch (err) {
+        logger.error({ err }, "the hub asked to unlink this number and it failed");
+        res.writeHead(502, json);
+        res.end(JSON.stringify({ unlinked: false }));
+      }
+    },
+  };
 }
 
 export function createQrServer(
@@ -118,9 +90,6 @@ export function createQrServer(
   const now = options.now ?? (() => Date.now());
   const graceS = options.disconnectedGraceS ?? readGraceSeconds();
   const identity = options.identity ?? null;
-  const page: QrPageOptions = identity
-    ? { lineLabel: identity.label, lineDescription: identity.description }
-    : {};
 
   /**
    * When the socket was last observed in a clock-resetting status. Sampled on
@@ -203,22 +172,7 @@ export function createQrServer(
         res.end(png);
       },
     },
-    {
-      method: "GET",
-      path: "/",
-      handler: async (_req, res) => {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderHtml(getState(), page));
-      },
-    },
-    {
-      method: "GET",
-      path: "/index.html",
-      handler: async (_req, res) => {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderHtml(getState(), page));
-      },
-    },
+    ...(options.unlink ? [unlinkRoute(options.unlink, logger)] : []),
   ];
 
   return http.createServer(createRouter(routes, { logger }));
