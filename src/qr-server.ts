@@ -44,10 +44,7 @@ function renderHtml(state: ConnectionState, page: QrPageOptions = {}): string {
 
   let body: string;
   if (status === "connected") {
-    body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>
-      <form method="post" action="/repair" onsubmit="return confirm('This will unlink WhatsApp and require a new QR scan. Continue?')">
-        <button type="submit">Re-pair device</button>
-      </form>`;
+    body = `<h1>Connected</h1><p>Linked as <code>${escapeHtml(user ?? "?")}</code>. You can close this tab.</p>`;
   } else if (status === "qr_pending" && qrCode) {
     body = `<h1>Scan QR with WhatsApp</h1>
       <img src="/qr.png" width="320" height="320" alt="WhatsApp QR" />
@@ -116,7 +113,6 @@ function lineFields(identity: InstanceIdentity, pairedUserId: string | null | un
 export function createQrServer(
   logger: Logger,
   getState: () => ConnectionState,
-  onRepair?: () => Promise<void>,
   options: QrServerOptions = {},
 ): Server {
   const now = options.now ?? (() => Date.now());
@@ -221,20 +217,6 @@ export function createQrServer(
       handler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHtml(getState(), page));
-      },
-    },
-    {
-      method: "POST",
-      path: "/repair",
-      handler: async (_req, res) => {
-        if (!onRepair) {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
-        await onRepair();
-        res.writeHead(302, { location: "/" });
-        res.end();
       },
     },
   ];

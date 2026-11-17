@@ -56,6 +56,12 @@ describe("QR page", () => {
   it("answers an unknown path with 404", async () => {
     expect((await fetch(`${server.qrUrl}/nope`)).status).toBe(404);
   });
+
+  it("has no repair route: POST /repair answers 404", async () => {
+    const res = await fetch(`${server.qrUrl}/repair`, { method: "POST", redirect: "manual" });
+
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("no WhatsApp connection", () => {

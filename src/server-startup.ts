@@ -10,12 +10,7 @@ import { createStreamServer } from "./stream/server.ts";
 import { streamTokens } from "./stream/token.ts";
 import { createUploadServer } from "./upload-server.ts";
 import { loadRegistry } from "./webhooks/registry.ts";
-import {
-  getConnectionState,
-  socketState,
-  transcribeMediaMessage,
-  triggerRepair,
-} from "./whatsapp.ts";
+import { getConnectionState, socketState, transcribeMediaMessage } from "./whatsapp.ts";
 
 /**
  * Everything the process starts BEFORE it connects to WhatsApp: database, webhook
@@ -120,7 +115,7 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
   mcpLogger.info("MCP Server started and listening.");
 
   // QR web server — port 39002 by default.
-  const qr = createQrServer(waLogger, getConnectionState, () => triggerRepair(waLogger), {
+  const qr = createQrServer(waLogger, getConnectionState, {
     identity,
     pairedUserId: () => socketState.socket?.user?.id,
   });

@@ -18,7 +18,7 @@ const open: Array<{ close: () => Promise<void> }> = [];
 
 /** The ONE place this file builds a QR server. */
 async function startQr(state: ConnectionState, options: QrServerOptions = {}) {
-  const server = createQrServer(pino({ level: "silent" }), () => state, undefined, {
+  const server = createQrServer(pino({ level: "silent" }), () => state, {
     now: () => NOW,
     disconnectedGraceS: 300,
     ...options,
@@ -46,18 +46,18 @@ afterEach(async () => {
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
 
 /**
- * SHA-256 of `GET /` exactly as `main` (bf0aa24) rendered it before instance identities
- * existed. Computed once by running that revision's `createQrServer` over these states and
- * hashing the response text. With no identity the page must stay byte-identical.
+ * SHA-256 of `GET /` exactly as `main` (9545b86, the read-only pairing page) rendered it before
+ * instance identities existed. Computed once by running that revision's `createQrServer` over
+ * these states and hashing the response text. With no identity the page must stay byte-identical.
  */
 const TODAYS_PAGE_SHA256: Record<string, { state: Partial<ConnectionState>; sha256: string }> = {
   connected: {
     state: { status: "connected", user: "5500000000000@s.whatsapp.net" },
-    sha256: "addab0ddcd502781ae248de79d5e1340c1bd0478b81157084b07f783f298bf4b",
+    sha256: "60ed586c5a503d480d8a11caa91649db87f5e1e732369132590a4f41b6191f66",
   },
   "connected, user not known yet": {
     state: { status: "connected" },
-    sha256: "478c370ec7824cfbd0180c719c946db45a960939d4959b8e12545be82152ec24",
+    sha256: "2a77c4235b04aa360e65f2b64f8c728f51fbe25983d3010e837b3536f7b3b6db",
   },
   "qr_pending with a QR code": {
     state: { status: "qr_pending", qrCode: "2@abc123,def456,ghi789==,hex" },
