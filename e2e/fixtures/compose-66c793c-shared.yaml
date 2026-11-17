@@ -1,0 +1,112 @@
+# whatsapp-mcp, shared stack: the RustFS media store and the hub page. One VPS, one
+# public hostname, Traefik v3 in front. Every WhatsApp number runs as its own compose
+# project from docker-compose.instance.yaml and is reached at https://<host>/<label>/.
+#
+# Run it, from this directory, with deploy/.env (chmod 600, gitignored; template in
+# .env.example):
+#
+#   docker compose up -d
+#
+# Nothing here names a real host or number: it all comes from deploy/.env. Assumes an
+# existing Traefik attached to the external `network_public` network, with a `websecure`
+# entrypoint and a certresolver named `myresolver`. Adjust the labels if yours differ.
+#
+# Image: build it from this repo plus the sibling baileys-client (README.md → Deployment).
+# The maintainers publish ghcr.io/amiticia-autosys/whatsapp-mcp (private); retag your own
+# build to the same name or change `image:` below. The hub is the same image with another
+# command.
+#
+# Routes on https://${PUBLIC_DOMAIN}:
+#   /<label>/media/t/…      → RustFS :9000 (public read of one object; rewritten into the
+#                             bucket). The bucket root, and a listing, are NOT routed here.
+#   everything else         → the hub :39002 (PIN-protected page; priority 1, so each
+#                             number's own /<label>/mcp, /upload and /stream routers win)
+#
+# Required env (deploy/.env):
+#   PUBLIC_DOMAIN         the one public hostname
+#   MINIO_ROOT_USER       S3 root login (RustFS; env name kept for compat)
+#   MINIO_ROOT_PASSWORD   S3 root secret (RustFS; env name kept for compat)
+#   HUB_PIN               the PIN that opens the hub page (choose it; never commit it)
+#   HUB_COOKIE_KEY        signs the hub's session cookie (openssl rand -hex 32)
+#   HUB_INSTANCES         the numbers the hub lists
+# Optional:
+#   HUB_INSTANCE_SECRET   shared with every number's env file; authenticates the hub's
+#                         "unlink this number" call. Empty: the hub offers no unlink.
+#   HUB_LANG              hub page language: en (default) or pt-BR; any other value stops the hub
+#   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
+#   NTFY_TOKEN            only if the ntfy topic is protected
+#
+# There is no bucket-init job. The app creates the bucket and sets a GetObject-only policy
+# on every start, so the bucket can be read per object but never listed.
+name: whatsapp-mcp
+
+services:
+  # service name kept as 'minio' for DNS compat; runs RustFS
+  minio:
+    image: rustfs/rustfs:latest
+    container_name: whatsapp-mcp-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      RUSTFS_ROOT_USER: ${MINIO_ROOT_USER}
+      RUSTFS_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      # Bind mount mirrors the whatsapp-mcp pattern; an offsite backup just adds this dir.
+      - /storage/whatsapp-mcp/minio:/data
+    networks:
+      - network_public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=network_public"
+      # Public media route: https://${PUBLIC_DOMAIN}/<label>/media/t/<key> → minio:9000/amiticia-media/t/<key>
+      # Every object key starts with t/<tenant>/, so requiring /media/t/ keeps the bucket root
+      # (and its ?list-type=2 listing) off this router: those fall through to the hub.
+      - "traefik.http.routers.wa-media.rule=Host(`${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in deploy/.env}`) && PathRegexp(`^/[a-z0-9][a-z0-9-]*/media/t/`)"
+      - "traefik.http.routers.wa-media.priority=100"
+      - "traefik.http.routers.wa-media.entrypoints=websecure"
+      - "traefik.http.routers.wa-media.tls.certresolver=myresolver"
+      - "traefik.http.routers.wa-media.middlewares=wa-media-rewrite"
+      - "traefik.http.routers.wa-media.service=wa-media-svc"
+      - "traefik.http.middlewares.wa-media-rewrite.replacepathregex.regex=^/[a-z0-9][a-z0-9-]*/media/(.*)"
+      - "traefik.http.middlewares.wa-media-rewrite.replacepathregex.replacement=/amiticia-media/$$1"
+      - "traefik.http.services.wa-media-svc.loadbalancer.server.port=9000"
+
+  hub:
+    image: ghcr.io/amiticia-autosys/whatsapp-mcp:latest
+    container_name: whatsapp-mcp-hub
+    restart: unless-stopped
+    command: ["node", "--experimental-strip-types", "src/hub/main.ts"]
+    environment:
+      HUB_PIN: ${HUB_PIN:?set HUB_PIN in deploy/.env}
+      HUB_COOKIE_KEY: ${HUB_COOKIE_KEY:?set HUB_COOKIE_KEY in deploy/.env}
+      HUB_INSTANCES: ${HUB_INSTANCES:?set HUB_INSTANCES in deploy/.env}
+      HUB_INSTANCE_SECRET: ${HUB_INSTANCE_SECRET:-}
+      HUB_PUBLIC_URL: https://${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN in deploy/.env}
+      HUB_LANG: ${HUB_LANG:-en}
+      HUB_STATE_DIR: /data
+      NTFY_TOPIC_URL: ${NTFY_TOPIC_URL:-}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+    volumes:
+      - /storage/whatsapp-mcp-hub:/data
+    networks:
+      - network_public
+    # No healthcheck here: the image's own HEALTHCHECK probes /live on 39002, where the hub listens.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=network_public"
+      # The hub page: every path on the host that no number's router claims (priority 1).
+      - "traefik.http.routers.wa-hub.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.wa-hub.priority=1"
+      - "traefik.http.routers.wa-hub.entrypoints=websecure"
+      - "traefik.http.routers.wa-hub.tls.certresolver=myresolver"
+      - "traefik.http.routers.wa-hub.service=wa-hub-svc"
+      - "traefik.http.services.wa-hub-svc.loadbalancer.server.port=39002"
+
+networks:
+  network_public:
+    external: true

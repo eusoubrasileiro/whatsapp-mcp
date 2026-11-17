@@ -20,6 +20,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { RenderedService } from "./compose.ts";
+import { cleanupOnExit, docker, forget } from "./docker.ts";
 import type { Fetcher } from "./mcp-client.ts";
 import { freePort } from "./server.ts";
 
@@ -246,22 +247,10 @@ export interface TraefikProxy {
   stop(): Promise<void>;
 }
 
-function docker(args: string[]) {
-  const run = spawnSync("docker", args, { encoding: "utf8" });
-  if (run.error) throw run.error;
-  return { status: run.status, out: run.stdout.trim(), err: run.stderr.trim() };
-}
-
-const running = new Set<string>();
-let exitHookInstalled = false;
-
 /** A spec that dies before `afterAll` must not leave a container behind. */
 function removeOnExit(name: string) {
-  running.add(name);
-  if (exitHookInstalled) return;
-  exitHookInstalled = true;
-  process.on("exit", () => {
-    for (const left of running) spawnSync("docker", ["rm", "-f", left], { stdio: "ignore" });
+  cleanupOnExit(name, () => {
+    spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
   });
 }
 
@@ -378,7 +367,7 @@ async function launch(config: DynamicConfig): Promise<TraefikProxy> {
 
   const stop = async () => {
     docker(["rm", "-f", name]);
-    running.delete(name);
+    forget(name);
     fs.rmSync(dir, { recursive: true, force: true });
   };
   removeOnExit(name);
