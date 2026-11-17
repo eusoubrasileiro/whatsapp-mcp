@@ -1,3 +1,7 @@
+import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type E2eHub, runHubExpectingExit, startHub } from "./support/hub.ts";
 import { type E2eServer, startServer } from "./support/server.ts";
@@ -6,43 +10,100 @@ import { type E2eServer, startServer } from "./support/server.ts";
 const FAKE_NUMBER = "5500000001234";
 const LABELS = ["personal", "empresa"] as const;
 const DESCRIPTIONS = { personal: "Personal line", empresa: "Company line" };
+/** The secret the hub and both servers share, so the hub may ask them to unlink. */
+const INSTANCE_SECRET = "e2e-instance-secret-0123456789abcdef0123";
 
 let servers: Record<(typeof LABELS)[number], E2eServer>;
 let hub: E2eHub;
+let portugueseHub: E2eHub;
+const dataDirs: string[] = [];
+
+/** The pairing a number would have on disk. The servers never connect, so they write none. */
+function fakePairing(): string {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-hub-e2e-data-"));
+  dataDirs.push(dataDir);
+  fs.mkdirSync(path.join(dataDir, "auth_info"));
+  for (const name of ["creds.json", "app-state-sync-key-1.json", "pre-key-1.json"]) {
+    fs.writeFileSync(path.join(dataDir, "auth_info", name), randomBytes(512));
+  }
+  return dataDir;
+}
+
+/** What the pairing files hold, by name: equal before and after means nothing was touched. */
+function pairingOf(server: E2eServer): Record<string, string> {
+  const dir = path.join(server.dataDir, "auth_info");
+  return Object.fromEntries(
+    fs
+      .readdirSync(dir)
+      .sort()
+      .map((name) => [
+        name,
+        createHash("sha256")
+          .update(fs.readFileSync(path.join(dir, name)))
+          .digest("hex"),
+      ]),
+  );
+}
 
 beforeAll(async () => {
   const [personal, empresa] = await Promise.all(
     LABELS.map((label) =>
       startServer({
+        dataDir: fakePairing(),
         env: {
           INSTANCE_LABEL: label,
           INSTANCE_DESCRIPTION: DESCRIPTIONS[label],
           EXPECTED_WA_NUMBER: FAKE_NUMBER,
+          HUB_INSTANCE_SECRET: INSTANCE_SECRET,
         },
       }),
     ),
   );
   servers = { personal, empresa };
-  hub = await startHub({
+  const options = {
     instances: LABELS.map((label) => ({ label, url: servers[label].qrUrl })),
     pin: "e2e-pin-4821",
+  };
+  hub = await startHub({ ...options, env: { HUB_INSTANCE_SECRET: INSTANCE_SECRET } });
+  portugueseHub = await startHub({
+    ...options,
+    env: { HUB_INSTANCE_SECRET: INSTANCE_SECRET, HUB_LANG: "pt-BR" },
   });
 });
 
 afterAll(async () => {
   await hub?.stop();
+  await portugueseHub?.stop();
   await Promise.all(Object.values(servers ?? {}).map((server) => server.stop()));
+  for (const dir of dataDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-async function login(): Promise<string> {
-  const res = await fetch(`${hub.url}/_hub/login`, {
+async function login(target: E2eHub = hub): Promise<string> {
+  const res = await fetch(`${target.url}/_hub/login`, {
     method: "POST",
     redirect: "manual",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ pin: hub.pin }),
+    body: new URLSearchParams({ pin: target.pin }),
   });
   expect(res.status).toBe(303);
   return (res.headers.get("set-cookie") ?? "").split(";")[0];
+}
+
+/** What a browser does: open the confirmation page of `label`, then post its form back. */
+async function unlink(
+  target: E2eHub,
+  cookie: string,
+  label: string,
+  typed: Record<string, string> = {},
+): Promise<{ status: number; html: string }> {
+  const page = await fetch(`${target.url}/_hub/unlink/${label}`, { headers: { cookie } });
+  const csrf = /name="csrf" value="([0-9a-f]{64})"/.exec(await page.text())?.[1] ?? "";
+  const res = await fetch(`${target.url}/_hub/unlink/${label}`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ csrf, pin: target.pin, label, ...typed }),
+  });
+  return { status: res.status, html: await res.text() };
 }
 
 /** Longest stretch of `FAKE_NUMBER` that appears in `text`, in digits. */
@@ -142,7 +203,7 @@ describe("with a session", () => {
   it("repeats nothing of the number but its last four digits, and no instance token", async () => {
     const cookie = await login();
     const responses = await Promise.all(
-      ["/", "/personal", "/empresa", "/_hub/status.json"].map((path) =>
+      ["/", "/personal", "/empresa", "/_hub/status.json", "/_hub/unlink/personal"].map((path) =>
         fetch(`${hub.url}${path}`, { headers: { cookie } }),
       ),
     );
@@ -152,7 +213,88 @@ describe("with a session", () => {
       expect(longestRunOfTheNumber(everything)).toBeLessThanOrEqual(4);
       for (const server of Object.values(servers)) expect(everything).not.toContain(server.token);
       expect(everything).not.toContain(hub.pin);
+      expect(everything).not.toContain(INSTANCE_SECRET);
     }
+  });
+});
+
+describe("unlinking a number", () => {
+  it("is offered on every card, and its page asks for the PIN and the name, under the restriction rule", async () => {
+    const cookie = await login();
+
+    const cards = await (await fetch(`${hub.url}/`, { headers: { cookie } })).text();
+    const res = await fetch(`${hub.url}/_hub/unlink/personal`, { headers: { cookie } });
+    const html = await res.text();
+
+    for (const label of LABELS) expect(cards).toContain(`href="/_hub/unlink/${label}"`);
+    expect(res.status).toBe(200);
+    expect(html).toContain("Never unlink or re-link a number while WhatsApp shows a restriction");
+    expect(html).toContain("number ending 1234");
+    for (const field of ["pin", "label", "csrf"]) expect(html).toContain(`name="${field}"`);
+  });
+
+  it("reaches the named server with the shared secret and, as nothing was connected, deletes nothing anywhere", async () => {
+    const cookie = await login();
+    const before = LABELS.map((label) => pairingOf(servers[label]));
+
+    const done = await unlink(hub, cookie, "personal");
+
+    expect(done.status).toBe(200); // a 502 would mean the server refused the secret or did not answer
+    expect(done.html).toContain("was not connected, so nothing changed");
+    expect(LABELS.map((label) => pairingOf(servers[label]))).toEqual(before);
+    expect(Object.keys(before[0])).toHaveLength(3);
+  });
+
+  it.each([
+    ["a wrong PIN", { pin: "not-the-pin" }, 401, "That PIN did not work."],
+    [
+      "a name that is not the number's",
+      { label: "empres" },
+      400,
+      "The name you typed does not match.",
+    ],
+  ])("refuses %s on the same page and changes nothing", async (_what, typed, status, sentence) => {
+    const cookie = await login();
+    const before = pairingOf(servers.empresa);
+
+    const done = await unlink(hub, cookie, "empresa", typed);
+
+    expect(done.status).toBe(status);
+    expect(done.html).toContain(sentence);
+    expect(done.html).toContain('name="csrf"');
+    expect(pairingOf(servers.empresa)).toEqual(before);
+  });
+});
+
+describe("with HUB_LANG=pt-BR", () => {
+  it("asks for the PIN in Portuguese", async () => {
+    const res = await fetch(`${portugueseHub.url}/`);
+    const html = await res.text();
+
+    expect(res.status).toBe(401);
+    expect(html).toContain('<html lang="pt-BR">');
+    expect(html).toContain("Digite o PIN");
+    expect(html).not.toContain("Enter the PIN");
+  });
+
+  it("shows the numbers, the restriction rule and the outcome in Portuguese", async () => {
+    const cookie = await login(portugueseHub);
+
+    const cards = await (await fetch(`${portugueseHub.url}/`, { headers: { cookie } })).text();
+    const confirmation = await (
+      await fetch(`${portugueseHub.url}/_hub/unlink/personal`, { headers: { cookie } })
+    ).text();
+    const done = await unlink(portugueseHub, cookie, "personal");
+
+    expect(cards).toContain("Desconectado");
+    expect(cards).toContain("número terminado em 1234");
+    expect(cards).toContain("Desvincular este número");
+    expect(confirmation).toContain(
+      "Nunca desvincule nem vincule de novo um número enquanto o WhatsApp mostrar uma contagem regressiva de restrição no celular desse número.",
+    );
+    expect(done.status).toBe(200);
+    expect(done.html).toContain("não estava conectado, então nada mudou");
+    for (const page of [cards, confirmation, done.html]) expect(page).not.toContain("Never unlink");
   });
 });
 
