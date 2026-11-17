@@ -427,4 +427,31 @@ describe("poller: the background loop", () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(a.hits.health).toBe(seen);
   });
+
+  it("runs one loop per instance however many times it is started", async () => {
+    const a = await fake({ status: "connected" });
+    const poller = pollerFor([{ label: "a", baseUrl: a.url }], { intervalMs: 60_000 });
+
+    poller.start();
+    poller.start();
+    await vi.waitFor(() => expect(a.hits.health).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    poller.stop();
+
+    expect(a.hits.health).toBe(1);
+  });
+
+  it("can be started again after it was stopped", async () => {
+    const a = await fake({ status: "connected" });
+    const poller = pollerFor([{ label: "a", baseUrl: a.url }], { intervalMs: 20 });
+    poller.start();
+    await vi.waitFor(() => expect(a.hits.health).toBeGreaterThan(0));
+    poller.stop();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const seen = a.hits.health;
+
+    poller.start();
+    await vi.waitFor(() => expect(a.hits.health).toBeGreaterThan(seen + 1));
+    poller.stop();
+  });
 });

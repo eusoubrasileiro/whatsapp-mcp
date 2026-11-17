@@ -85,13 +85,13 @@ function parsePublicUrl(raw: string | undefined, problems: string[]): string {
   const url = raw ? parseHttpUrl(raw) : null;
   const local = url?.hostname === "localhost" || url?.hostname === "127.0.0.1";
   const secure = url?.protocol === "https:" || local;
-  if (!raw || !url || !secure || url.origin !== raw) {
+  if (!url || !secure || url.origin !== raw) {
     problems.push(
       "HUB_PUBLIC_URL is required: the public origin without a trailing slash (https, or http for localhost only)",
     );
     return "";
   }
-  return raw;
+  return url.origin;
 }
 
 function parsePort(raw: string | undefined, problems: string[]): number {

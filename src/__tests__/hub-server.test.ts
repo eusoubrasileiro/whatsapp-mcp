@@ -112,6 +112,8 @@ describe("without a session", () => {
       expect(res.status).toBe(401);
       expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(res.body).toContain('<form class="gate-card" method="post" action="/_hub/login">');
+      expect(res.body).not.toContain("That PIN did not work.");
+      expect(res.body).not.toContain('role="alert"');
       for (const secret of ["personal", "empresa", "Company line", "1234", "5678", "instances"]) {
         expect(res.body).not.toContain(secret);
       }

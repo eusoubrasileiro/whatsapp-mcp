@@ -168,6 +168,7 @@ export function createPoller(options: PollerOptions): Poller {
 
   return {
     start() {
+      if (running) return;
       running = true;
       for (const entry of entries) schedule(entry, 0);
     },
