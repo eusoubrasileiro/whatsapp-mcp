@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   initializeDatabase: vi.fn(),
   ensureBucketReady: vi.fn(),
   startMcpServer: vi.fn(),
+  // Tripwire: nothing reachable over the QR port may ever call this.
+  triggerRepair: vi.fn(),
 }));
 
 vi.mock("../database.ts", () => ({
@@ -37,7 +39,7 @@ vi.mock("../whatsapp.ts", () => ({
     user: null,
     syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
   }),
-  triggerRepair: vi.fn(),
+  triggerRepair: h.triggerRepair,
   transcribeMediaMessage: vi.fn(),
 }));
 
@@ -91,6 +93,7 @@ describe("startServers", () => {
       h.calls.push("startMcpServer");
     });
     h.startWhatsAppConnection.mockReset();
+    h.triggerRepair.mockReset();
     vi.stubEnv("QR_SERVER_PORT", "0");
     vi.stubEnv("UPLOAD_SERVER_PORT", "0");
     vi.stubEnv("STREAM_SERVER_PORT", "0");
@@ -146,6 +149,18 @@ describe("startServers", () => {
 
     expect((await res.json()).status).toBe("disconnected");
     expect(h.startWhatsAppConnection).not.toHaveBeenCalled();
+  });
+
+  it("never unlinks WhatsApp from the QR port: POST /repair and POST / do not reach triggerRepair", async () => {
+    running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+    const base = `http://127.0.0.1:${portOf(running.qr)}`;
+
+    const repair = await fetch(`${base}/repair`, { method: "POST", redirect: "manual" });
+    const root = await fetch(`${base}/`, { method: "POST", redirect: "manual" });
+
+    expect(h.triggerRepair).not.toHaveBeenCalled();
+    expect(repair.status).toBe(404);
+    expect([404, 405]).toContain(root.status);
   });
 
   it("answers the follow_chat stream port with 426 (upgrade required)", async () => {
