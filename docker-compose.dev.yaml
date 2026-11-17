@@ -43,7 +43,7 @@ services:
       MCP_TRANSPORT: httpstream
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "3001"
-      PUBLIC_QR_URL: http://localhost:39002/
+      PUBLIC_QR_URL: http://localhost:39002/qr.png
 
 volumes:
   minio-data:

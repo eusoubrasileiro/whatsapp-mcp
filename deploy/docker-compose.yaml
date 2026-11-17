@@ -32,7 +32,7 @@
 # Optional:
 #   HUB_INSTANCE_SECRET   shared with every number's env file; authenticates the hub's
 #                         "unlink this number" call. Empty: the hub offers no unlink.
-#   HUB_LANG              hub page language (default en)
+#   HUB_LANG              hub page language: en (default) or pt-BR; any other value stops the hub
 #   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
 #   NTFY_TOKEN            only if the ntfy topic is protected
 #
