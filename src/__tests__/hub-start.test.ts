@@ -92,6 +92,7 @@ describe("startHub", () => {
 
     await running.stop();
     running = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 200)); // a request already on its way lands
     const before = fake?.hits.health ?? 0;
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
@@ -133,8 +134,9 @@ describe("reportStartupFailure", () => {
       reportStartupFailure(new HubConfigError(["HUB_PIN must be at least 4 characters."]), fake),
     ).toThrow("exit 1");
 
-    expect(fake.written.join("")).toContain("HUB_PIN must be at least 4 characters.");
-    expect(fake.written.join("")).toMatch(/\n$/);
+    expect(fake.written.join("")).toBe(
+      `${new HubConfigError(["HUB_PIN must be at least 4 characters."]).message}\n`,
+    );
   });
 
   it("prints any other failure after a fixed sentence and exits 1", () => {
