@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   initializeDatabase: vi.fn(),
   ensureBucketReady: vi.fn(),
   startMcpServer: vi.fn(),
+  socketState: { socket: null as { user?: { id: string } } | null },
   // Tripwire: nothing reachable over the QR port may ever call this.
   triggerRepair: vi.fn(),
 }));
@@ -39,6 +40,7 @@ vi.mock("../whatsapp.ts", () => ({
     user: null,
     syncProgress: { chats: 0, contacts: 0, messages: 0, lastBatchAt: null },
   }),
+  socketState: h.socketState,
   triggerRepair: h.triggerRepair,
   transcribeMediaMessage: vi.fn(),
 }));
@@ -99,6 +101,10 @@ describe("startServers", () => {
     vi.stubEnv("STREAM_SERVER_PORT", "0");
     vi.stubEnv("S3_ENABLED", undefined);
     vi.stubEnv("MCP_AUTH_TOKEN", undefined);
+    vi.stubEnv("INSTANCE_LABEL", undefined);
+    vi.stubEnv("INSTANCE_DESCRIPTION", undefined);
+    vi.stubEnv("EXPECTED_WA_NUMBER", undefined);
+    h.socketState.socket = null;
   });
 
   afterEach(async () => {
@@ -149,6 +155,50 @@ describe("startServers", () => {
 
     expect((await res.json()).status).toBe("disconnected");
     expect(h.startWhatsAppConnection).not.toHaveBeenCalled();
+  });
+
+  describe("instance identity", () => {
+    const qrUrl = (r: RunningServers, route: string) => `http://127.0.0.1:${portOf(r.qr)}${route}`;
+
+    it("passes no identity on, and leaves the QR page and /health unlabelled, without INSTANCE_LABEL", async () => {
+      vi.stubEnv("INSTANCE_DESCRIPTION", "orphan description");
+
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      expect(h.startMcpServer).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+      expect(await (await fetch(qrUrl(running, "/"))).text()).toContain(
+        "<title>WhatsApp MCP \u2014 disconnected</title>",
+      );
+      expect(await (await fetch(qrUrl(running, "/health"))).json()).not.toHaveProperty("instance");
+    });
+
+    it("reads the identity once and hands it to the MCP server, the QR page and /health", async () => {
+      vi.stubEnv("INSTANCE_LABEL", " Empresa ");
+      vi.stubEnv("INSTANCE_DESCRIPTION", "the company line");
+
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+
+      const identity = { label: "empresa", description: "the company line" };
+      expect(h.startMcpServer).toHaveBeenCalledWith(expect.anything(), expect.anything(), identity);
+      expect(await (await fetch(qrUrl(running, "/"))).text()).toContain(
+        "<title>WhatsApp MCP [empresa] \u2014 disconnected</title>",
+      );
+      expect((await (await fetch(qrUrl(running, "/health"))).json()).instance).toEqual(identity);
+    });
+
+    it("reports the last four digits of the socket's paired number on /health, live", async () => {
+      vi.stubEnv("INSTANCE_LABEL", "empresa");
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+      const health = async () => (await fetch(qrUrl(running as RunningServers, "/health"))).json();
+
+      expect(await health()).not.toHaveProperty("phone_last4");
+
+      h.socketState.socket = { user: { id: "5500000001234:7@s.whatsapp.net" } };
+      expect((await health()).phone_last4).toBe("1234");
+
+      h.socketState.socket = null;
+      expect(await health()).not.toHaveProperty("phone_last4");
+    });
   });
 
   it("never unlinks WhatsApp from the QR port: POST /repair and POST / do not reach triggerRepair", async () => {
