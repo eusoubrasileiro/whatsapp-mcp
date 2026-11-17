@@ -391,6 +391,18 @@ describe("logging in", () => {
     expect(justRight.status).toBe(303);
   });
 
+  it("takes a login body of exactly 2048 bytes and refuses one byte more", async () => {
+    const { url } = await startHub();
+    const form = `${loginForm(TEST_PIN)}&junk=`;
+    const padded = (bytes: number) => form + "x".repeat(bytes - form.length);
+
+    const atLimit = await request(url, "/_hub/login", { method: "POST", body: padded(2048) });
+    const oneMore = await request(url, "/_hub/login", { method: "POST", body: padded(2049) });
+
+    expect(atLimit.status).toBe(303);
+    expect(oneMore.status).toBe(413);
+  });
+
   it("does not take GET on the login path for an attempt", async () => {
     const h = await startHub();
     const cookie = await h.login();

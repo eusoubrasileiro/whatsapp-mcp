@@ -341,10 +341,13 @@ describe("counters survive a restart", () => {
     ]);
   });
 
-  it("drops addresses whose lock and window have both ended", () => {
+  it.each([
+    ["exactly 15 minutes", 15 * MIN],
+    ["16 minutes", 16 * MIN],
+  ])("drops an address whose window ended: its only wrong PIN is %s old", (_name, age) => {
     const g = gate();
     g.attempt("old-address", "bad");
-    clock += 16 * MIN;
+    clock += age;
     g.attempt("new-address", "bad");
 
     const addresses = JSON.parse(fs.readFileSync(attemptsFile(), "utf8")).addresses;
@@ -375,6 +378,7 @@ describe("counters survive a restart", () => {
     ["not JSON", "this is not json"],
     ["an empty file", ""],
     ["a JSON array", "[]"],
+    ["the JSON value null", "null"],
     ["no global bucket", JSON.stringify({ addresses: {} })],
     ["no address table", JSON.stringify({ global: { failures: [], lockedUntil: 0 } })],
     ["a bucket without failures", JSON.stringify({ global: { lockedUntil: 0 }, addresses: {} })],
