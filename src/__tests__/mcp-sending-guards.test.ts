@@ -63,12 +63,12 @@ afterEach(() => {
 
 type Tool = { name: string; execute: (args: never) => Promise<string> };
 
-function tools() {
+function tools(identity?: { label: string; description?: string } | null) {
   const registered: Record<string, Tool> = {};
   const logger = pino({ level: "silent" });
   registerSendingTools(
     { addTool: ((t: Tool) => (registered[t.name] = t)) as never },
-    { mcpLogger: logger, waLogger: logger },
+    { mcpLogger: logger, waLogger: logger, identity },
   );
   return registered;
 }
@@ -226,6 +226,64 @@ describe("send_file guards", () => {
     ).rejects.toThrow(/not on WhatsApp/i);
 
     expect(sendWhatsAppMedia).not.toHaveBeenCalled();
+  });
+});
+
+/** Which line a send came from, at the tool boundary (instance identity). */
+describe("send results name the line", () => {
+  beforeEach(() => {
+    resetAckBus();
+    resetRecipientCache();
+    sendWhatsAppMessage.mockReset().mockResolvedValue({ key: { id: "m1" } });
+    sendWhatsAppMedia.mockReset().mockResolvedValue({ key: { id: "f1" } });
+    onWhatsApp.mockReset().mockResolvedValue([GOOD]);
+    process.env.SEND_ACK_WAIT_MS = "10";
+  });
+
+  afterEach(() => {
+    delete process.env.SEND_ACK_WAIT_MS;
+  });
+
+  const message = { recipient: "551100000011@s.whatsapp.net", message: "hi" } as never;
+  const file = {
+    recipient: "551100000011@s.whatsapp.net",
+    file_path: "https://example.com/a.jpg",
+    type: "image",
+  } as never;
+
+  it("send_message returns today's exact string when no identity is set", async () => {
+    expect(await tools().send_message!.execute(message)).toBe(
+      "Message sent successfully to 10000000000005@lid (ID: m1).",
+    );
+    expect(await tools(null).send_message!.execute(message)).toBe(
+      "Message sent successfully to 10000000000005@lid (ID: m1).",
+    );
+  });
+
+  it("send_message ends with the line when an identity is set", async () => {
+    expect(await tools({ label: "empresa" }).send_message!.execute(message)).toBe(
+      'Message sent successfully to 10000000000005@lid (ID: m1). Sent from the "empresa" line.',
+    );
+  });
+
+  it("send_file returns today's exact string when no identity is set", async () => {
+    expect(await tools().send_file!.execute(file)).toBe(
+      "Image sent successfully to 10000000000005@lid (ID: f1).",
+    );
+  });
+
+  it("send_file ends with the line when an identity is set", async () => {
+    expect(await tools({ label: "empresa" }).send_file!.execute(file)).toBe(
+      'Image sent successfully to 10000000000005@lid (ID: f1). Sent from the "empresa" line.',
+    );
+  });
+
+  it("a refused send still throws, and the error does not claim the line", async () => {
+    onWhatsApp.mockResolvedValue([{ exists: false }]);
+
+    await expect(tools({ label: "empresa" }).send_message!.execute(message)).rejects.toThrow(
+      /not on WhatsApp/i,
+    );
   });
 });
 

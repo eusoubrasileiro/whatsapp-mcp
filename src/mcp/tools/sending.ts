@@ -6,6 +6,7 @@ import { resolveRecipient } from "../../recipient.ts";
 import { assertSendAccepted, getSendAckWaitMs, isPresendCheckEnabled } from "../../send-guard.ts";
 import { applySendPolicy } from "../../send-policy.ts";
 import { sendWhatsAppMedia, sendWhatsAppMessage } from "../../whatsapp.ts";
+import { formatFileSent, formatMessageSent } from "./send-results.ts";
 import type { ToolDeps, ToolRegistrar } from "./types.ts";
 
 const ALLOW_COLD_DESCRIPTION =
@@ -29,6 +30,7 @@ function ownJidsOf(socket: ReturnType<typeof assertSocketActive>): string[] {
 
 export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): void {
   const { mcpLogger, waLogger } = deps;
+  const identity = deps.identity ?? null;
 
   /**
    * Verify the recipient exists and upgrade it to its canonical LID.
@@ -83,7 +85,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
         // sendMessage() resolving only means "written to the socket". Wait for a
         // possible refusal so we never report a phantom delivery.
         await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
-        return `Message sent successfully to ${target} (ID: ${result.key.id}).`;
+        return formatMessageSent(target, result.key.id, identity);
       } else {
         throw new Error(`Failed to send message to ${target}.`);
       }
@@ -137,7 +139,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
 
       if (result?.key?.id) {
         await assertSendAccepted(result.key.id, target, getSendAckWaitMs());
-        return `${type.charAt(0).toUpperCase() + type.slice(1)} sent successfully to ${target} (ID: ${result.key.id}).`;
+        return formatFileSent(type, target, result.key.id, identity);
       } else {
         throw new Error(
           `Failed to send ${type} to ${target} (no message ID returned — socket may be disconnected)`,
