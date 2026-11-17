@@ -66,13 +66,15 @@ describe("the hub's import graph", () => {
         "hub/config.ts",
         "hub/page.ts",
         "ntfy.ts",
+        "instance-identity.ts",
       ]),
     );
   });
 
-  it("reaches nothing in src/ but the hub itself and the push-notification helper", () => {
+  it("reaches nothing in src/ but the hub itself, the push-notification helper and its identity reader", () => {
+    const allowed = ["ntfy.ts", "instance-identity.ts"];
     const outside = relative.filter(
-      (file) => !file.startsWith(`hub${path.sep}`) && file !== "ntfy.ts",
+      (file) => !file.startsWith(`hub${path.sep}`) && !allowed.includes(file),
     );
 
     expect(outside).toEqual([]);
