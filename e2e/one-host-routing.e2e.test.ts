@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { identityParagraph } from "../src/instance-identity.ts";
+import { appServerEnv, only, pick } from "./support/app-env.ts";
 import { type RenderedCompose, type RenderedService, renderCompose } from "./support/compose.ts";
 import { type E2eHub, startHub } from "./support/hub.ts";
 import { type Fetcher, initializeRequest, openSession, post } from "./support/mcp-client.ts";
@@ -62,24 +63,7 @@ const REFUSED = [403, 404];
 
 const secret = (bytes = 16) => randomBytes(bytes).toString("hex");
 const url = (pathAndQuery: string) => `https://${HOST}${pathAndQuery}`;
-const only = (services: Record<string, RenderedService>, key: string): RenderedService => {
-  const service = services[key];
-  if (!service) throw new Error(`no service ${key} in ${Object.keys(services)}`);
-  return service;
-};
 
-/** The settings the app reads that the compose file gives a number's container. */
-const APP_SETTINGS = [
-  "INSTANCE_LABEL",
-  "INSTANCE_DESCRIPTION",
-  "TENANT_ID",
-  "UPLOAD_PUBLIC_URL",
-  "MEDIA_PUBLIC_BASE_URL",
-  "STREAM_PUBLIC_URL",
-  "PUBLIC_QR_URL",
-  "EXPECTED_WA_NUMBER",
-  "S3_BUCKET",
-];
 /** The same for the hub (its address book and PIN are the harness's own). */
 const HUB_SETTINGS = [
   "HUB_COOKIE_KEY",
@@ -89,17 +73,6 @@ const HUB_SETTINGS = [
   "NTFY_TOPIC_URL",
   "NTFY_TOKEN",
 ];
-
-function pick(service: RenderedService, keys: string[]): Record<string, string> {
-  const env = service.environment ?? {};
-  return Object.fromEntries(
-    keys.map((key) => {
-      const value = env[key];
-      if (value === undefined) throw new Error(`the rendered service has no ${key}`);
-      return [key, value];
-    }),
-  );
-}
 
 describe("the label converter", () => {
   const GOOD: Record<string, string> = {
@@ -231,18 +204,6 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
     });
   }
 
-  /** Where a server of this harness finds its own number's store: loopback, that store's pair. */
-  function storeEnv(label: Label): Record<string, string> {
-    const env = rendered[label].environment ?? {};
-    return {
-      S3_ENDPOINT: "127.0.0.1",
-      S3_PORT: String(stores[label].port),
-      S3_USE_SSL: "false",
-      S3_ACCESS_KEY: env.S3_ACCESS_KEY as string,
-      S3_SECRET_KEY: env.S3_SECRET_KEY as string,
-    };
-  }
-
   /** Container port (from the instance's own env) to the local process that stands in for it. */
   function portsOf(service: RenderedService, server: E2eServer): Record<string, string> {
     const env = service.environment ?? {};
@@ -291,7 +252,7 @@ describe("two numbers and the hub behind one host, on Traefik", () => {
         servers[label] = await startServer({
           s3: true,
           dataDir,
-          env: { ...pick(rendered[label], APP_SETTINGS), ...storeEnv(label) },
+          env: appServerEnv(rendered[label], stores[label]),
         });
       }),
     );
