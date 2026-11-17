@@ -38,7 +38,7 @@
 #   MINIO_ROOT_PASSWORD   S3 root secret of the shared RustFS
 # Optional:
 #   INSTANCE_DESCRIPTION  one line the hub shows next to the label
-#   HUB_INSTANCE_SECRET   same value as in the shared stack's env
+#   HUB_INSTANCE_SECRET   same value as in the shared stack's env; lets the hub unlink this number
 #   INSTANCE_DATA_DIR     host directory for this number's data (default /storage/whatsapp-mcp-<label>)
 #   TENANT_ID             media key prefix t/<tenant>/ (default: the label)
 #   SEND_COLD_OVERRIDE    anti-ban policy for this number: deny (default) | allow

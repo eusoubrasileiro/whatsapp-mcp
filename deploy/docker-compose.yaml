@@ -30,7 +30,8 @@
 #   HUB_COOKIE_KEY        signs the hub's session cookie (openssl rand -hex 32)
 #   HUB_INSTANCES         the numbers the hub lists
 # Optional:
-#   HUB_INSTANCE_SECRET   shared with every number's env file, lets the hub read them
+#   HUB_INSTANCE_SECRET   shared with every number's env file; authenticates the hub's
+#                         "unlink this number" call. Empty: the hub offers no unlink.
 #   HUB_LANG              hub page language (default en)
 #   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
 #   NTFY_TOKEN            only if the ntfy topic is protected
