@@ -1,8 +1,11 @@
 import type { Logger } from "pino";
+import { readInstanceIdentity } from "./instance-identity.ts";
 
 export type NtfyConfig = {
   topicUrl: string;
   token?: string;
+  /** Put in front of every push title, e.g. `[empresa] ` — which WhatsApp line is calling. */
+  titlePrefix?: string;
 };
 
 export type NtfyMessage = {
@@ -15,12 +18,21 @@ export type NtfyMessage = {
 
 export type SendNtfy = (msg: NtfyMessage) => Promise<void>;
 
-/** ntfy settings from the environment, or `null` (pushes become no-ops) when no topic is set. */
+/**
+ * ntfy settings from the environment, or `null` (pushes become no-ops) when no topic is set.
+ * With an instance identity, every title gets `[<label>] ` in front — here, in the config, so
+ * no call site has to remember it.
+ */
 export function resolveNtfyConfig(
   env: Record<string, string | undefined> = process.env,
 ): NtfyConfig | null {
   if (!env.NTFY_TOPIC_URL) return null;
-  return { topicUrl: env.NTFY_TOPIC_URL, token: env.NTFY_TOKEN };
+  const identity = readInstanceIdentity(env);
+  return {
+    topicUrl: env.NTFY_TOPIC_URL,
+    token: env.NTFY_TOKEN,
+    ...(identity ? { titlePrefix: `[${identity.label}] ` } : {}),
+  };
 }
 
 export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy {
@@ -28,7 +40,7 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
     return async () => {};
   }
 
-  const { topicUrl, token } = config;
+  const { topicUrl, token, titlePrefix = "" } = config;
 
   // HTTP header values must be Latin-1 (bytes 0-255). Strip anything above
   // so em-dashes and other Unicode glyphs don't crash fetch on Title/Tags/Click.
@@ -39,7 +51,8 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
   const toLatin1 = (s: string): string => s.replace(/[^\x00-\xff]/g, "");
 
   return async (msg) => {
-    const headers: Record<string, string> = { Title: toLatin1(msg.title) };
+    const title = `${titlePrefix}${msg.title}`;
+    const headers: Record<string, string> = { Title: toLatin1(title) };
     if (msg.priority !== undefined) headers.Priority = String(msg.priority);
     if (msg.tags && msg.tags.length > 0) headers.Tags = toLatin1(msg.tags.join(","));
     if (msg.click) headers.Click = toLatin1(msg.click);
@@ -55,7 +68,7 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
         logger.warn({ status: res.status, topicUrl }, "ntfy returned non-2xx status");
         return;
       }
-      logger.info({ title: msg.title }, "ntfy push sent");
+      logger.info({ title }, "ntfy push sent");
     } catch (err) {
       logger.warn({ err, topicUrl }, "ntfy fetch failed");
     }
