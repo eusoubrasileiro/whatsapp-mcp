@@ -8,7 +8,7 @@ export const REQUEST_TIMEOUT_MS = 1000;
 type HubState = "connected" | "waiting_qr" | "starting" | "disconnected" | "down" | "mismatch";
 
 /** Everything the hub knows, and is willing to say, about one number. Nothing else leaves. */
-interface InstanceView {
+export interface InstanceView {
   label: string;
   description: string | null;
   phone_last4: string | null;
