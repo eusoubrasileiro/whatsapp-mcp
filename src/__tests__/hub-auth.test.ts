@@ -561,3 +561,78 @@ describe("session cookie", () => {
     },
   );
 });
+
+describe("unlink form token", () => {
+  const sessionHeader = (g: PinGate) => g.issueCookie().split(";")[0];
+  const sessionId = (header: string) => header.split(".")[2];
+
+  it("is the same for the same session and number, and is not the session's own secret", () => {
+    const g = gate();
+    const header = sessionHeader(g);
+
+    const token = g.csrfToken(header, "personal");
+
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(g.csrfToken(header, "personal")).toBe(token);
+    expect(header).not.toContain(token ?? "");
+  });
+
+  it("is the HMAC of the session id, the label and the word unlink, under the signing key", () => {
+    const g = gate();
+    const header = sessionHeader(g);
+
+    expect(g.csrfToken(header, "personal")).toBe(
+      createHmac("sha256", KEY)
+        .update(`csrf:${sessionId(header)}:personal:unlink`)
+        .digest("hex"),
+    );
+  });
+
+  it("differs per number and per session", () => {
+    const g = gate();
+    const one = sessionHeader(g);
+    const two = sessionHeader(g);
+
+    expect(g.csrfToken(one, "personal")).not.toBe(g.csrfToken(one, "empresa"));
+    expect(g.csrfToken(one, "personal")).not.toBe(g.csrfToken(two, "personal"));
+  });
+
+  it("is refused for a session that another signing key issued", () => {
+    const header = sessionHeader(gate());
+    const other = gate({ cookieKey: "another-signing-key-0123456789abcdefgh" });
+
+    expect(other.csrfToken(header, "a")).toBeNull();
+  });
+
+  it.each([
+    ["no cookie", undefined],
+    ["an empty cookie", ""],
+    ["a forged cookie", `wa_hub=v1.9999999999.${"a".repeat(24)}.forged`],
+    ["an unrelated cookie", "theme=dark"],
+  ])("gives no token for %s", (_name, header) => {
+    expect(gate().csrfToken(header, "personal")).toBeNull();
+    expect(gate().csrfMatches(header, "personal", "anything")).toBe(false);
+  });
+
+  it("gives no token once the session has expired", () => {
+    const g = gate();
+    const header = sessionHeader(g);
+    clock += 31 * 24 * 60 * MIN;
+
+    expect(g.csrfToken(header, "personal")).toBeNull();
+  });
+
+  it("matches only its own token, for its own number, in its own session", () => {
+    const g = gate();
+    const header = sessionHeader(g);
+    const token = g.csrfToken(header, "personal") ?? "";
+
+    expect(g.csrfMatches(header, "personal", token)).toBe(true);
+    expect(g.csrfMatches(header, "empresa", token)).toBe(false);
+    expect(g.csrfMatches(sessionHeader(g), "personal", token)).toBe(false);
+    expect(g.csrfMatches(header, "personal", "")).toBe(false);
+    expect(g.csrfMatches(header, "personal", token.slice(0, -1))).toBe(false);
+    expect(g.csrfMatches(header, "personal", `${token}0`)).toBe(false);
+    expect(g.csrfMatches(header, "personal", token.toUpperCase())).toBe(false);
+  });
+});

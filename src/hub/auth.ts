@@ -30,6 +30,14 @@ export interface PinGate {
   issueCookie(): string;
   /** Whether a `Cookie` request header carries a genuine, unexpired session. */
   hasSession(cookieHeader: string | undefined): boolean;
+  /**
+   * The anti-forgery token of the unlink form for number `label`, bound to this session: an
+   * HMAC of the session's random id, the label and the word unlink. `null` without a genuine
+   * session.
+   */
+  csrfToken(cookieHeader: string | undefined, label: string): string | null;
+  /** Whether `submitted` is exactly that token, compared in constant time. */
+  csrfMatches(cookieHeader: string | undefined, label: string, submitted: string): boolean;
 }
 
 export interface PinGateOptions {
@@ -138,6 +146,28 @@ export function createPinGate(options: PinGateOptions): PinGate {
 
   const hmac = (text: string) => createHmac("sha256", cookieKey).update(text);
 
+  /** The random id of a genuine, unexpired session, or `null`. */
+  function sessionId(cookieHeader: string | undefined): string | null {
+    const parts = cookieValue(cookieHeader)?.split(".") ?? [];
+    if (parts.length !== 4) return null;
+    const [version, expires, id, signature] = parts;
+    if (version !== COOKIE_VERSION || !/^\d+$/.test(expires) || !/^[0-9a-f]{24}$/.test(id)) {
+      return null;
+    }
+    const expected = hmac(`${version}.${expires}.${id}`).digest();
+    const given = Buffer.from(signature, "base64url");
+    const genuine =
+      given.length === expected.length &&
+      given.toString("base64url") === signature &&
+      timingSafeEqual(given, expected);
+    return genuine && Number(expires) > Math.floor(now() / 1000) ? id : null;
+  }
+
+  function csrfToken(cookieHeader: string | undefined, label: string): string | null {
+    const id = sessionId(cookieHeader);
+    return id === null ? null : hmac(`csrf:${id}:${label}:unlink`).digest("hex");
+  }
+
   /** Drops what no longer matters, then writes the file whole (temp file, then rename). */
   function persist(at: number): void {
     for (const [key, bucket] of Object.entries(counters.addresses)) {
@@ -186,19 +216,14 @@ export function createPinGate(options: PinGateOptions): PinGate {
     },
 
     hasSession(cookieHeader) {
-      const parts = cookieValue(cookieHeader)?.split(".") ?? [];
-      if (parts.length !== 4) return false;
-      const [version, expires, id, signature] = parts;
-      if (version !== COOKIE_VERSION || !/^\d+$/.test(expires) || !/^[0-9a-f]{24}$/.test(id)) {
-        return false;
-      }
-      const expected = hmac(`${version}.${expires}.${id}`).digest();
-      const given = Buffer.from(signature, "base64url");
-      const genuine =
-        given.length === expected.length &&
-        given.toString("base64url") === signature &&
-        timingSafeEqual(given, expected);
-      return genuine && Number(expires) > Math.floor(now() / 1000);
+      return sessionId(cookieHeader) !== null;
+    },
+
+    csrfToken,
+
+    csrfMatches(cookieHeader, label, submitted) {
+      const expected = csrfToken(cookieHeader, label);
+      return expected !== null && sameSecret(submitted, expected);
     },
   };
 }

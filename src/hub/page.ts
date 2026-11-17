@@ -1,6 +1,7 @@
 import type { InstanceView } from "./poller.ts";
 import { en, fill, type Strings } from "./strings.ts";
 import { STYLE } from "./style.ts";
+import type { UnlinkOutcome } from "./unlink.ts";
 
 /** How often the page asks `/_hub/status.json` for the current picture. */
 export const PAGE_POLL_INTERVAL_MS = 2000;
@@ -100,12 +101,16 @@ ${snippet(id("command"), t.connect.commandTitle, command, t)}
 </details>`;
 }
 
-function renderCard(
-  view: InstanceView,
-  target: string | null,
-  publicUrl: string,
-  t: Strings,
-): string {
+/** What every card needs besides its own view. */
+interface CardContext {
+  target: string | null;
+  publicUrl: string;
+  /** Whether the hub can unlink numbers: the card then links to the confirmation page. */
+  canUnlink: boolean;
+  t: Strings;
+}
+
+function renderCard(view: InstanceView, { target, publicUrl, canUnlink, t }: CardContext): string {
   const showQr = view.state === "waiting_qr" && view.qr_rev !== null;
   const label = escapeHtml(view.label);
   const classes = view.label === target ? "card is-target" : "card";
@@ -119,6 +124,7 @@ function renderCard(
 <div class="qr-frame"><img class="qr-img" data-role="qr-img" width="512" height="512" alt="${escapeHtml(fill(t.scan.imageAlt, { label: view.label }))}"${showQr ? ` src="${escapeHtml(qrUrl(view))}"` : ""}></div>
 </div>
 ${renderConnect(view, publicUrl, t)}
+${canUnlink ? `<a class="unlink-link" href="/_hub/unlink/${label}">${escapeHtml(t.unlink.open)}</a>` : ""}
 </article>`;
 }
 
@@ -248,6 +254,8 @@ export interface HubPageOptions {
   target?: string | null;
   /** A label that was asked for and does not exist; the page says so. */
   unknownLabel?: string | null;
+  /** Show "unlink this number" on every card. Only when the hub holds the instances' secret. */
+  canUnlink?: boolean;
   t?: Strings;
 }
 
@@ -256,12 +264,18 @@ export function renderHubPage(options: HubPageOptions): string {
   const notice = options.unknownLabel
     ? `<p class="notice" role="alert">${escapeHtml(fill(t.unknownLabel, { label: options.unknownLabel }))}</p>`
     : "";
+  const card: CardContext = {
+    target: options.target ?? null,
+    publicUrl: options.publicUrl,
+    canUnlink: options.canUnlink ?? false,
+    t,
+  };
   const body = `<div class="wrap">
 <header class="top"><h1>${escapeHtml(t.title)}</h1><p class="live">${escapeHtml(t.liveNote)}</p></header>
 <p class="offline" id="offline" role="alert" hidden>${escapeHtml(t.offline)}</p>
 ${notice}
 <main class="cards">
-${options.views.map((view) => renderCard(view, options.target ?? null, options.publicUrl, t)).join("\n")}
+${options.views.map((view) => renderCard(view, card)).join("\n")}
 </main>
 </div>`;
   return document({
@@ -309,4 +323,83 @@ export function renderLockedPage(options: { nonce: string; t?: Strings }): strin
 </div>
 </main>`;
   return document({ nonce: options.nonce, lang: t.htmlLang, title: t.pin.lockedTitle, body });
+}
+
+/** Why the confirmation page is being shown again: the key of the sentence in `t.unlink`. */
+export type UnlinkError = "expired" | "locked" | "wrongPin" | "wrongLabel";
+
+export interface UnlinkPageOptions {
+  nonce: string;
+  view: InstanceView;
+  /** The form's anti-forgery token for this session and number. */
+  csrf: string;
+  /** Show this refusal above the form. */
+  error?: UnlinkError | null;
+  t?: Strings;
+}
+
+/** The confirmation page: what unlinking does, the restriction rule, and the form that does it. */
+export function renderUnlinkPage(options: UnlinkPageOptions): string {
+  const t = options.t ?? en;
+  const { view } = options;
+  const label = escapeHtml(view.label);
+  const who = [
+    view.description,
+    view.phone_last4 ? fill(t.numberEnding, { last4: view.phone_last4 }) : null,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .map(escapeHtml)
+    .join(" · ");
+  const error = options.error
+    ? `<p class="error" role="alert">${escapeHtml(t.unlink[options.error])}</p>`
+    : "";
+  const body = `<main class="gate">
+<form class="gate-card unlink" method="post" action="/_hub/unlink/${label}">
+<h1>${escapeHtml(fill(t.unlink.title, { label: view.label }))}</h1>
+${who ? `<p class="who">${who}</p>` : ""}
+${error}
+<section class="warning" role="note">
+<h2>${escapeHtml(t.unlink.warningTitle)}</h2>
+<p>${escapeHtml(t.unlink.warning)}</p>
+</section>
+<p class="effect">${escapeHtml(fill(t.unlink.effect, { label: view.label }))}</p>
+<label for="pin">${escapeHtml(t.unlink.pinField)}</label>
+<input id="pin" class="pin" name="pin" type="password" autocomplete="current-password" required>
+<label for="label">${escapeHtml(fill(t.unlink.labelField, { label: view.label }))}</label>
+<input id="label" class="pin" name="label" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+<input type="hidden" name="csrf" value="${escapeHtml(options.csrf)}">
+<button class="btn btn-danger" type="submit">${escapeHtml(fill(t.unlink.submit, { label: view.label }))}</button>
+<a class="cancel" href="/">${escapeHtml(t.unlink.cancel)}</a>
+</form>
+</main>`;
+  return document({
+    nonce: options.nonce,
+    lang: t.htmlLang,
+    title: fill(t.unlink.title, { label: view.label }),
+    body,
+  });
+}
+
+/** What the hub says after it asked: never the instance's own words, only these. */
+export function renderUnlinkResult(options: {
+  nonce: string;
+  label: string;
+  outcome: UnlinkOutcome;
+  t?: Strings;
+}): string {
+  const t = options.t ?? en;
+  const words = {
+    unlinked: [t.unlink.unlinkedTitle, t.unlink.unlinked],
+    not_connected: [t.unlink.notConnectedTitle, t.unlink.notConnected],
+    failed: [t.unlink.failedTitle, t.unlink.failed],
+  }[options.outcome];
+  const [title, sentence] = words;
+  const body = `<main class="gate">
+<div class="gate-card">
+<h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(fill(sentence, { label: options.label }))}</p>
+<a class="btn" href="/">${escapeHtml(t.unlink.back)}</a>
+</div>
+</main>`;
+  return document({ nonce: options.nonce, lang: t.htmlLang, title, body });
 }

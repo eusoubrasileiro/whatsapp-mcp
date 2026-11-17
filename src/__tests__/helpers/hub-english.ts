@@ -22,9 +22,18 @@ const SENTINELS = flatten(en)
   )
   .filter((fragment) => fragment.length >= 5);
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `fragment` as whole words: "Cancel" is in "Cancel", and is not in "Cancelar". */
+function containsWords(html: string, fragment: string): boolean {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(fragment)}(?![\\p{L}\\p{N}])`, "u").test(
+    html,
+  );
+}
+
 /** The English sentences or sentence fragments that appear in `html`, escaped or not. */
 export function englishLeaks(html: string): string[] {
   return SENTINELS.filter(
-    (fragment) => html.includes(fragment) || html.includes(escapeHtml(fragment)),
+    (fragment) => containsWords(html, fragment) || containsWords(html, escapeHtml(fragment)),
   );
 }

@@ -19,6 +19,11 @@ export interface HubConfig {
   ntfy: NtfyConfig | null;
   /** The language of every page. */
   lang: HubLang;
+  /**
+   * The secret the hub presents to an instance to unlink its number, shared with every
+   * instance's `HUB_INSTANCE_SECRET`. `null` when unset: the unlink action does not exist.
+   */
+  instanceSecret: string | null;
 }
 
 /**
@@ -115,6 +120,21 @@ function parseLang(raw: string | undefined, problems: string[]): HubLang {
   return HUB_LANGS[0];
 }
 
+/** The shortest unlink secret the hub accepts. An instance ignores a shorter one. */
+const MIN_INSTANCE_SECRET_LENGTH = 32;
+
+/** `HUB_INSTANCE_SECRET`: unset or empty turns unlinking off, anything else must be long enough. */
+function parseInstanceSecret(raw: string | undefined, problems: string[]): string | null {
+  if (!raw) return null;
+  if (raw.length < MIN_INSTANCE_SECRET_LENGTH) {
+    problems.push(
+      `HUB_INSTANCE_SECRET must be at least ${MIN_INSTANCE_SECRET_LENGTH} characters (leave it unset to turn unlinking off)`,
+    );
+    return null;
+  }
+  return raw;
+}
+
 function checkStateDir(dir: string | undefined, problems: string[]): void {
   let usable = false;
   try {
@@ -146,6 +166,7 @@ export function loadHubConfig(env: Env): HubConfig {
   const publicUrl = parsePublicUrl(env.HUB_PUBLIC_URL, problems);
   const port = parsePort(env.HUB_PORT, problems);
   const lang = parseLang(env.HUB_LANG, problems);
+  const instanceSecret = parseInstanceSecret(env.HUB_INSTANCE_SECRET, problems);
   checkStateDir(env.HUB_STATE_DIR, problems);
 
   if (problems.length > 0) throw new HubConfigError(problems);
@@ -160,5 +181,6 @@ export function loadHubConfig(env: Env): HubConfig {
     port,
     ntfy: resolveNtfyConfig(env),
     lang,
+    instanceSecret,
   };
 }

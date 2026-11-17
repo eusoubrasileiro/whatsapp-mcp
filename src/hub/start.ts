@@ -6,6 +6,7 @@ import { HubConfigError, loadHubConfig } from "./config.ts";
 import { createPoller } from "./poller.ts";
 import { createHubListener } from "./server.ts";
 import { stringsFor } from "./strings.ts";
+import { createUnlinker } from "./unlink.ts";
 
 /** A slow client must not hold a connection open for ever. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -48,6 +49,9 @@ export async function startHub(
       gate,
       logger,
       publicUrl: config.publicUrl,
+      unlink: config.instanceSecret
+        ? createUnlinker({ secret: config.instanceSecret, instances: config.instances })
+        : null,
       t: stringsFor(config.lang),
     }),
   );
