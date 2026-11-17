@@ -1,6 +1,9 @@
 # whatsapp-mcp, one WhatsApp number. The same file runs every number: each runs as its own
 # compose project (`whatsapp-mcp-<label>`), reached at https://${PUBLIC_DOMAIN}/<label>/.
-# The shared RustFS and the hub live in docker-compose.yaml and must be up first.
+# A number is the app and its own media store (RustFS), side by side in that project: its own
+# data directory, its own credentials, its own memory ceiling and its own media route. Nothing
+# of one number can open another's media. The hub page (docker-compose.yaml) is the only
+# thing shared, and a number does not depend on it.
 #
 # Each number has its own self-contained env file, deploy/.env.<label> (chmod 600, gitignored;
 # template in instance.env.example). It holds COMPOSE_FILE=docker-compose.instance.yaml, so
@@ -14,7 +17,9 @@
 #
 # A number that already has data from the single-instance layout keeps it where it is: set
 # INSTANCE_DATA_DIR and TENANT_ID in its env file (see instance.env.example), and stop the old
-# `whatsapp-mcp` container first. Two processes on one pairing log each other out.
+# `whatsapp-mcp` container first. Two processes on one pairing log each other out. Its media
+# store lives under that directory too (`<INSTANCE_DATA_DIR>/minio`), so the objects already
+# written stay where they are. Never run two stores on one directory.
 #
 # Assumes an existing Traefik attached to the external `network_public` network, with a
 # `websecure` entrypoint and a certresolver named `myresolver`. Adjust the labels if yours
@@ -25,8 +30,11 @@
 #   /<label>/mcp      → port 39001 (Bearer auth enforced by the app)
 #   /<label>/upload   → port 39003 (host-disk file upload, Bearer auth enforced by the app)
 #   /<label>/stream   → port 39004 (follow_chat WebSocket stream, token-gated by the app)
-# Media is served by the shared stack at /<label>/media/t/…. Port 39002 (status, QR page) is
-# not routed: the hub reads it over the Docker network and links to /<label>.
+#   /<label>/media/t/… → this number's own store, port 9000 (public read of one object;
+#                       rewritten into the bucket). The bucket root and a listing are NOT
+#                       routed here: they fall through to the hub.
+# Port 39002 (status, QR page) is not routed: the hub reads it over the Docker network and
+# links to /<label>.
 #
 # Required env (deploy/.env.<label>):
 #   INSTANCE              this number's label: lowercase letters, digits, hyphens
@@ -34,8 +42,8 @@
 #   MCP_AUTH_TOKEN        shared secret for MCP clients (openssl rand -hex 32)
 #   NTFY_TOPIC_URL        e.g. https://ntfy.sh/<random-topic>
 #   EXPECTED_WA_NUMBER    the number that is allowed to pair, e.g. 5531…
-#   MINIO_ROOT_USER       S3 root login of the shared RustFS
-#   MINIO_ROOT_PASSWORD   S3 root secret of the shared RustFS
+#   MINIO_ROOT_USER       S3 root login of THIS number's store (its own pair, never shared)
+#   MINIO_ROOT_PASSWORD   S3 root secret of THIS number's store
 # Optional:
 #   INSTANCE_DESCRIPTION  one line the hub shows next to the label
 #   HUB_INSTANCE_SECRET   same value as in the shared stack's env; lets the hub unlink this number
@@ -52,6 +60,7 @@
 #   WATCHDOG_RESTART_AFTER_S  seconds the WhatsApp socket may stay down before the
 #                         process exits for `restart: unless-stopped` (default 600; 0 = off)
 #   WATCHDOG_MAX_RESTARTS self-restarts allowed per rolling 6 h (default 3; 0 = alert only)
+#   STORE_MEM_LIMIT       memory ceiling of this number's store (default 150m)
 name: whatsapp-mcp-${INSTANCE:?set INSTANCE in this number's env file}
 
 services:
@@ -60,7 +69,9 @@ services:
     image: ghcr.io/amiticia-autosys/whatsapp-mcp:latest
     container_name: whatsapp-mcp-${INSTANCE}
     restart: unless-stopped
-    # No depends_on: the RustFS it talks to is in the shared stack, another compose project.
+    depends_on:
+      minio:
+        condition: service_healthy
     environment:
       MCP_TRANSPORT: httpstream
       MCP_HOST: 0.0.0.0
@@ -95,11 +106,12 @@ services:
       # typing) is on by default. See docs/account-restrictions.md.
       SEND_COLD_OVERRIDE: ${SEND_COLD_OVERRIDE:-deny}
       SEND_COLD_ALLOWED_JIDS: ${SEND_COLD_ALLOWED_JIDS:-}
-      # ── S3 media plane (the shared stack's RustFS, by container name) ───
-      # The container name, never the service name `minio`: network_public is shared
-      # with every other stack on the host, so a bare `minio` could be anyone's.
+      # ── S3 media plane (this number's own RustFS, below, by container name) ───
+      # The container name, never the service name `minio`: network_public is shared with
+      # every other stack on the host, and every number's store has that same service key, so a
+      # bare `minio` could be anyone's.
       S3_ENABLED: "true"
-      S3_ENDPOINT: whatsapp-mcp-minio
+      S3_ENDPOINT: whatsapp-mcp-${INSTANCE}-minio
       S3_PORT: "9000"
       S3_USE_SSL: "false"
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
@@ -171,6 +183,52 @@ services:
       - "traefik.http.routers.wa-${INSTANCE}-stream.middlewares=wa-${INSTANCE}-strip"
       - "traefik.http.routers.wa-${INSTANCE}-stream.service=wa-${INSTANCE}-stream-svc"
       - "traefik.http.services.wa-${INSTANCE}-stream-svc.loadbalancer.server.port=39004"
+
+  # This number's own media store. The service key is the same for every number (the project
+  # name keeps them apart), which is why the app reaches it by container name. Runs RustFS;
+  # the key and the env names keep their old `minio` spelling.
+  minio:
+    image: rustfs/rustfs:latest
+    container_name: whatsapp-mcp-${INSTANCE}-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    # The ceiling. memswap_limit is left unset on purpose: Docker's default then lets a burst
+    # spill into swap, up to the size of the ceiling, instead of killing the store; that is
+    # what keeps 16 MiB uploads in parallel alive inside 150m.
+    mem_limit: ${STORE_MEM_LIMIT:-150m}
+    environment:
+      # Required, and this number's own: a number can never start a store on a blank pair.
+      RUSTFS_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in this number's env file}
+      RUSTFS_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in this number's env file}
+    volumes:
+      # Under the number's own data directory, so a host backup of the directory takes the
+      # media with it. The personal number (INSTANCE_DATA_DIR=/storage/whatsapp-mcp) lands
+      # on /storage/whatsapp-mcp/minio, where its objects already are.
+      - ${INSTANCE_DATA_DIR:-/storage/whatsapp-mcp-${INSTANCE}}/minio:/data
+    networks:
+      - network_public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=network_public"
+      # Public media route: https://${PUBLIC_DOMAIN}/<label>/media/t/<key> → this store's
+      # /amiticia-media/t/<key>. Every object key starts with t/<tenant>/, so requiring
+      # /media/t/ keeps the bucket root (and its ?list-type=2 listing) off this router: those
+      # fall through to the hub. Priority 110: while a host is being moved off the old shared
+      # store, whose router matches any label at priority 100, this number's own route wins.
+      - "traefik.http.routers.wa-${INSTANCE}-media.rule=Host(`${PUBLIC_DOMAIN}`) && PathPrefix(`/${INSTANCE}/media/t/`)"
+      - "traefik.http.routers.wa-${INSTANCE}-media.priority=110"
+      - "traefik.http.routers.wa-${INSTANCE}-media.entrypoints=websecure"
+      - "traefik.http.routers.wa-${INSTANCE}-media.tls.certresolver=myresolver"
+      - "traefik.http.routers.wa-${INSTANCE}-media.middlewares=wa-${INSTANCE}-media-rewrite"
+      - "traefik.http.routers.wa-${INSTANCE}-media.service=wa-${INSTANCE}-media-svc"
+      - "traefik.http.middlewares.wa-${INSTANCE}-media-rewrite.replacepathregex.regex=^/${INSTANCE}/media/(.*)"
+      - "traefik.http.middlewares.wa-${INSTANCE}-media-rewrite.replacepathregex.replacement=/amiticia-media/$$1"
+      - "traefik.http.services.wa-${INSTANCE}-media-svc.loadbalancer.server.port=9000"
 
 networks:
   network_public:

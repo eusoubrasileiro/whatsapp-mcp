@@ -6,38 +6,48 @@ import { type RenderedCompose, type RenderedService, renderCompose } from "./sup
 
 /**
  * The one-host deploy shape, rendered by the real `docker compose config` (nothing is ever
- * started): a shared stack (RustFS + hub) and one compose project per WhatsApp number, every
- * number routed at https://<host>/<label>/. The old single-instance file is kept as a fixture,
- * byte for byte, so "today's layout" is something these specs can compare against.
+ * started): a shared stack that is the hub alone, and one compose project per WhatsApp number
+ * holding the number's app and its own media store, every number routed at
+ * https://<host>/<label>/. Two older layouts are kept as fixtures, byte for byte, so "what
+ * production ran before" is something these specs can compare against: the single-instance
+ * file, and the one-host layout at 66c793c (one shared store for every number).
  */
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DEPLOY = path.join(ROOT, "deploy");
 const SHARED_FILE = path.join(DEPLOY, "docker-compose.yaml");
 const INSTANCE_FILE = path.join(DEPLOY, "docker-compose.instance.yaml");
-const TODAY_FILE = path.join(import.meta.dirname, "fixtures", "compose-single-instance.yaml");
+const FIXTURES = path.join(import.meta.dirname, "fixtures");
+const TODAY_FILE = path.join(FIXTURES, "compose-single-instance.yaml");
+const SHARED_66C793C = path.join(FIXTURES, "compose-66c793c-shared.yaml");
+const INSTANCE_66C793C = path.join(FIXTURES, "compose-66c793c-instance.yaml");
 
 const HOST = "wa.e2e.test";
 
 /** What the owner puts in deploy/.env for the shared stack. */
-const SHARED_ENV = {
+const SHARED_ENV: Record<string, string> = {
   PUBLIC_DOMAIN: HOST,
-  MINIO_ROOT_USER: "root-user",
-  MINIO_ROOT_PASSWORD: "root-secret",
   HUB_PIN: "0000",
   HUB_COOKIE_KEY: "cookie-key",
   HUB_INSTANCES: "pessoal,empresa",
 };
 
-/** What the owner puts in deploy/.env.<label> for one number. */
+/** What deploy/.env held at 66c793c: the same, plus the one pair of the shared store. */
+const SHARED_ENV_66C793C = {
+  ...SHARED_ENV,
+  MINIO_ROOT_USER: "root-user",
+  MINIO_ROOT_PASSWORD: "root-secret",
+};
+
+/** What the owner puts in deploy/.env.<label> for one number: its own store pair, never shared. */
 function instanceEnv(instance: string, extra: Record<string, string> = {}): Record<string, string> {
   return {
     COMPOSE_FILE: "docker-compose.instance.yaml",
     INSTANCE: instance,
     PUBLIC_DOMAIN: HOST,
     MCP_AUTH_TOKEN: `token-${instance}`,
-    MINIO_ROOT_USER: "root-user",
-    MINIO_ROOT_PASSWORD: "root-secret",
+    MINIO_ROOT_USER: `user-${instance}`,
+    MINIO_ROOT_PASSWORD: `secret-${instance}`,
     ...extra,
   };
 }
@@ -50,6 +60,9 @@ const PESSOAL_ENV = instanceEnv("pessoal", {
 
 const shared = () => renderCompose({ file: SHARED_FILE, env: SHARED_ENV });
 const instance = (env: Record<string, string>) => renderCompose({ file: INSTANCE_FILE, env });
+const APP = "whatsapp-mcp-instance";
+const app = (env: Record<string, string>) => only(instance(env), APP);
+const store = (env: Record<string, string>) => only(instance(env), "minio");
 
 function only(cfg: RenderedCompose, key: string): RenderedService {
   const service = cfg.services[key];
@@ -91,16 +104,58 @@ function claimedNames(cfg: RenderedCompose): string[] {
   return names;
 }
 
-describe("the shared stack (deploy/docker-compose.yaml)", () => {
-  it("is project whatsapp-mcp with exactly RustFS and the hub, and no bucket-init job", () => {
+/** The layout at 66c793c, rendered with the env it was given then. */
+const shared66 = () => renderCompose({ file: SHARED_66C793C, env: SHARED_ENV_66C793C });
+const instance66 = (env: Record<string, string>) => renderCompose({ file: INSTANCE_66C793C, env });
+
+/** What `shared()` prints for the hub, and what production ran before: they must be equal. */
+const HUB_OPTIONAL = {
+  HUB_LANG: "pt",
+  HUB_INSTANCE_SECRET: "shared-secret",
+  NTFY_TOPIC_URL: "https://ntfy.e2e.test/topic",
+  NTFY_TOKEN: "ntfy-token",
+};
+
+describe("the shared stack (deploy/docker-compose.yaml) is the hub alone", () => {
+  it("is project whatsapp-mcp with exactly the hub: no store, no bucket-init job", () => {
     const cfg = shared();
 
     expect(cfg.name).toBe("whatsapp-mcp");
-    expect(Object.keys(cfg.services).sort()).toEqual(["hub", "minio"]);
+    expect(Object.keys(cfg.services)).toEqual(["hub"]);
     // `rc anonymous set download` would also let anyone LIST the bucket. The app sets a
     // GetObject-only policy on every start (e2e/media-policy.e2e.test.ts proves it).
     expect(JSON.stringify(cfg)).not.toContain("rc anonymous");
-    expect(JSON.stringify(cfg)).not.toContain("rustfs/rc");
+    expect(JSON.stringify(cfg)).not.toContain("rustfs");
+  });
+
+  it("reads no store credential and routes no media path", () => {
+    const text = fs.readFileSync(SHARED_FILE, "utf8");
+    const hub = traefikObjects(only(shared(), "hub"));
+
+    expect(/MINIO_|RUSTFS_|S3_/.test(text.replace(/^\s*#.*$/gm, ""))).toBe(false);
+    expect(Object.keys(hub.routers)).toEqual(["wa-hub"]);
+    expect(JSON.stringify(hub)).not.toContain("media");
+  });
+
+  it("renders without any store variable in its env", () => {
+    expect(Object.keys(SHARED_ENV).filter((key) => /MINIO_|RUSTFS_/.test(key))).toEqual([]);
+    expect(only(shared(), "hub").image).toBeTruthy();
+  });
+
+  it.each([
+    ["every optional setting left at its default", {}],
+    ["every optional setting set", HUB_OPTIONAL],
+  ])("renders the hub exactly as the layout at 66c793c did (%s)", (_name, optional) => {
+    const now = renderCompose({ file: SHARED_FILE, env: { ...SHARED_ENV, ...optional } });
+    const then = renderCompose({
+      file: SHARED_66C793C,
+      env: { ...SHARED_ENV_66C793C, ...optional },
+    });
+
+    // Identical, so the cutover does not recreate the hub.
+    expect(only(now, "hub")).toEqual(only(then, "hub"));
+    expect(now.name).toBe(then.name);
+    expect(now.networks).toEqual(then.networks);
   });
 
   it("runs the hub with exactly the contract env, no number's token and no storage credentials", () => {
@@ -143,32 +198,138 @@ describe("the shared stack (deploy/docker-compose.yaml)", () => {
   });
 
   it("uses the same image for the hub and for a number", () => {
-    expect(only(shared(), "hub").image).toBe(
-      only(instance(instanceEnv("empresa")), "whatsapp-mcp-instance").image,
+    expect(only(shared(), "hub").image).toBe(app(instanceEnv("empresa")).image);
+  });
+
+  it("routes every path no number claims to the hub", () => {
+    const hub = traefikObjects(only(shared(), "hub"));
+
+    expect(hub.routers).toEqual({
+      "wa-hub": {
+        rule: `Host(\`${HOST}\`)`,
+        priority: "1",
+        entrypoints: "websecure",
+        "tls.certresolver": "myresolver",
+        service: "wa-hub-svc",
+      },
+    });
+    expect(hub.services).toEqual({ "wa-hub-svc": { "loadbalancer.server.port": "39002" } });
+    expect(hub.middlewares).toEqual({});
+  });
+});
+
+describe("a number's compose project: the app and its own store", () => {
+  it.each([PESSOAL_ENV, instanceEnv("empresa")])(
+    "holds exactly the app and the store (%#)",
+    (env) => {
+      const cfg = instance(env);
+
+      expect(Object.keys(cfg.services).sort()).toEqual(["minio", APP]);
+      expect(cfg.name).toBe(`whatsapp-mcp-${env.INSTANCE}`);
+    },
+  );
+
+  it("runs the store the way the shared one ran at 66c793c: image, command, healthcheck, restart", () => {
+    const then = only(shared66(), "minio");
+    const now = store(instanceEnv("empresa"));
+
+    expect(now.image).toBe(then.image);
+    expect(now.command).toEqual(then.command);
+    expect(now.healthcheck).toEqual(then.healthcheck);
+    expect(now.restart).toBe(then.restart);
+    expect(now.networks).toEqual(then.networks);
+    expect(now.entrypoint).toEqual(then.entrypoint);
+  });
+
+  it.each(["pessoal", "empresa", "casa-2"])("names the store container after %s", (label) => {
+    const env = label === "pessoal" ? PESSOAL_ENV : instanceEnv(label);
+
+    expect(store(env).container_name).toBe(`whatsapp-mcp-${label}-minio`);
+  });
+
+  it("wires the number's own pair into the store, and the same pair into its app", () => {
+    const env = instanceEnv("empresa", {
+      MINIO_ROOT_USER: "own-user",
+      MINIO_ROOT_PASSWORD: "own-pw",
+    });
+
+    expect(store(env).environment).toEqual({
+      RUSTFS_ROOT_USER: "own-user",
+      RUSTFS_ROOT_PASSWORD: "own-pw",
+    });
+    expect(app(env).environment).toMatchObject({
+      S3_ACCESS_KEY: "own-user",
+      S3_SECRET_KEY: "own-pw",
+    });
+  });
+
+  it("caps the store at 150 MiB, publishes no port of it, and sets no swap limit", () => {
+    const cfg = store(instanceEnv("empresa"));
+
+    expect(cfg.mem_limit).toBe("157286400");
+    expect(cfg.mem_limit).toBe(String(150 * 1024 * 1024));
+    // No memswap_limit: Docker then lets a burst spill into swap instead of killing the store.
+    expect(Object.keys(cfg)).not.toContain("memswap_limit");
+    expect(cfg.ports).toBeUndefined();
+  });
+
+  it("passes STORE_MEM_LIMIT through", () => {
+    expect(store(instanceEnv("empresa", { STORE_MEM_LIMIT: "300m" })).mem_limit).toBe(
+      String(300 * 1024 * 1024),
     );
   });
 
-  it("defaults the hub language to en and passes the others through", () => {
-    const hub = only(
-      renderCompose({
-        file: SHARED_FILE,
-        env: {
-          ...SHARED_ENV,
-          HUB_LANG: "pt",
-          HUB_INSTANCE_SECRET: "shared-secret",
-          NTFY_TOPIC_URL: "https://ntfy.e2e.test/topic",
-          NTFY_TOKEN: "ntfy-token",
-        },
-      }),
-      "hub",
-    );
+  it("keeps a number's data in its own directory, the store's under it", () => {
+    expect(volumesOf(store(PESSOAL_ENV))).toEqual([
+      { source: "/storage/whatsapp-mcp/minio", target: "/data" },
+    ]);
+    expect(volumesOf(store(instanceEnv("empresa")))).toEqual([
+      { source: "/storage/whatsapp-mcp-empresa/minio", target: "/data" },
+    ]);
+    expect(volumesOf(app(instanceEnv("empresa")))).toEqual([
+      { source: "/storage/whatsapp-mcp-empresa", target: "/data" },
+    ]);
+  });
 
-    expect(hub.environment).toMatchObject({
-      HUB_LANG: "pt",
-      HUB_INSTANCE_SECRET: "shared-secret",
-      NTFY_TOPIC_URL: "https://ntfy.e2e.test/topic",
-      NTFY_TOKEN: "ntfy-token",
-    });
+  it("changes the app in two places only: it points at its own store and waits for it", () => {
+    for (const env of [PESSOAL_ENV, instanceEnv("empresa")]) {
+      const then = only(instance66(env), APP);
+      const now = app(env);
+      const was = then.environment ?? {};
+      const is = now.environment ?? {};
+
+      expect(Object.keys(is).sort()).toEqual(Object.keys(was).sort());
+      expect(Object.keys(is).filter((key) => is[key] !== was[key])).toEqual(["S3_ENDPOINT"]);
+      expect(is.S3_ENDPOINT).toBe(`whatsapp-mcp-${env.INSTANCE}-minio`);
+      expect(is.S3_ENDPOINT).toBe(store(env).container_name);
+      expect(now.image).toBe(then.image);
+      expect(now.container_name).toBe(then.container_name);
+      expect(now.restart).toBe(then.restart);
+      expect(now.healthcheck).toEqual(then.healthcheck);
+      expect(now.networks).toEqual(then.networks);
+      expect(now.labels).toEqual(then.labels);
+      expect(volumesOf(now)).toEqual(volumesOf(then));
+      expect(then.depends_on).toBeUndefined();
+      expect(now.depends_on).toEqual({ minio: { condition: "service_healthy", required: true } });
+    }
+  });
+
+  it("never lets the app reach its store by the service key every number shares", () => {
+    for (const env of [PESSOAL_ENV, instanceEnv("empresa")]) {
+      expect(app(env).environment?.S3_ENDPOINT).not.toBe("minio");
+    }
+  });
+});
+
+describe("a number's store fails closed", () => {
+  it.each(["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"])("cannot render without %s", (missing) => {
+    const { [missing]: _removed, ...env } = instanceEnv("empresa");
+
+    expect(() => instance(env)).toThrow(new RegExp(missing));
+  });
+
+  it.each(["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"])("cannot render with %s empty", (blank) => {
+    expect(() => instance(instanceEnv("empresa", { [blank]: "" }))).toThrow(new RegExp(blank));
   });
 });
 
@@ -187,27 +348,29 @@ describe("the personal number moving from the single-instance layout: data stays
       },
     });
 
-  it("mounts the same host directory for the app and for RustFS, in the same bucket and tenant", () => {
-    const before = today();
-    const app = instance(PESSOAL_ENV);
-    const storage = shared();
+  const REQUIRED_SETTINGS = {
+    MCP_AUTH_TOKEN: "token",
+    NTFY_TOPIC_URL: "https://ntfy.e2e.test/topic",
+    EXPECTED_WA_NUMBER: "5500",
+    MINIO_ROOT_USER: "root-user",
+    MINIO_ROOT_PASSWORD: "root-secret",
+  };
 
-    expect(volumesOf(only(app, "whatsapp-mcp-instance"))).toEqual(
-      volumesOf(only(before, "whatsapp-mcp")),
-    );
-    expect(volumesOf(only(storage, "minio"))).toEqual(volumesOf(only(before, "minio")));
-    expect(only(storage, "minio").container_name).toBe(only(before, "minio").container_name);
-    expect(only(storage, "minio").image).toBe(only(before, "minio").image);
-    expect(only(storage, "minio").environment).toEqual(only(before, "minio").environment);
-    expect(only(storage, "minio").healthcheck).toEqual(only(before, "minio").healthcheck);
+  it("mounts the same host directories for the app and for its store, in the same bucket and tenant", () => {
+    const before = today();
+    const cfg = instance({ ...PESSOAL_ENV, ...REQUIRED_SETTINGS });
+    const now = only(cfg, APP);
+    const kept = only(cfg, "minio");
+
+    expect(volumesOf(now)).toEqual(volumesOf(only(before, "whatsapp-mcp")));
+    expect(volumesOf(kept)).toEqual(volumesOf(only(before, "minio")));
+    expect(kept.image).toBe(only(before, "minio").image);
+    expect(kept.environment).toEqual(only(before, "minio").environment);
+    expect(kept.healthcheck).toEqual(only(before, "minio").healthcheck);
     for (const key of ["S3_BUCKET", "TENANT_ID"]) {
-      expect(only(app, "whatsapp-mcp-instance").environment?.[key]).toBe(
-        only(before, "whatsapp-mcp").environment?.[key],
-      );
+      expect(now.environment?.[key]).toBe(only(before, "whatsapp-mcp").environment?.[key]);
     }
-    expect(only(app, "whatsapp-mcp-instance").environment?.S3_ENDPOINT).toBe(
-      only(storage, "minio").container_name,
-    );
+    expect(now.environment?.S3_ENDPOINT).toBe(kept.container_name);
   });
 
   // Every setting of today's app service, including the anti-ban send policy (risk-owner
@@ -223,13 +386,6 @@ describe("the personal number moving from the single-instance layout: data stays
     VISION_MODEL: "vision-model",
     WATCHDOG_RESTART_AFTER_S: "123",
     WATCHDOG_MAX_RESTARTS: "4",
-  };
-  const REQUIRED_SETTINGS = {
-    MCP_AUTH_TOKEN: "token",
-    NTFY_TOPIC_URL: "https://ntfy.e2e.test/topic",
-    EXPECTED_WA_NUMBER: "5500",
-    MINIO_ROOT_USER: "root-user",
-    MINIO_ROOT_PASSWORD: "root-secret",
   };
   /** The exception table of the plan: the only keys allowed to differ from today's service. */
   const CHANGED = ["MEDIA_PUBLIC_BASE_URL", "PUBLIC_QR_URL", "S3_ENDPOINT", "STREAM_PUBLIC_URL"];
@@ -257,17 +413,7 @@ describe("the personal number moving from the single-instance layout: data stays
       }),
       "whatsapp-mcp",
     );
-    const after = only(
-      instance(
-        instanceEnv("pessoal", {
-          ...REQUIRED_SETTINGS,
-          ...optional,
-          INSTANCE_DATA_DIR: "/storage/whatsapp-mcp",
-          TENANT_ID: "default",
-        }),
-      ),
-      "whatsapp-mcp-instance",
-    );
+    const after = app({ ...PESSOAL_ENV, ...REQUIRED_SETTINGS, ...optional });
     const was = before.environment ?? {};
     const now = after.environment ?? {};
 
@@ -286,18 +432,17 @@ describe("the personal number moving from the single-instance layout: data stays
     expect(after.healthcheck).toEqual(before.healthcheck);
     expect(after.networks).toEqual(before.networks);
     expect(after.image).toBe(before.image);
-    expect(after.depends_on).toBeUndefined();
   });
 
   it("gives every changed key its new value", () => {
-    const env = only(instance(PESSOAL_ENV), "whatsapp-mcp-instance").environment;
+    const env = app(PESSOAL_ENV).environment;
 
     expect(env).toMatchObject({
       STREAM_PUBLIC_URL: `wss://${HOST}/pessoal/stream`,
       PUBLIC_QR_URL: `https://${HOST}/pessoal`,
       MEDIA_PUBLIC_BASE_URL: `https://${HOST}/pessoal/media`,
       UPLOAD_PUBLIC_URL: `https://${HOST}/pessoal/upload`,
-      S3_ENDPOINT: "whatsapp-mcp-minio",
+      S3_ENDPOINT: "whatsapp-mcp-pessoal-minio",
       MCP_ENDPOINT: "/mcp",
       MCP_AUTH_TOKEN: "token-pessoal",
       INSTANCE_LABEL: "pessoal",
@@ -308,35 +453,32 @@ describe("the personal number moving from the single-instance layout: data stays
   });
 
   it("keeps the safe defaults of the send policy when nothing is set", () => {
-    const env = only(instance(PESSOAL_ENV), "whatsapp-mcp-instance").environment;
+    const env = app(PESSOAL_ENV).environment;
 
     expect(env?.SEND_COLD_OVERRIDE).toBe("deny");
     expect(env?.SEND_COLD_ALLOWED_JIDS).toBe("");
   });
 
   it("names the tenant after the label when no override is given", () => {
-    const env = only(instance(instanceEnv("empresa")), "whatsapp-mcp-instance").environment;
-
-    expect(env?.TENANT_ID).toBe("empresa");
+    expect(app(instanceEnv("empresa")).environment?.TENANT_ID).toBe("empresa");
   });
 
   it("puts a number's data in /storage/whatsapp-mcp-<label> unless told otherwise", () => {
-    const empresa = only(instance(instanceEnv("empresa")), "whatsapp-mcp-instance");
-
-    expect(volumesOf(empresa)).toEqual([
+    expect(volumesOf(app(instanceEnv("empresa")))).toEqual([
       { source: "/storage/whatsapp-mcp-empresa", target: "/data" },
     ]);
   });
 });
 
 describe("two numbers and the shared stack side by side: nothing collides", () => {
-  it("shares no name but the network and the service key", () => {
-    const configs = [
-      shared(),
-      instance(PESSOAL_ENV),
-      instance(instanceEnv("empresa", { INSTANCE_DESCRIPTION: "the company number" })),
-    ];
-    const claims = configs.map(claimedNames);
+  const configs = () => [
+    shared(),
+    instance(PESSOAL_ENV),
+    instance(instanceEnv("empresa", { INSTANCE_DESCRIPTION: "the company number" })),
+  ];
+
+  it("shares no name but the network and the two service keys", () => {
+    const claims = configs().map(claimedNames);
     const doubled = new Set<string>();
     for (const [i, mine] of claims.entries()) {
       for (const other of claims.slice(i + 1)) {
@@ -344,19 +486,49 @@ describe("two numbers and the shared stack side by side: nothing collides", () =
       }
     }
 
+    // No container name, router, middleware, Traefik service or data directory is in the list.
     expect([...doubled].sort()).toEqual([
       "network:network_public",
+      "service-key:minio",
       "service-key:whatsapp-mcp-instance",
     ]);
     // And no config claims one of its own names twice.
     for (const mine of claims) expect(new Set(mine).size).toBe(mine.length);
   });
 
+  it("shares no credential, and neither app names the other's store", () => {
+    const [pessoal, empresa] = [PESSOAL_ENV, instanceEnv("empresa")];
+
+    expect(store(pessoal).environment?.RUSTFS_ROOT_USER).not.toBe(
+      store(empresa).environment?.RUSTFS_ROOT_USER,
+    );
+    expect(store(pessoal).environment?.RUSTFS_ROOT_PASSWORD).not.toBe(
+      store(empresa).environment?.RUSTFS_ROOT_PASSWORD,
+    );
+    expect(app(pessoal).environment?.S3_ENDPOINT).toBe(store(pessoal).container_name);
+    expect(app(empresa).environment?.S3_ENDPOINT).toBe(store(empresa).container_name);
+    expect(app(pessoal).environment?.S3_ENDPOINT).not.toBe(store(empresa).container_name);
+    expect(app(empresa).environment?.S3_ENDPOINT).not.toBe(store(pessoal).container_name);
+  });
+
+  it("keeps each store's data directory inside its own number's directory", () => {
+    const sources = (env: Record<string, string>) => ({
+      app: volumesOf(app(env))[0]?.source ?? "",
+      store: volumesOf(store(env))[0]?.source ?? "",
+    });
+    const [pessoal, empresa] = [sources(PESSOAL_ENV), sources(instanceEnv("empresa"))];
+
+    expect(pessoal.store.startsWith(`${pessoal.app}/`)).toBe(true);
+    expect(empresa.store.startsWith(`${empresa.app}/`)).toBe(true);
+    expect(pessoal.store.startsWith(`${empresa.app}/`)).toBe(false);
+    expect(empresa.store.startsWith(`${pessoal.app}/`)).toBe(false);
+  });
+
   it("names the project, the container and the data directory after the label", () => {
     const empresa = instance(instanceEnv("empresa"));
 
     expect(empresa.name).toBe("whatsapp-mcp-empresa");
-    expect(only(empresa, "whatsapp-mcp-instance").container_name).toBe("whatsapp-mcp-empresa");
+    expect(only(empresa, APP).container_name).toBe("whatsapp-mcp-empresa");
   });
 });
 
@@ -364,10 +536,10 @@ describe("routes", () => {
   const PORTS = { mcp: "39001", upload: "39003", stream: "39004" };
 
   it.each(["pessoal", "empresa"])(
-    "gives %s exactly three routers, each on its own path",
+    "gives the %s app exactly three routers, each on its own path",
     (label) => {
       const env = label === "pessoal" ? PESSOAL_ENV : instanceEnv(label);
-      const traefik = traefikObjects(only(instance(env), "whatsapp-mcp-instance"));
+      const traefik = traefikObjects(app(env));
 
       expect(Object.keys(traefik.routers).sort()).toEqual([
         `wa-${label}-mcp`,
@@ -396,66 +568,54 @@ describe("routes", () => {
 
   it("never routes to an instance's status port 39002, which only the hub reads", () => {
     for (const env of [PESSOAL_ENV, instanceEnv("empresa")]) {
-      const labels = only(instance(env), "whatsapp-mcp-instance").labels ?? {};
+      const labels = app(env).labels ?? {};
       expect(Object.entries(labels).filter(([, value]) => value.includes("39002"))).toEqual([]);
     }
   });
 
-  it("routes the shared media path to RustFS and every other path to the hub", () => {
-    const cfg = shared();
-    const media = traefikObjects(only(cfg, "minio"));
-    const hub = traefikObjects(only(cfg, "hub"));
+  it.each(["pessoal", "empresa"])(
+    "gives the %s store one media router on its own label, above the shared one of 66c793c",
+    (label) => {
+      const env = label === "pessoal" ? PESSOAL_ENV : instanceEnv(label);
+      const media = traefikObjects(store(env));
+      const legacy = traefikObjects(only(shared66(), "minio")).routers["wa-media"];
 
-    expect(media.routers).toEqual({
-      "wa-media": {
-        rule: `Host(\`${HOST}\`) && PathRegexp(\`^/[a-z0-9][a-z0-9-]*/media/t/\`)`,
-        priority: "100",
-        entrypoints: "websecure",
-        "tls.certresolver": "myresolver",
-        middlewares: "wa-media-rewrite",
-        service: "wa-media-svc",
-      },
-    });
-    expect(media.middlewares).toEqual({
-      "wa-media-rewrite": {
-        "replacepathregex.regex": "^/[a-z0-9][a-z0-9-]*/media/(.*)",
-        "replacepathregex.replacement": "/amiticia-media/$$1",
-      },
-    });
-    expect(media.services).toEqual({ "wa-media-svc": { "loadbalancer.server.port": "9000" } });
-    expect(hub.routers).toEqual({
-      "wa-hub": {
-        rule: `Host(\`${HOST}\`)`,
-        priority: "1",
-        entrypoints: "websecure",
-        "tls.certresolver": "myresolver",
-        service: "wa-hub-svc",
-      },
-    });
-    expect(hub.services).toEqual({ "wa-hub-svc": { "loadbalancer.server.port": "39002" } });
-    expect(hub.middlewares).toEqual({});
-  });
+      expect(media.routers).toEqual({
+        [`wa-${label}-media`]: {
+          rule: `Host(\`${HOST}\`) && PathPrefix(\`/${label}/media/t/\`)`,
+          priority: "110",
+          entrypoints: "websecure",
+          "tls.certresolver": "myresolver",
+          middlewares: `wa-${label}-media-rewrite`,
+          service: `wa-${label}-media-svc`,
+        },
+      });
+      expect(media.middlewares).toEqual({
+        [`wa-${label}-media-rewrite`]: {
+          "replacepathregex.regex": `^/${label}/media/(.*)`,
+          "replacepathregex.replacement": "/amiticia-media/$$1",
+        },
+      });
+      expect(media.services).toEqual({
+        [`wa-${label}-media-svc`]: { "loadbalancer.server.port": "9000" },
+      });
+      // While a host is moved off the shared store, the number's own route must win.
+      expect(Number(media.routers[`wa-${label}-media`]?.priority)).toBeGreaterThan(
+        Number(legacy?.priority),
+      );
+    },
+  );
 
-  it("matches a number's objects and never its bucket root, and rewrites into the bucket", () => {
-    const media = traefikObjects(only(shared(), "minio"));
-    const match = new RegExp(
-      /PathRegexp\(`(.+)`\)/.exec(media.routers["wa-media"]?.rule ?? "")?.[1] ?? "",
-    );
-    const rewrite = media.middlewares["wa-media-rewrite"] ?? {};
+  it("rewrites a number's media path into the bucket, and only its own", () => {
+    const media = traefikObjects(store(instanceEnv("empresa")));
+    const rewrite = media.middlewares["wa-empresa-media-rewrite"] ?? {};
     const regex = new RegExp(rewrite["replacepathregex.regex"] ?? "");
     const replacement = (rewrite["replacepathregex.replacement"] ?? "").replace("$$1", "$1");
 
-    expect(match.test("/empresa/media/t/default/uploads/a.png")).toBe(true);
-    expect(match.test("/pessoal-2/media/t/e2e/x.png")).toBe(true);
-    // The bucket root and anything outside t/ fall through to the hub, not to RustFS.
-    expect(match.test("/empresa/media/")).toBe(false);
-    expect(match.test("/empresa/media")).toBe(false);
-    expect(match.test("/empresa/media/uploads/a.png")).toBe(false);
-    expect(match.test("/media/t/default/a.png")).toBe(false);
-    expect(match.test("/empresa/mcp")).toBe(false);
     expect("/empresa/media/t/default/uploads/a.png".replace(regex, replacement)).toBe(
       "/amiticia-media/t/default/uploads/a.png",
     );
+    expect(regex.test("/pessoal/media/t/default/uploads/a.png")).toBe(false);
   });
 
   it("keeps each container's routers pointing only at services and middlewares of its own", () => {
@@ -486,7 +646,7 @@ describe("rendering fails closed", () => {
   it.each(["PUBLIC_DOMAIN", "HUB_PIN", "HUB_COOKIE_KEY", "HUB_INSTANCES"])(
     "the shared stack cannot render without %s",
     (missing) => {
-      const { [missing]: _removed, ...env } = SHARED_ENV as Record<string, string>;
+      const { [missing]: _removed, ...env } = SHARED_ENV;
 
       expect(() => renderCompose({ file: SHARED_FILE, env })).toThrow(new RegExp(missing));
     },
@@ -504,7 +664,7 @@ describe("rendering fails closed", () => {
     const cfg = renderCompose({ env: instanceEnv("empresa"), cwd: DEPLOY });
 
     expect(cfg.name).toBe("whatsapp-mcp-empresa");
-    expect(Object.keys(cfg.services)).toEqual(["whatsapp-mcp-instance"]);
+    expect(Object.keys(cfg.services).sort()).toEqual(["minio", APP]);
   });
 });
 
@@ -554,23 +714,34 @@ describe("the env templates", () => {
         .map((entry) => [entry.key, entry.value]),
     );
 
+  /** The variables a compose file reads, outside its comments. */
   const referencedBy = (file: string) =>
     new Set(
-      [...fs.readFileSync(path.join(DEPLOY, file), "utf8").matchAll(/\$\{([A-Z][A-Z0-9_]*)/g)].map(
-        (match) => match[1] as string,
-      ),
+      [
+        ...fs
+          .readFileSync(path.join(DEPLOY, file), "utf8")
+          .replace(/^\s*#.*$/gm, "")
+          .matchAll(/\$\{([A-Z][A-Z0-9_]*)/g),
+      ].map((match) => match[1] as string),
     );
 
   const SECRET_LIKE = /(TOKEN|SECRET|PASSWORD|PIN|_KEY|USER)/;
+  /** Read by `docker compose` itself, to choose the file, not by the file. */
+  const READ_BY_COMPOSE = ["COMPOSE_FILE"];
 
   it.each([
     ["docker-compose.yaml", ".env.example"],
     ["docker-compose.instance.yaml", "instance.env.example"],
-  ])("%s: its template lists every variable it reads", (compose, template) => {
+  ])("%s and %s: each lists exactly what the other reads", (compose, template) => {
     const listed = new Set(keysOf(template));
+    const read = referencedBy(compose);
 
-    for (const variable of referencedBy(compose)) {
+    for (const variable of read) {
       expect({ variable, listed: listed.has(variable) }).toEqual({ variable, listed: true });
+    }
+    for (const variable of listed) {
+      const used = read.has(variable) || READ_BY_COMPOSE.includes(variable);
+      expect({ variable, read: used }).toEqual({ variable, read: true });
     }
   });
 
@@ -584,12 +755,10 @@ describe("the env templates", () => {
     },
   );
 
-  it("lists exactly the keys of the shared stack", () => {
+  it("lists exactly the keys of the shared stack, and no store credential", () => {
     expect(keysOf(".env.example")).toEqual(
       [
         "PUBLIC_DOMAIN",
-        "MINIO_ROOT_USER",
-        "MINIO_ROOT_PASSWORD",
         "HUB_PIN",
         "HUB_COOKIE_KEY",
         "HUB_INSTANCE_SECRET",
@@ -599,6 +768,19 @@ describe("the env templates", () => {
         "NTFY_TOKEN",
       ].sort(),
     );
+    expect(keysOf(".env.example").filter((key) => key.startsWith("MINIO_"))).toEqual([]);
+  });
+
+  it("asks a number for its own pair, and offers the store's ceiling only as a comment", () => {
+    const live = liveValues("instance.env.example");
+
+    expect(live).toMatchObject({ MINIO_ROOT_USER: "", MINIO_ROOT_PASSWORD: "" });
+    expect(Object.keys(live)).not.toContain("STORE_MEM_LIMIT");
+    expect(entries("instance.env.example")).toContainEqual({
+      key: "STORE_MEM_LIMIT",
+      value: "150m",
+      commented: true,
+    });
   });
 
   it("keeps the migration-only settings commented out, so a new number never gets them", () => {
@@ -611,15 +793,20 @@ describe("the env templates", () => {
     );
   });
 
-  it("renders as a number only once the blanks are filled in", () => {
+  it("renders as a number only once the blanks, the pair included, are filled in", () => {
     const live = liveValues("instance.env.example");
+    const filled = { ...live, INSTANCE: "empresa", MCP_AUTH_TOKEN: "t" };
 
     expect(live.COMPOSE_FILE).toBe("docker-compose.instance.yaml");
     expect(() => renderCompose({ file: INSTANCE_FILE, env: live })).toThrow(/INSTANCE/);
+    expect(() =>
+      renderCompose({ file: INSTANCE_FILE, env: { ...filled, MINIO_ROOT_USER: "u" } }),
+    ).toThrow(/MINIO_ROOT_PASSWORD/);
     const cfg = renderCompose({
       file: INSTANCE_FILE,
-      env: { ...live, INSTANCE: "empresa", MCP_AUTH_TOKEN: "t", MINIO_ROOT_USER: "u" },
+      env: { ...filled, MINIO_ROOT_USER: "u", MINIO_ROOT_PASSWORD: "p" },
     });
     expect(cfg.name).toBe("whatsapp-mcp-empresa");
+    expect(Object.keys(cfg.services).sort()).toEqual(["minio", APP]);
   });
 });

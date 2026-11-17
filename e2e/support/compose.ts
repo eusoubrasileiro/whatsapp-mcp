@@ -21,6 +21,7 @@ export interface RenderedService {
   /** The memory ceiling in bytes, as a string: `mem_limit: 150m` renders as "157286400". */
   mem_limit?: string;
   networks?: Record<string, unknown>;
+  ports?: unknown[];
   volumes?: { type: string; source: string; target: string }[];
 }
 
