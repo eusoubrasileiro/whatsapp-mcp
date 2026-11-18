@@ -21,6 +21,10 @@ export const NO_EGRESS = path.join(here, "no-egress.ts");
 
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 10_000;
+/** How often a start is tried when another process takes its port first. */
+const START_ATTEMPTS = 3;
+/** What the child says when the port it was given is no longer free. */
+const PORT_LOST = /EADDRINUSE/;
 
 const RUSTFS_HINT =
   "The upload spec needs the dev RustFS from docker-compose.dev.yaml on localhost:9000. " +
@@ -116,19 +120,57 @@ function whenReady(child: ChildProcess, dataDir: string, stderr: () => string): 
   });
 }
 
+export interface ServerOptions {
+  s3?: boolean;
+  env?: Record<string, string>;
+  dataDir?: string;
+  /** Where the MCP port comes from; `freePort` unless a spec stages a lost race. */
+  port?: () => Promise<number>;
+}
+
+/** What stays the same when a start is repeated. */
+interface Launch {
+  dataDir: string;
+  ownsDataDir: boolean;
+  token: string;
+  tenant: string;
+}
+
 /**
  * Boots one server. With `s3: true` it also needs the dev RustFS, and fails (never skips)
  * when that is not reachable. `env` is merged last into the child's environment. `dataDir`
  * replaces the temp directory: a directory the caller supplies is never deleted by `stop()`.
+ *
+ * The port is free when it is picked and bound by the child a moment later, so a parallel
+ * spec can take it in between. A start that fails that way is repeated on a new port, on the
+ * same data directory; a start that fails for any other reason is not.
  */
-export async function startServer(
-  options: { s3?: boolean; env?: Record<string, string>; dataDir?: string } = {},
-): Promise<E2eServer> {
+export async function startServer(options: ServerOptions = {}): Promise<E2eServer> {
   const ownsDataDir = options.dataDir === undefined;
-  const dataDir = options.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-mcp-e2e-"));
-  const token = randomBytes(16).toString("hex");
-  const mcpPort = await freePort();
+  const launch: Launch = {
+    dataDir: options.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-mcp-e2e-")),
+    ownsDataDir,
+    token: randomBytes(16).toString("hex"),
+    tenant: `e2e-${randomBytes(4).toString("hex")}`,
+  };
+  const pickPort = options.port ?? freePort;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await launchServer(options, launch, await pickPort());
+    } catch (err) {
+      const message = (err as Error).message;
+      if (PORT_LOST.test(message) && attempt < START_ATTEMPTS) continue;
+      if (ownsDataDir) fs.rmSync(launch.dataDir, { recursive: true, force: true });
+      throw options.s3 ? new Error(`${message}\n${RUSTFS_HINT}`) : err;
+    }
+  }
+}
 
+async function launchServer(
+  options: ServerOptions,
+  { dataDir, ownsDataDir, token, tenant }: Launch,
+  mcpPort: number,
+): Promise<E2eServer> {
   const child = spawn(
     process.execPath,
     [
@@ -152,7 +194,7 @@ export async function startServer(
         UPLOAD_SERVER_PORT: "0",
         STREAM_SERVER_HOST: "127.0.0.1",
         STREAM_SERVER_PORT: "0",
-        TENANT_ID: `e2e-${randomBytes(4).toString("hex")}`,
+        TENANT_ID: tenant,
         ...(options.s3 ? S3_ENV : {}),
         ...options.env,
       },
@@ -168,13 +210,7 @@ export async function startServer(
     child.once("exit", (code) => resolve(code)),
   );
 
-  let ready: Ready;
-  try {
-    ready = await whenReady(child, dataDir, () => stderrText);
-  } catch (err) {
-    if (ownsDataDir) fs.rmSync(dataDir, { recursive: true, force: true });
-    throw options.s3 ? new Error(`${(err as Error).message}\n${RUSTFS_HINT}`) : err;
-  }
+  const ready = await whenReady(child, dataDir, () => stderrText);
 
   return {
     mcpUrl: `http://127.0.0.1:${ready.mcp}/mcp`,

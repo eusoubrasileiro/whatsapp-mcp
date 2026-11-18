@@ -19,6 +19,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/main.ts",
     "start:hub": "node --experimental-strip-types src/hub/main.ts",
+    "store:copy": "node --experimental-strip-types src/store-copy-cli.ts",
     "typecheck": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",

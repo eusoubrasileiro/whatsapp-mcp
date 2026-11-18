@@ -1,14 +1,13 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 import type { Client } from "minio";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { renderCompose } from "./support/compose.ts";
-import { openSession } from "./support/mcp-client.ts";
 import { bucketEnv, devS3, dropBucket, uniqueBucket } from "./support/s3.ts";
-import { type E2eServer, startServer } from "./support/server.ts";
+import { startServer } from "./support/server.ts";
+import { dumpRows, registerWebhook, sha256File, uploadPng, webhookUrls } from "./support/state.ts";
 
 /**
  * Rehearsal of deploy day for the personal number: it moves from the single-instance layout to
@@ -23,10 +22,8 @@ import { type E2eServer, startServer } from "./support/server.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const INSTANCE_FILE = path.join(ROOT, "deploy", "docker-compose.instance.yaml");
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const bucket = uniqueBucket("rehearsal-e2e");
-const sha256 = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 /** Rendering exactly what the owner's env file for the personal number would say. */
 const renderPessoal = (extra: Record<string, string> = {}) => {
@@ -58,48 +55,6 @@ const appEnvFrom = (service: ReturnType<typeof renderPessoal>) => {
   };
 };
 
-/** Every row of every table, in a stable order, as plain JSON. */
-function dumpRows(dbFile: string): Record<string, unknown[]> {
-  const db = new Database(dbFile, { readonly: true });
-  try {
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => (row as { name: string }).name)
-      .sort();
-    return Object.fromEntries(
-      tables.map((table) => {
-        const rows = db.prepare(`SELECT * FROM "${table}"`).all();
-        return [table, rows.map((row) => JSON.stringify(row)).sort()];
-      }),
-    );
-  } finally {
-    db.close();
-  }
-}
-
-async function upload(server: E2eServer): Promise<{ key: string; url: string; bytes: Buffer }> {
-  const bytes = Buffer.concat([PNG_MAGIC, randomBytes(1024)]);
-  const res = await fetch(`${server.uploadUrl}/upload`, {
-    method: "POST",
-    body: bytes,
-    headers: { authorization: `Bearer ${server.token}` },
-  });
-  expect(res.status).toBe(200);
-  const body = await res.json();
-  return { key: body.key, url: body.url, bytes };
-}
-
-async function webhookUrls(server: E2eServer): Promise<string[]> {
-  const session = await openSession(server.mcpUrl, server.token);
-  try {
-    const listed = JSON.parse((await session.callTool("list_webhooks")).text);
-    return listed.map((hook: { target_url: string }) => hook.target_url);
-  } finally {
-    await session.close();
-  }
-}
-
 let s3: Client;
 let dataDir: string; // stands in for /storage/whatsapp-mcp
 let authDir: string;
@@ -111,7 +66,7 @@ let rowsBefore: Record<string, unknown[]>;
 
 const pairingHashes = () =>
   Object.fromEntries(
-    fs.readdirSync(authDir).map((name) => [name, sha256(path.join(authDir, name))]),
+    fs.readdirSync(authDir).map((name) => [name, sha256File(path.join(authDir, name))]),
   );
 
 beforeAll(async () => {
@@ -127,15 +82,8 @@ beforeAll(async () => {
     env: { TENANT_ID: "default", ...bucketEnv(bucket) },
   });
   try {
-    const session = await openSession(today.mcpUrl, today.token);
-    const registered = await session.callTool("register_webhook", {
-      target_url: "https://hooks.example.invalid/rehearsal",
-      allowed_jids: ["*"],
-      label: "rehearsal",
-    });
-    expect(registered.isError).toBe(false);
-    await session.close();
-    oldObject = await upload(today);
+    await registerWebhook(today, "https://hooks.example.invalid/rehearsal");
+    oldObject = await uploadPng(today);
     expect(oldObject.key).toMatch(/^t\/default\/uploads\/[0-9a-f-]{36}\.png$/);
   } finally {
     await today.stop();
@@ -149,7 +97,7 @@ beforeAll(async () => {
 
   // 2. What must survive, recorded.
   Object.assign(pairingBefore, pairingHashes());
-  dbBytesBefore = sha256(dbFile);
+  dbBytesBefore = sha256File(dbFile);
   rowsBefore = dumpRows(dbFile);
 });
 
@@ -177,7 +125,7 @@ describe("the personal number moves to an instance with its data in place", () =
     expect(service.environment?.TENANT_ID).toBe("default");
     // The data step of the migration is "nothing moves": rendering touched nothing.
     expect(pairingHashes()).toEqual(pairingBefore);
-    expect(sha256(dbFile)).toBe(dbBytesBefore);
+    expect(sha256File(dbFile)).toBe(dbBytesBefore);
   });
 
   it("serves the old webhook and the old object from a server in the new shape, and writes new uploads under t/default/", async () => {
@@ -190,7 +138,7 @@ describe("the personal number moves to an instance with its data in place", () =
       expect(old.status).toBe(200);
       expect(Buffer.from(await old.arrayBuffer()).equals(oldObject.bytes)).toBe(true);
 
-      const fresh = await upload(server);
+      const fresh = await uploadPng(server);
       expect(fresh.key).toMatch(/^t\/default\/uploads\/[0-9a-f-]{36}\.png$/);
       const served = await fetch(fresh.url);
       expect(Buffer.from(await served.arrayBuffer()).equals(fresh.bytes)).toBe(true);
@@ -206,7 +154,7 @@ describe("the personal number moves to an instance with its data in place", () =
   });
 
   it("leaves the database byte-identical, with every table holding the same rows", () => {
-    expect(sha256(dbFile)).toBe(dbBytesBefore);
+    expect(sha256File(dbFile)).toBe(dbBytesBefore);
     expect(dumpRows(dbFile)).toEqual(rowsBefore);
   });
 
@@ -215,7 +163,7 @@ describe("the personal number moves to an instance with its data in place", () =
     expect(service.environment?.TENANT_ID).toBe("pessoal");
     const server = await startServer({ s3: true, dataDir, env: appEnvFrom(service) });
     try {
-      const fresh = await upload(server);
+      const fresh = await uploadPng(server);
 
       expect(fresh.key).toMatch(/^t\/pessoal\/uploads\/[0-9a-f-]{36}\.png$/);
       // The override is the only thing that keeps new media beside the old.
