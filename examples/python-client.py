@@ -2,7 +2,7 @@
 Minimal Python client for whatsapp-mcp over HTTPS JSON-RPC.
 
 Usage:
-    export MCP_URL='https://mcp.example.com/mcp'
+    export MCP_URL='https://wa.example.com/personal/mcp'   # one endpoint per number: /<label>/mcp
     export MCP_AUTH_TOKEN='...'
     python3 python-client.py                    # list chats (limit 5)
     python3 python-client.py list_contacts      # any tool name

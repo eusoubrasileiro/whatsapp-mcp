@@ -6,8 +6,21 @@ thin: the testable use cases live in `src/actions.ts` and the modules they call.
 ### Connection / Auth
 | Tool | Description |
 |------|-------------|
-| `get_connection_status` | Check WhatsApp connection; if a QR is pending, saves it as a PNG and opens it (skipped on headless hosts — use the QR web page) |
+| `get_connection_status` | Check WhatsApp connection; if a QR is pending, saves it as a PNG and opens it (skipped on headless hosts — pair from the hub page). On a labelled instance the result also carries `instance` (the label and description of this line) and `phone_number` (the paired number), so an agent can check which line it is about to use. |
 | `logout` | Log out from WhatsApp and clear session data |
+
+### Which line am I?
+
+One server is one WhatsApp number. When the operator runs several numbers, each is its own MCP
+server with its own tools, chats and message IDs, and each is given a label (`INSTANCE_LABEL`,
+set from `INSTANCE` in the deploy files). A labelled server says so in three places:
+
+- its MCP instructions open with `THIS SERVER IS ONE WHATSAPP LINE — "<label>": <description>`;
+- `get_connection_status` returns `instance`, and `phone_number` (digits only) once a number
+  is paired;
+- every `send_message` / `send_file` result ends with `Sent from the "<label>" line.`
+
+Without a label none of the three appears and every output is as before.
 
 ### Contacts
 | Tool | Description |
@@ -100,20 +113,26 @@ Flow from an agent on the user's machine:
 
 ```bash
 # raw body, MIME sniffed from magic bytes server-side
+# (<label> is the number's label; its token is that number's MCP_AUTH_TOKEN)
 curl -sS -X POST --data-binary @/tmp/video.mp4 \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-  https://mcp.example.com/upload
-# → { "url": "https://mcp.example.com/media/t/default/uploads/<uuid>.mp4",
-#     "key": "t/default/uploads/<uuid>.mp4",
+  https://wa.example.com/<label>/upload
+# → { "url": "https://wa.example.com/<label>/media/t/<label>/uploads/<uuid>.mp4",
+#     "key": "t/<label>/uploads/<uuid>.mp4",
 #     "mimetype": "video/mp4", "size": 4321567 }
 ```
 
 Then call `send_file({ recipient, file_path: "<url from above>", type: "video", caption })`.
 
+When `UPLOAD_PUBLIC_URL` is set (the deploy files set it), `send_file`'s `file_path`
+description names that exact URL, so an agent does not have to guess the upload address of the
+line it is using.
+
 Guarantees:
-- Bearer-authenticated with the same `MCP_AUTH_TOKEN` as the MCP endpoint.
+- Bearer-authenticated with the same `MCP_AUTH_TOKEN` as that number's MCP endpoint. Another
+  number's token is refused.
 - 16 MB hard cap (same as Baileys / WABA limit).
 - MIME sniffed from bytes — bodies that match no known format are rejected with HTTP 415 (junk / executables won't land in the bucket).
 - Object key: `t/{tenantId}/uploads/{uuid}.{ext}`. The public-read bucket policy makes the returned URL fetchable by the MCP container without any extra credential exchange.
 
-The endpoint is exposed by `src/upload-server.ts` on `UPLOAD_SERVER_PORT` (default `39003`), only started when `S3_ENABLED=true`. Traefik route required (see `deploy/docker-compose.yaml`): `mcp.example.com/upload` → `whatsapp-mcp:39003`.
+The endpoint is exposed by `src/upload-server.ts` on `UPLOAD_SERVER_PORT` (default `39003`), only started when `S3_ENABLED=true`. Traefik route required (see `deploy/docker-compose.instance.yaml`): `wa.example.com/<label>/upload` → `whatsapp-mcp-<label>:39003`, with the `/<label>` prefix stripped.

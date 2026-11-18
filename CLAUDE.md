@@ -1,9 +1,11 @@
 # CLAUDE.md
 
-WhatsApp as an MCP server (FastMCP, 23 tools) on top of Baileys. Production shape: one
-long-lived Docker container behind Traefik — MCP at `https://mcp.example.com/mcp` (Bearer
-auth), a public QR pairing page at `https://wa.example.com/`, an S3-compatible RustFS sidecar
-for media. User-facing overview: [`README.md`](./README.md).
+WhatsApp as an MCP server (FastMCP, 23 tools) on top of Baileys. Production shape: one public
+hostname behind Traefik and **one long-lived Docker container per WhatsApp number** — MCP at
+`https://wa.example.com/<label>/mcp` (Bearer auth, one token per number), with its own
+S3-compatible RustFS container for media — plus a small hub container at
+`https://wa.example.com/` (a PIN-protected page with every number's state and QR code).
+User-facing overview: [`README.md`](./README.md).
 
 ## Setup
 
@@ -19,10 +21,12 @@ runs directly via `--experimental-strip-types`, there is no build step.
 | Command | Does |
 |---|---|
 | `pnpm start` | Run the server (stdio; `MCP_TRANSPORT=httpstream` for HTTP) |
+| `pnpm start:hub` | Run the hub page (`src/hub/main.ts`; needs the `HUB_*` variables) |
 | `pnpm test` / `pnpm test:coverage` | vitest |
 | `pnpm exec tsc --noEmit` | Typecheck |
 | `pnpm lint` / `pnpm lint:fix` | Biome |
-| `pnpm test:e2e` | Real servers over HTTP, WhatsApp never connected; needs `pnpm test:e2e:deps` (dev RustFS) up |
+| `pnpm test:e2e` | Real servers over HTTP, WhatsApp never connected; needs `pnpm test:e2e:deps` (dev RustFS) up, and Docker with the Traefik and RustFS images for the routing and store specs |
+| `pnpm store:copy` | Copy, verify or remove one number's objects between two stores (`STORE_COPY_*` settings); only for moving a host off one shared store — see [`deploy/README.md`](./deploy/README.md) |
 | `pnpm test:harness` | `node --test` for `scripts/lib/*.test.mjs` |
 | `pnpm quality-gate` | Metrics ratchet vs `quality-baseline.json` (fails on regression) |
 
@@ -33,18 +37,24 @@ security review on push. Never `--no-verify`. Details: [`docs/development.md`](.
 
 ```mermaid
 flowchart LR
-  C[MCP clients] -->|/mcp Bearer| T[Traefik]
-  P[Phone browser] -->|QR page| T
+  C[MCP clients] -->|"/&lt;label&gt;/mcp Bearer"| T[Traefik]
+  P[Phone browser] -->|"/ PIN"| T
+  T --> HUB["hub :39002 (src/hub)"]
   T --> M[":39001 FastMCP"]
-  T --> Q[":39002 QR page"]
   T --> U[":39003 /upload"]
   T --> S[":39004 /stream (follow_chat)"]
-  T --> R[("/media → RustFS")]
+  T --> R[("/&lt;label&gt;/media → RustFS")]
+  HUB -. "polls /health, /qr.png" .-> Q[":39002 status port, not routed"]
   M & Q & U & S --> W[whatsapp.ts adapter] --> B[baileys-client] --> WA[(WhatsApp)]
   W --> DB[(SQLite)]
   W -. webhooks .-> H[subscriber URLs]
   W -. ntfy .-> N[your phone]
 ```
+
+`M`, `Q`, `U`, `S`, the adapter and the database are one number's container, and `R` is that
+number's own store beside it: there is one of each per number, with credentials no other
+number holds, and `/<label>/media` reaches only that label's store. Only the hub is shared. It
+never talks to WhatsApp and holds no number's token and no store credential.
 
 ```
 src/
@@ -60,7 +70,10 @@ src/
 ├── env-config.ts      env parsers — malformed value → default, never "guard disabled"
 ├── media-input.ts, sniffed-media.ts   send_file input resolution + magic-byte MIME sniffing
 ├── storage.ts         S3/RustFS media plane
-├── qr-server.ts, upload-server.ts, http-router.ts   side HTTP servers
+├── store-copy.ts, store-copy-cli.ts   operator tool: one number's objects from one store to another; imports only `minio` and `node:` modules
+├── instance-identity.ts   which line this server is (INSTANCE_LABEL) — instructions, status, send results
+├── qr-server.ts, upload-server.ts, http-router.ts   side HTTP servers (qr-server = the status port)
+├── hub/               the hub page: a separate program, imports nothing from the WhatsApp side
 ├── monitoring.ts, inbound-bus.ts, stream/   reactive monitoring + follow_chat WebSocket
 ├── webhooks/          outbound inbound-message push (HMAC/Bearer)
 ├── transcribe/        ffmpeg → FLAC → Whisper via OpenRouter
@@ -86,6 +99,14 @@ src/
   `data:` URL, or upload via `POST /upload` first.
 - **Audio/vision providers are chosen by env, never by which key is present**
   (`AUDIO_PROVIDER`, `VISION_MODEL`; one `OPENROUTER_API_KEY`).
+- **One server is one WhatsApp line.** The identity wording an agent reads
+  (`src/instance-identity.ts`: the instructions paragraph, the send-result suffix) is
+  model-facing — change it only on purpose, with the tests that pin it. Without
+  `INSTANCE_LABEL` every output must stay exactly as it was.
+- **The hub shows the last 4 digits of a number, never more**, and never a token, a JID or a
+  number's `/health` body. `src/hub/**` may import only itself, `ntfy.ts` and
+  `instance-identity.ts` (a test pins the import graph), and a number's status port is never
+  routed publicly.
 - Edits to files listed in `scripts/lib/critical-paths.mjs` (guards, data layer, hooks,
   operator scripts, all `*.md`) need human approval.
 - Tests first (Red-Green-Refactor); regression test before any bug fix.
@@ -97,7 +118,7 @@ never arrives. Before calling a send-path change done, exercise a really-running
 
 | Probe | Tool | Allowed target |
 |---|---|---|
-| QR page shows a live connection state | `curl` / a browser | the local `docker-compose.dev.yaml` stack |
+| The status port (`/health`) and the hub card show a live connection state | `curl` / a browser | a locally started server and `pnpm start:hub` |
 | `POST /upload` returns a URL `send_file` can resolve | `curl` | the local stack's upload endpoint |
 | `send_message` delivers and returns a real ack | an MCP client | a dedicated test number the owner names — never a production number, never a real contact |
 

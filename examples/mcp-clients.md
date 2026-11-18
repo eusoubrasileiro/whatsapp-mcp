@@ -1,34 +1,53 @@
 # MCP client configs
 
-Copy-pasteable snippets for every tested client. Replace `https://mcp.example.com/mcp` with your deployment's endpoint and `<your-token>` with your `MCP_AUTH_TOKEN`.
+Copy-pasteable snippets for every tested client. A deployment serves each WhatsApp number at its own address, `https://<host>/<label>/mcp`, with its own token. The examples use the host `wa.example.com` and a number labelled `personal`: replace `https://wa.example.com/personal/mcp` with your number's endpoint and `<your-token>` with that number's `MCP_AUTH_TOKEN`. The deployment's hub page (`https://<host>/`, behind its PIN) shows the exact address and a ready entry for every number.
+
+**One entry per number, named after it** (`whatsapp-<label>`). The entry name is what an agent sees next to every tool, so `whatsapp-personal` and `whatsapp-work` keep it from sending on the wrong line. The server also says which line it is: in its instructions, in `get_connection_status`, and at the end of every send result.
 
 ## Claude Code
 
-File: `~/.claude.json`. Add under the top-level `mcpServers` object (or edit the existing `whatsapp` entry):
+File: `~/.claude.json`. Add under the top-level `mcpServers` object:
 
 ```json
 {
   "mcpServers": {
-    "whatsapp": {
+    "whatsapp-personal": {
       "type": "http",
-      "url": "https://mcp.example.com/mcp",
+      "url": "https://wa.example.com/personal/mcp",
       "headers": {
-        "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
+        "Authorization": "Bearer ${WHATSAPP_PERSONAL_TOKEN}"
+      }
+    },
+    "whatsapp-work": {
+      "type": "http",
+      "url": "https://wa.example.com/work/mcp",
+      "headers": {
+        "Authorization": "Bearer ${WHATSAPP_WORK_TOKEN}"
       }
     }
   }
 }
 ```
 
-`${VAR}` is expanded from your shell env by Claude Code. If you prefer the literal token, paste it — `~/.claude.json` is `0600` by default.
+`${VAR}` is expanded from your shell env by Claude Code. If you prefer the literal token, paste it — `~/.claude.json` is `0600` by default. Each number has its own token; one number's token is refused by the other.
+
+Or from a terminal, one command per number (the form the hub page shows; add `--scope user` to
+register it for every project instead of the current one):
+
+```bash
+claude mcp add --transport http whatsapp-personal https://wa.example.com/personal/mcp \
+  --header "Authorization: Bearer <your-token>"
+```
 
 Verify:
 
 ```bash
-claude mcp list     # whatsapp: ✓ Connected
+claude mcp list     # whatsapp-personal: ✓ Connected, whatsapp-work: ✓ Connected
 # inside a session:
-/mcp                # should list the 23 whatsapp tools
+/mcp                # each entry lists the 23 whatsapp tools
 ```
+
+Permission rules name the entry: tools appear as `mcp__whatsapp-personal__send_message`, so an allowlist written for `mcp__whatsapp__*` no longer matches after a rename.
 
 ## Claude Desktop
 
@@ -40,9 +59,9 @@ File:
 ```json
 {
   "mcpServers": {
-    "whatsapp": {
+    "whatsapp-personal": {
       "type": "http",
-      "url": "https://mcp.example.com/mcp",
+      "url": "https://wa.example.com/personal/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -60,9 +79,9 @@ File: `~/.cursor/mcp.json`
 ```json
 {
   "mcpServers": {
-    "whatsapp": {
+    "whatsapp-personal": {
       "type": "http",
-      "url": "https://mcp.example.com/mcp",
+      "url": "https://wa.example.com/personal/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -85,7 +104,7 @@ const token = process.env.MCP_AUTH_TOKEN;
 if (!token) throw new Error("MCP_AUTH_TOKEN is required");
 
 const transport = new StreamableHTTPClientTransport(
-  new URL("https://mcp.example.com/mcp"),
+  new URL("https://wa.example.com/personal/mcp"),
   {
     requestInit: {
       headers: {
@@ -134,7 +153,7 @@ See `README.md` in this directory for curl/Python examples if your runtime doesn
     // always present — public URL to the stored object
     {
       "type": "resource_link",
-      "uri": "https://mcp.example.com/media/t/default/5511900000007@s.whatsapp.net/3EB0C1A....jpg",
+      "uri": "https://wa.example.com/personal/media/t/personal/5511900000007@s.whatsapp.net/3EB0C1A....jpg",
       "name": "3EB0C1A....jpg",
       "mimeType": "image/jpeg"
     },
@@ -147,7 +166,7 @@ See `README.md` in this directory for curl/Python examples if your runtime doesn
 Notes for integrators:
 
 - The `resource_link.uri` is **public** — no `Authorization` header needed when fetching it.
-- The host is the same as the MCP endpoint (`mcp.example.com`), routed by path (`/media/*`) to an S3-compatible bucket (a RustFS sidecar in the production compose). Same TLS cert, no extra DNS.
+- The host is the same as the MCP endpoint (`wa.example.com`), routed by path (`/<label>/media/t/*`) to an S3-compatible bucket (in the production compose, a RustFS container of that number alone, so the link resolves only under the label it was issued with). Same TLS cert, no extra DNS.
 - Audio messages get `{ "type": "audio", … }` instead of `image` on first call.
 - For files larger than `MEDIA_INLINE_MAX_BYTES` (default 5 MiB), no inline block is returned — fetch via `resource_link.uri`.
 - Subsequent calls for the same `(message_id, chat_jid)` skip Baileys and return only the `resource_link` + JSON metadata (`status: "cached"`).

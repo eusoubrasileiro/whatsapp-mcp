@@ -39,6 +39,21 @@ claude mcp add --scope user whatsapp -- \
 
 Swap back to the HTTP entry afterwards; `claude mcp add` replaces it.
 
+The hub (the PIN-protected page that shows every number) is a second entry point in the same
+codebase, `src/hub/main.ts`. To see it locally over one HTTP server started as above with
+`INSTANCE_LABEL=dev`:
+
+```bash
+mkdir -p /tmp/wa-hub
+HUB_PIN=local-dev-pin HUB_COOKIE_KEY="$(openssl rand -hex 32)" \
+HUB_INSTANCES=dev=http://127.0.0.1:39002 \
+HUB_PUBLIC_URL=http://localhost:39100 HUB_PORT=39100 HUB_STATE_DIR=/tmp/wa-hub \
+  pnpm start:hub                                     # then open http://localhost:39100/
+```
+
+`src/hub/**` imports nothing from the WhatsApp side (a test pins its import graph): it only
+reads each number's status port.
+
 ## Tests
 
 Red-Green-Refactor: write the failing test first.
@@ -57,11 +72,45 @@ happy path → edge cases → guards → error paths. `pnpm test:harness` runs t
 suite for the review and mutation tooling in `scripts/`.
 
 The E2E suite lives in `e2e/` (`pnpm test:e2e`, config `vitest.e2e.config.ts`). Each spec boots
-the real MCP, QR and upload servers in a child process on a temp data dir and ephemeral ports,
-and drives them over HTTP. It needs the dev RustFS: `pnpm test:e2e:deps` starts it, and the
-upload spec fails, never skips, when it is down. WhatsApp is never connected: an egress guard
-kills the child on any non-loopback connect. Do not call `get_connection_status` from a spec —
-while disconnected it starts a real connection. The pre-push e2e leg runs this suite.
+the real MCP, status, upload and stream servers — and the hub, where a spec needs it — in child
+processes on a temp data dir and ephemeral ports, and drives them over HTTP. It needs the dev
+RustFS: `pnpm test:e2e:deps` starts it, and the upload spec fails, never skips, when it is down.
+WhatsApp is never connected: an egress guard kills the child on any non-loopback connect. Do
+not call `get_connection_status` from a spec — while disconnected it starts a real connection.
+The pre-push e2e leg runs this suite.
+
+Five specs cover the deploy files rather than one server. They need Docker with two images
+pulled once: the Traefik version the routing spec pins and `rustfs/rustfs:latest`. Without an
+image a spec fails, never skips, and the failure prints the `docker pull` line.
+
+- `deploy-compose` renders `deploy/docker-compose.yaml` and
+  `deploy/docker-compose.instance.yaml` with `docker compose config` and pins what they give a
+  number, its store and the hub.
+- `store` covers the store harness, `e2e/support/store.ts`: it starts the `minio` service of a
+  rendered compose file in a throwaway container, changing only the container name, the
+  network and the data volume, and refuses to start any other service. **Start a store in a
+  spec only through that harness, and never run `docker compose up` on a file under `deploy/`
+  or `e2e/fixtures/` yourself**: those files also hold the app, and a real app container
+  contacts WhatsApp.
+- `one-host-routing` turns the rendered Traefik labels into a proxy configuration, starts a
+  real Traefik in a throwaway container bound to loopback and one real store per number, and
+  drives two numbers and the hub through it: own path and own token, the other number's token
+  refused, each label's media served from its own store and refused under the other label,
+  the status port never routed, everything else answered by the hub's PIN form. It also holds
+  each store to its memory ceiling with four of the largest objects at once, which needs free
+  swap on the machine that runs the suite.
+- `migration-rehearsal` starts a server in the new shape on a copy of the single-instance data
+  layout and proves the pairing files and the database are byte-identical afterwards.
+- `store-migration` rehearses the move from one shared store to one store per number, in the
+  order of the runbook in [`deploy/README.md`](../deploy/README.md), starting from the earlier
+  layout kept verbatim under `e2e/fixtures/`: the copy tool run as a child process, its
+  verification and its refusals, routing while both layouts coexist, a store restarted on
+  existing data with new credentials, removal of the old copies, rollback.
+
+Every harness that needs a port asks the system for a free one and repeats a start that loses
+the race for it (`server-harness` pins that for the servers). A spec whose teardown throws
+before it stops what it started can still leave containers behind:
+`docker ps --filter name=whatsapp-mcp-e2e-` lists them.
 
 ## Git hooks (husky)
 

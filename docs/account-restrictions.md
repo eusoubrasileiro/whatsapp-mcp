@@ -22,8 +22,10 @@ sends from test agents. Every `463` of the account's lifetime fell inside that o
 refusal *across* sessions, so a fresh session days later re-attempted the same dead recipient.
 `send-blocklist.ts` closes that.
 
-> Never re-pair or re-scan **during** an active restriction countdown — re-linking under
+> Never unlink, re-pair or re-scan **during** an active restriction countdown — re-linking under
 > enforcement worsens the account's standing. Wait for the phone's banner to clear, restart once.
+> The hub's "unlink this number" page repeats this rule before it asks for the PIN, because it
+> is the one place where a single click starts a re-link.
 
 ## Guard chain
 
@@ -86,11 +88,22 @@ Run one instance per number, and give each number one job:
 | `SEND_COLD_ALLOWED_JIDS` | only numbers you own | owned test numbers |
 | If banned | catastrophic | buy another chip |
 
-In the production compose these come from `deploy/.env`; `SEND_COLD_OVERRIDE` defaults to
-`deny` there, so an instance only accepts cold contact when its operator opts in.
+In the production compose these come from that number's own env file, `deploy/.env.<label>`;
+`SEND_COLD_OVERRIDE` defaults to `deny` there, so an instance only accepts cold contact when
+its operator opts in, number by number. Nothing is shared between numbers: the blocklist, the
+inbound history and the pacer live in each number's own database and process.
+
+**A company line is a high-value number**, not an outreach number: customers know it, and
+losing it costs the business its contact point. It gets the left column — `deny`, and only
+owned numbers in the allowlist — even though "company" sounds like the place for outreach.
 
 Don't let the outreach instance's convenience creep customer traffic onto it — every real
 relationship stays on the high-value number.
+
+With more than one number on a server, the wrong line is a new way to break rule 1 below. Every
+labelled instance names itself in its MCP instructions, in `get_connection_status` and at the
+end of every send result (`Sent from the "<label>" line.`) — see
+[`tools.md`](./tools.md#which-line-am-i).
 
 ## Rules for agents
 
@@ -103,16 +116,23 @@ relationship stays on the high-value number.
    into a 12-digit BR mobile — that fabricates a different number and caused strike 1.
 4. **Never re-send after a `463`** — not this session, not tomorrow, not from another project.
 5. Reads are always safe. The risk is entirely on the send path.
+6. **Know which line you are on before you send.** Each number is a separate MCP server; a
+   message meant for the personal line must not leave from the company line, or the reverse.
+   When the user has not said which line, ask.
 
 ## Standing checks
 
 ```bash
 # 463s on a high-value instance should never grow — a new one is an incident
-ssh <vps> 'docker exec whatsapp-mcp grep -c "send rejected by server" /data/wa-logs.txt'
+ssh <vps> 'docker exec whatsapp-mcp-<label> grep -c "send rejected by server" /data/wa-logs.txt'
 
-# after any deploy: code shipping ≠ policy applying
-ssh <vps> 'docker exec whatsapp-mcp printenv | grep -E "^SEND_|^EXPECTED_WA_NUMBER"'
+# after any deploy, for every number: code shipping ≠ policy applying
+ssh <vps> 'docker exec whatsapp-mcp-<label> printenv | grep -E "^SEND_|^EXPECTED_WA_NUMBER|^INSTANCE_LABEL"'
 ```
 
-`EXPECTED_WA_NUMBER` must be set on every instance **before first boot** — the QR page is
-public, so until it's set the instance is pair-by-anyone.
+`EXPECTED_WA_NUMBER` must be set on every instance **before first boot**. The QR code is shown
+on the hub page, behind the PIN, next to the codes of the other numbers: `EXPECTED_WA_NUMBER` is
+what logs out and purges a pairing made by the wrong phone — a stranger's, or the operator's
+own other number. It must be written as WhatsApp itself writes that number (for a Brazilian
+mobile that can be the 12-digit form without the extra 9): a value in another form purges the
+**right** phone's pairing, and every purge is one more pairing event on the account.

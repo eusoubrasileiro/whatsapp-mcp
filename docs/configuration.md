@@ -1,9 +1,13 @@
 # Configuration
 
-All configuration is environment variables. The production values live in `deploy/.env`
-(template: [`deploy/.env.example`](../deploy/.env.example)).
+All configuration is environment variables. In production there is one env file per program:
+`deploy/.env` for the shared stack (the hub page; template
+[`deploy/.env.example`](../deploy/.env.example)) and one `deploy/.env.<label>` per WhatsApp
+number and its media store (template
+[`deploy/instance.env.example`](../deploy/instance.env.example)). The
+variables only the deploy files read are [below](#deploy-file-variables).
 
-## Environment variables
+## Environment variables (one WhatsApp number)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -14,29 +18,33 @@ All configuration is environment variables. The production values live in `deplo
 | `MCP_PORT` | `3001` | Bind port when `MCP_TRANSPORT=httpstream` (the Docker image sets `39001`) |
 | `MCP_ENDPOINT` | `/mcp` | HTTP path for MCP when `MCP_TRANSPORT=httpstream` |
 | `MCP_AUTH_TOKEN` | _(unset)_ | If set, HTTP MCP requires `Authorization: Bearer <token>`. If unset, endpoint accepts unauthenticated requests (stdio/local dev only — never run like this in prod). |
-| `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the public QR web page |
-| `QR_SERVER_PORT` | `39002` | Bind port for the QR web page |
+| `INSTANCE_LABEL` | _(unset)_ | Names this WhatsApp line (`a-z`, `0-9`, `-`, at most 32 characters; anything else is normalised). When set, the server instructions open by naming the line, `get_connection_status` returns it, every send result ends with `Sent from the "<label>" line.`, ntfy titles start with `[<label>]` and `/health` carries it. Unset: none of that, every output is as before. The deploy files set it from `INSTANCE`. |
+| `INSTANCE_DESCRIPTION` | _(unset)_ | One line of plain words about the line (at most 200 characters), shown to agents and on the hub card. Ignored without `INSTANCE_LABEL`. |
+| `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the status port: `/health`, `/live`, `/qr.png`, and `/internal/unlink` when `HUB_INSTANCE_SECRET` is set. |
+| `QR_SERVER_PORT` | `39002` | Bind port for the status port. In production it is **not** routed publicly: the hub reads it over the Docker network. |
+| `HUB_INSTANCE_SECRET` | _(unset)_ | Shared with the hub. At least 32 characters enables `POST /internal/unlink` on the status port (Bearer-authenticated with this value; it runs the same use case as the `logout` tool). Unset, empty or shorter: the route does not exist. |
 | `UPLOAD_SERVER_HOST` | `127.0.0.1` | Bind host for the host-disk upload endpoint (only started when `S3_ENABLED=true`) |
-| `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `mcp.example.com/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
+| `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `wa.example.com/<label>/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
+| `UPLOAD_PUBLIC_URL` | _(unset)_ | The public upload address of this number. When it is an http(s) URL, `send_file`'s `file_path` description names it; unset, the description keeps its generic wording. |
 | `STREAM_SERVER_HOST` | `127.0.0.1` | Bind host for the `follow_chat` WebSocket presence stream. |
-| `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `mcp.example.com/stream` (WebSocket upgrade). |
-| `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://mcp.example.com/stream`. |
+| `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `wa.example.com/<label>/stream` (WebSocket upgrade). |
+| `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://wa.example.com/<label>/stream`. |
 | `STREAM_TOKEN_TTL_S` | `1800` | Lifetime (seconds) of a `follow_chat` stream token. In-memory only; scoped to the requested jids + flags; treated as a bearer secret. |
-| `PUBLIC_QR_URL` | _(derived: `http://<QR_SERVER_HOST>:<QR_SERVER_PORT>/`, `localhost` for a wildcard bind)_ | URL sent in ntfy `Click` header and message text so tapping the push opens the QR page. Set it to the public QR page (e.g. `https://wa.example.com/`) in any deployment you pair from a phone |
+| `PUBLIC_QR_URL` | _(derived: `http://<QR_SERVER_HOST>:<QR_SERVER_PORT>/qr.png`, `localhost` for a wildcard bind)_ | URL sent in ntfy `Click` header and message text so tapping the push opens the QR code. In production it is the hub's link to that number's card, `https://wa.example.com/<label>`. |
 | `NTFY_TOPIC_URL` | _(unset)_ | ntfy.sh topic URL; unset = notifications disabled |
 | `NTFY_TOKEN` | _(unset)_ | Bearer token for protected ntfy topics |
-| `EXPECTED_WA_NUMBER` | _(unset)_ | If set, only pairings whose JID starts with this prefix are accepted. A mismatch triggers `socket.logout()`, purges `auth_info/`, and fires an ntfy alert. Critical when the QR page is publicly reachable. |
-| `S3_ENABLED` | `false` | Set to `true` to enable the S3-compatible media plane. Required for `download_media` to work in remote deployments. Prod uses RustFS running as a sidecar in the same compose stack — no managed cloud, no extra bill. |
-| `S3_ENDPOINT` | `localhost` | S3 endpoint hostname (dev/prod: `minio` (runs RustFS; service name kept for DNS compat) — service name on the docker network). |
+| `EXPECTED_WA_NUMBER` | _(unset)_ | If set, only pairings whose JID starts with this prefix are accepted. A mismatch triggers `socket.logout()`, purges `auth_info/`, and fires an ntfy alert. Set it for every number: it is what stops the wrong phone from pairing. With at least 10 digits it also gives the hub card its "number ending" before the number is paired. **Write the number as WhatsApp itself writes it, not as you dial it**: the match is a prefix of the paired account's id, and a Brazilian mobile number, for one, can be registered in its 12-digit form without the extra 9 — the 13-digit form would then purge a correct pairing. See [`deploy/README.md`](../deploy/README.md#add-a-number). |
+| `S3_ENABLED` | `false` | Set to `true` to enable the S3-compatible media plane. Required for `download_media` to work in remote deployments. Prod uses RustFS running as a sidecar in the number's own compose project — no managed cloud, no extra bill. |
+| `S3_ENDPOINT` | `localhost` | S3 endpoint hostname. Prod: `whatsapp-mcp-<label>-minio`, the container name of the number's own RustFS (never the bare service name `minio`: on the proxy network that name is shared by every number's store, and with other stacks). Dev: `minio`. |
 | `S3_PORT` | `9000` | Port for the S3 endpoint. Always `9000` for the RustFS sidecar. |
 | `S3_USE_SSL` | `false` | Always `false` — Traefik terminates TLS in front of RustFS; the app talks to RustFS in-cluster over HTTP. |
-| `S3_ACCESS_KEY` | `minioadmin` | S3 access key. Prod: same value as `MINIO_ROOT_USER`. |
-| `S3_SECRET_KEY` | `minioadmin` | S3 secret key. Prod: same value as `MINIO_ROOT_PASSWORD`. |
-| `S3_BUCKET` | `amiticia-media` | Bucket name. The `mc` init sidecar creates it on first boot. |
+| `S3_ACCESS_KEY` | `minioadmin` | S3 access key. Prod: the number's own `MINIO_ROOT_USER`. |
+| `S3_SECRET_KEY` | `minioadmin` | S3 secret key. Prod: the number's own `MINIO_ROOT_PASSWORD`. |
+| `S3_BUCKET` | `amiticia-media` | Bucket name. The app creates it at start and sets a policy that allows reading one object by its key and nothing else (no listing). There is no init container. |
 | `S3_REGION` | `us-east-1` | Bucket region (cosmetic for RustFS; SDK still requires it). |
 | `S3_SKIP_POLICY` | `false` | Keep `false` — RustFS accepts `setBucketPolicy`, so the app sets the public-read policy at boot. |
-| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://mcp.example.com/media` (Traefik path-based route, see `deploy/docker-compose.yaml`). |
-| `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. One WhatsApp account per instance, so one tenant. |
+| `MEDIA_PUBLIC_BASE_URL` | _(derived from endpoint)_ | Public base URL prefix for media. Dev: `http://localhost:9000/amiticia-media`. Prod: `https://wa.example.com/<label>/media` (Traefik path-based route, see `deploy/docker-compose.instance.yaml`). |
+| `TENANT_ID` | `default` | Object key prefix: `t/{tenantId}/…`. One WhatsApp account per instance, so one tenant. The deploy files set it to the number's label; a number that was installed before labels existed keeps `default`, so its stored media keeps its keys. |
 | `MEDIA_INLINE_MAX_BYTES` | `5242880` | Max file size (bytes) for inline `imageContent`/`audioContent` in tool response. |
 | `SEND_ACK_WAIT_MS` | `3000` | How long `send_message` / `send_file` wait for a server rejection ack before declaring the send accepted. Observed ack latency is ~40 ms, so the default carries ~75× headroom. `0` disables the wait (restores fire-and-forget: a refused send reports success again). |
 | `SEND_PRESEND_CHECK` | `true` | Verify the recipient exists via `onWhatsApp()` before sending, and upgrade a phone JID to its canonical `@lid`. Set `false` to send to exactly the JID given, unverified. |
@@ -52,6 +60,44 @@ All configuration is environment variables. The production values live in `deplo
 | `VISION_MODEL` | `openai/gpt-6-luna` | OpenRouter model id used by `download_media`'s `describe` flag. Any image-input model works. |
 | `FFMPEG_BIN` | `ffmpeg` | Path to the ffmpeg binary used for audio preprocessing before Whisper. |
 
+## Environment variables (the hub)
+
+The hub is a second program in the same image (`src/hub/main.ts`, `pnpm start:hub`): one page,
+behind a PIN, that shows every number and lets the operator pair one. It never talks to
+WhatsApp and holds no number's token. It refuses to start when a required value is missing or
+unusable, and says which variable is at fault without printing a value.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HUB_PIN` | _(required)_ | The PIN that opens the page. At least 4 characters. Five wrong PINs from one address lock that address for 15 minutes; twenty from anywhere lock the form for everyone for 60 minutes and send one ntfy push. |
+| `HUB_COOKIE_KEY` | _(required)_ | Signs the session cookie (30 days, `HttpOnly`, `Secure`, `SameSite=Strict`). At least 32 characters; `openssl rand -hex 32`. Changing it signs everyone out. |
+| `HUB_INSTANCES` | _(required)_ | The numbers to show, comma-separated: `label` (reached at `http://whatsapp-mcp-<label>:39002`, the container the deploy files create) or `label=http://host:port`. |
+| `HUB_PUBLIC_URL` | _(required)_ | The public origin of the hub, without a trailing slash. `https`, or `http` for localhost only. The deploy file sets it from `PUBLIC_DOMAIN`. |
+| `HUB_STATE_DIR` | _(required)_ | An existing, writable directory for `pin-attempts.json`, so the wrong-PIN counters survive a restart. A damaged file stops the start on purpose: the hub never starts with empty counters over a broken file. |
+| `HUB_INSTANCE_SECRET` | _(unset)_ | Shared with every number. At least 32 characters enables the "unlink this number" action; unset or empty, the action does not exist; set but shorter, the hub refuses to start. |
+| `HUB_LANG` | `en` | Language of the page: `en` or `pt-BR`. Any other value stops the start. |
+| `HUB_HOST` / `HUB_PORT` | `0.0.0.0` / `39002` | Where the hub listens. |
+| `NTFY_TOPIC_URL` / `NTFY_TOKEN` | _(unset)_ | Where the "PIN is being guessed" push goes. |
+| `LOG_LEVEL` | `info` | Pino log level. |
+
+## Deploy-file variables
+
+Read by `deploy/docker-compose.yaml` and `deploy/docker-compose.instance.yaml`, not by the
+programs.
+
+| Variable | File | Description |
+|----------|------|-------------|
+| `PUBLIC_DOMAIN` | both | The one public hostname. The hub answers at `/`, each number under `/<label>/`. |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | number | Credentials of this number's own RustFS media store. Required: the file does not render without them. A different pair in every number's file (`openssl rand -hex 16` each); the shared stack reads no store credential. |
+| `STORE_MEM_LIMIT` | number | Memory ceiling of this number's store. Default `150m`. |
+| `COMPOSE_FILE` | number | `docker-compose.instance.yaml`, so `docker compose --env-file .env.<label> …` picks the number's file. |
+| `INSTANCE` | number | The number's label. It names the compose project, the containers (`whatsapp-mcp-<label>` and its store `whatsapp-mcp-<label>-minio`), the routes (`/<label>/…`), the data directory and the media prefix. |
+| `INSTANCE_DATA_DIR` | number | Host directory mounted at `/data`; the store's objects live in its `minio/` subdirectory. Default `/storage/whatsapp-mcp-<label>`. Set it only to keep a number on a directory that already holds its pairing. |
+
+The one-time copy tool (`src/store-copy-cli.ts`, `pnpm store:copy`) reads its own
+`STORE_COPY_*` variables; they are described where it is used, in
+[`deploy/README.md`](../deploy/README.md#migrating-from-one-shared-store-to-one-store-per-number).
+
 ## Data storage
 
 Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via `pnpm start`, `/data` in the Docker image):
@@ -64,8 +110,12 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 - `backups/daily/auth_info-YYYY-MM-DD.tar.gz` - Per-day auth tarball
 - `wa-logs.txt` - WhatsApp/Baileys logs
 - `mcp-logs.txt` - MCP server logs
+- `minio/` - production compose only: the files of this number's RustFS store, written by the store container and never by the app
 
-> **Media**: downloaded media is stored in a RustFS sidecar in the same compose stack (bind-mounted at `/storage/whatsapp-mcp/minio` in the production compose). It is served publicly through Traefik at `https://mcp.example.com/media/<key>` — no separate subdomain, no managed cloud bucket, no recurring bill. The legacy `data/media/` directory existed in older deployments — run `scripts/backfill-media.sh` inside the container to upload existing files into RustFS; the script then drops the legacy column.
+The hub keeps one file, `pin-attempts.json`, in `HUB_STATE_DIR` (`/storage/whatsapp-mcp-hub`
+in the production compose): the wrong-PIN counters, with addresses stored as keyed hashes.
+
+> **Media**: downloaded media is stored in the number's own RustFS container, part of its compose project (bind-mounted at `<data>/minio`, so `/storage/whatsapp-mcp-<label>/minio` in the production compose), with credentials no other number holds. It is served publicly through Traefik at `https://wa.example.com/<label>/media/<key>` — no separate subdomain, no managed cloud bucket, no recurring bill. Only object keys are routed, and each label reaches only its own store: a request for the bucket itself never reaches a store, and one number's key is not found under another's label. The legacy `data/media/` directory existed in older deployments — run `scripts/backfill-media.sh` inside the container to upload existing files into RustFS; the script then drops the legacy column.
 
 All data directories are gitignored for security.
 

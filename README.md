@@ -6,15 +6,16 @@ WhatsApp as an MCP server. Runs as a long-lived Docker daemon, accessed over HTT
 
 ## Who this is for
 
-You want your personal WhatsApp account reachable as a set of tools from **Claude Code, Claude Desktop, Cursor, or any custom MCP/HTTP client** — from any machine — with the WhatsApp connection surviving client restarts, multiple clients sharing one socket, and a push telling you on your phone when you need to re-scan a QR.
+You want your WhatsApp account — or several: a personal number and a company line — reachable as a set of tools from **Claude Code, Claude Desktop, Cursor, or any custom MCP/HTTP client** — from any machine — with the WhatsApp connection surviving client restarts, multiple clients sharing one socket, and a push telling you on your phone when you need to re-scan a QR.
 
 ## Features
 
 - **HTTP MCP endpoint** (`httpStream` transport) — connect from anywhere, share the session across multiple clients without Baileys fighting for the socket
-- **Bearer-token auth** on the MCP endpoint
-- **Public QR web page** (protected by paired-number check) — tap the ntfy push and scan directly from your phone browser
+- **Bearer-token auth** on the MCP endpoint, one token per number
+- **Several numbers on one host** — each number is its own container, pairing, database and MCP endpoint (`/<label>/mcp`); every server tells the agent which line it is, so a message does not leave from the wrong number
+- **Hub page behind a PIN** — one card per number with its connection state and the QR code to pair it; tap the ntfy push and scan from your phone browser
 - **ntfy push** on: first QR after disconnect, every 2min while still waiting, connection drop, reconnect after drop, and unexpected pairings
-- **Bad-pairing protection** — if someone else scans the public QR, the app auto-logs out and purges credentials (`EXPECTED_WA_NUMBER`)
+- **Bad-pairing protection** — if the wrong phone scans a QR code, the app auto-logs out and purges credentials (`EXPECTED_WA_NUMBER`)
 - **23 MCP tools** — search contacts/messages, list chats, send text/media, react, delete, mark read, download media, plus reactive monitoring (cursor delta, long-poll, a `follow_chat` WebSocket stream) and webhook subscriptions for real-time inbound push (see table below)
 - **Persistent SQLite** (chats/messages/contacts) and Baileys multi-file auth stored in a Docker volume
 
@@ -27,45 +28,48 @@ flowchart LR
   end
   PB[Phone browser]
   CC -- "https + Bearer" --> T[Traefik]
-  PB -- "https (public)" --> T
-  T -- ":39001" --> MCP[FastMCP httpStream]
-  T -- ":39002" --> QR[QR page]
-  subgraph container[whatsapp-mcp container]
+  PB -- "https + PIN" --> T
+  T -- "/" --> HUB[Hub page]
+  T -- "/&lt;label&gt;/mcp :39001" --> MCP[FastMCP httpStream]
+  subgraph container[whatsapp-mcp-&lt;label&gt; container, one per number]
     MCP
-    QR
+    ST[":39002 status + QR"]
     BA[Baileys]
   end
+  HUB -. "reads, inside Docker" .-> ST
   MCP --> BA
-  QR --> BA
+  ST --> BA
   BA -- "WA Web API" --> WA[(WhatsApp servers)]
   container -- "outbound POST" --> NT[ntfy.sh] -- push --> PH[Your phone]
 ```
 
 
-One container exposes two HTTP servers on different ports. Traefik terminates TLS (Let's Encrypt) and routes by hostname.
+One hostname. Traefik terminates TLS (Let's Encrypt) and routes by path: each number's container answers under `/<label>/`, and a small hub container answers everything else behind a PIN. A number's status port is never routed publicly — the hub reads it inside the Docker network.
 
 ## Quick start for MCP clients
 
-A deployment exposes two hostnames of your choosing (`example.com` below — substitute your own):
+A deployment exposes one hostname of your choosing (`wa.example.com` below — substitute your own). With a number labelled `personal`:
 
-- `https://mcp.example.com/mcp` — MCP endpoint, requires `Authorization: Bearer <MCP_AUTH_TOKEN>`
-- `https://wa.example.com/` — QR web page
+- `https://wa.example.com/personal/mcp` — MCP endpoint of that number, requires `Authorization: Bearer <that number's MCP_AUTH_TOKEN>`
+- `https://wa.example.com/` — the hub page (PIN): connection state and QR code of every number, and a ready client entry for each
+
+Add one client entry **per number**, named after it — the name is what the agent sees when it picks a tool.
 
 ### Claude Code
 
 Edit `~/.claude.json`, in the top-level `mcpServers` object:
 
 ```json
-"whatsapp": {
+"whatsapp-personal": {
   "type": "http",
-  "url": "https://mcp.example.com/mcp",
+  "url": "https://wa.example.com/personal/mcp",
   "headers": {
-    "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
+    "Authorization": "Bearer ${WHATSAPP_PERSONAL_TOKEN}"
   }
 }
 ```
 
-Export `MCP_AUTH_TOKEN` in your shell (or put the token literally — `~/.claude.json` is `0600`). Restart Claude Code, run `/mcp` — should show `whatsapp: ✓ Connected`.
+Export `WHATSAPP_PERSONAL_TOKEN` in your shell (or put the token literally — `~/.claude.json` is `0600`). Restart Claude Code, run `/mcp` — should show `whatsapp-personal: ✓ Connected`. A second number is a second entry (`whatsapp-work` → `/work/mcp`) with its own token.
 
 ### Claude Desktop
 
@@ -74,9 +78,9 @@ Export `MCP_AUTH_TOKEN` in your shell (or put the token literally — `~/.claude
 ```json
 {
   "mcpServers": {
-    "whatsapp": {
+    "whatsapp-personal": {
       "type": "http",
-      "url": "https://mcp.example.com/mcp",
+      "url": "https://wa.example.com/personal/mcp",
       "headers": { "Authorization": "Bearer your-token-here" }
     }
   }
@@ -110,7 +114,7 @@ The server exposes 23 tools. Full reference: [`docs/tools.md`](./docs/tools.md).
 
 ## Deployment
 
-Full deploy / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md). The production compose file is [`deploy/docker-compose.yaml`](./deploy/docker-compose.yaml); hostnames and the send policy come from `deploy/.env` (template: [`deploy/.env.example`](./deploy/.env.example)).
+Full deploy / add a number / update / rotate-secrets / troubleshoot runbook: [`deploy/README.md`](./deploy/README.md). Two compose files: [`deploy/docker-compose.yaml`](./deploy/docker-compose.yaml) runs the shared stack (the hub; env template [`deploy/.env.example`](./deploy/.env.example)), and [`deploy/docker-compose.instance.yaml`](./deploy/docker-compose.instance.yaml) runs one WhatsApp number and its own media store, once per number, each with its own env file — token, expected number, send policy and store credentials (template: [`deploy/instance.env.example`](./deploy/instance.env.example)).
 
 This repo depends on its sibling [`baileys-client`](https://github.com/eusoubrasileiro/baileys-client) (`link:../baileys-client`), so clone both side by side. Build recipe (BuildKit):
 
@@ -152,9 +156,11 @@ Full table: [`docs/configuration.md`](./docs/configuration.md). Highlights:
 
 | Variable | Purpose |
 |----------|---------|
-| `MCP_AUTH_TOKEN` | Bearer token required by the HTTP MCP endpoint (mandatory in production) |
+| `MCP_AUTH_TOKEN` | Bearer token required by the HTTP MCP endpoint (mandatory in production; one per number) |
+| `INSTANCE_LABEL` / `INSTANCE_DESCRIPTION` | Name this WhatsApp line. The server then tells agents which line it is, in its instructions, in `get_connection_status` and at the end of every send result |
 | `NTFY_TOPIC_URL` | Unset = no push notifications; set to enable |
-| `EXPECTED_WA_NUMBER` | Prefix allowed to pair; wrong scan → auto-logout + purge (strongly recommended whenever the QR page is public) |
+| `EXPECTED_WA_NUMBER` | Number allowed to pair; wrong scan → auto-logout + purge (set it for every number, in the form WhatsApp itself uses for it) |
+| `HUB_PIN` | Opens the hub page (hub only; the other `HUB_*` variables are in the full table) |
 | `WHATSAPP_MCP_DATA_DIR` | Base dir for `auth_info/`, `data/`, and logs (defaults to `.`, Docker uses `/data`) |
 | `OPENROUTER_API_KEY` | Powers `download_media` audio transcription (Whisper) and image description (vision model) |
 | `AUDIO_PROVIDER` | Transcription route: `openrouter` (default) \| `groq` \| `openai`. Rollback lanes only — the route is chosen by this var, never by which key happens to be set |
@@ -164,7 +170,7 @@ Full table: [`docs/configuration.md`](./docs/configuration.md). Highlights:
 
 - **Credentials**: `WHATSAPP_MCP_DATA_DIR/auth_info/` (Baileys multi-file auth state)
 - **Messages / chats / contacts**: `WHATSAPP_MCP_DATA_DIR/data/whatsapp.db` (SQLite via Drizzle + `better-sqlite3`)
-- **Media**: served from a RustFS sidecar in the same compose stack, behind Traefik at `https://mcp.example.com/media/<key>`. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
+- **Media**: each number has its own RustFS container, with its own credentials, served behind Traefik at `https://wa.example.com/<label>/media/<key>`; a link works only under the label of the number that produced it. The `download_media` tool returns an MCP `resource_link` pointing at that URL (publicly fetchable, no Bearer needed) plus inline `imageContent`/`audioContent` on the first call. Cache hits return the URL only.
 - **Audio → text**: by default, `download_media` on an audio/ptt message transcribes via OpenRouter Whisper (`openai/whisper-large-v3`) after preprocessing to 16 kHz mono FLAC. The response is wrapped in an `<transcription>` XML block. Pass `transcribe: false` to get raw audio bytes instead. Requires `OPENROUTER_API_KEY`. Groq and OpenAI remain as rollback routes via `AUDIO_PROVIDER` (each needs its own key).
 - **Image → text**: opt-in via `download_media({ ..., describe: true })`. Sends the image to an OpenRouter vision model (`VISION_MODEL`, default `openai/gpt-6-luna`); response wrapped in an `<image_description>` XML block. Requires `OPENROUTER_API_KEY`.
 - **Logs**: `WHATSAPP_MCP_DATA_DIR/{wa,mcp}-logs.txt` (pino JSON lines)

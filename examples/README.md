@@ -1,10 +1,10 @@
 # Integration examples
 
-Talking to a deployed `whatsapp-mcp` from different runtimes. Replace `mcp.example.com` with your own host. The endpoint is:
+Talking to a deployed `whatsapp-mcp` from different runtimes. A deployment serves each WhatsApp number at its own path with its own token. Replace `wa.example.com` with your own host and `personal` with the number's label. The endpoint is:
 
 ```
-https://mcp.example.com/mcp
-Authorization: Bearer <MCP_AUTH_TOKEN>
+https://wa.example.com/personal/mcp
+Authorization: Bearer <that number's MCP_AUTH_TOKEN>
 Content-Type:  application/json
 Accept:        application/json, text/event-stream
 ```
@@ -26,7 +26,7 @@ The MCP `httpStream` transport is JSON-RPC 2.0 over HTTP with an SSE-style `Acce
 ```bash
 export TOKEN="<your-MCP_AUTH_TOKEN>"
 
-curl -sS -X POST https://mcp.example.com/mcp \
+curl -sS -X POST https://wa.example.com/personal/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -47,7 +47,7 @@ Expected: HTTP 200 with a JSON-RPC result and a `Mcp-Session-Id` header. Capture
 ### 2. List tools
 
 ```bash
-curl -sS -X POST https://mcp.example.com/mcp \
+curl -sS -X POST https://wa.example.com/personal/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Mcp-Session-Id: <from-initialize>" \
   -H "Content-Type: application/json" \
@@ -58,7 +58,7 @@ curl -sS -X POST https://mcp.example.com/mcp \
 ### 3. Call a tool
 
 ```bash
-curl -sS -X POST https://mcp.example.com/mcp \
+curl -sS -X POST https://wa.example.com/personal/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Mcp-Session-Id: <from-initialize>" \
   -H "Content-Type: application/json" \
