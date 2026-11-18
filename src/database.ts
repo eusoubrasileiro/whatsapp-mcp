@@ -18,6 +18,7 @@ import {
 } from "drizzle-orm";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import type { Logger } from "pino";
+import { chatDisplayName } from "./db/chat-display-name.ts";
 import { applySchemaDdl } from "./db/ddl.ts";
 import * as schema from "./db/schema.ts";
 
@@ -482,7 +483,7 @@ const messageColumns = {
   content: schema.messages.content,
   timestamp: schema.messages.timestamp,
   is_from_me: schema.messages.isFromMe,
-  chat_name: schema.chats.name,
+  chat_name: chatDisplayName(),
   media_type: schema.messages.mediaType,
   mimetype: schema.messages.mimetype,
   media_key: schema.messages.mediaKey,
@@ -546,7 +547,7 @@ export function getChats(
       .with(lastMessageSq)
       .select({
         jid: schema.chats.jid,
-        name: schema.chats.name,
+        name: chatDisplayName(),
         last_message_time: schema.chats.lastMessageTime,
         last_message: includeLastMessage ? lastMessageSq.content : sql`NULL`,
         last_sender: includeLastMessage ? lastMessageSq.sender : sql`NULL`,
@@ -567,7 +568,7 @@ export function getChats(
     if (query) {
       chatFilters.push(
         or(
-          like(sql`LOWER(${schema.chats.name})`, `%${query.toLowerCase()}%`),
+          like(sql`LOWER(${chatDisplayName()})`, `%${query.toLowerCase()}%`),
           like(schema.chats.jid, `%${query}%`),
         ) as SQL,
       );
@@ -577,7 +578,7 @@ export function getChats(
     const orderBy =
       sortBy === "last_active"
         ? [desc(schema.chats.lastMessageTime), asc(schema.chats.jid)]
-        : [asc(schema.chats.name), asc(schema.chats.jid)];
+        : [asc(chatDisplayName()), asc(schema.chats.jid)];
 
     const rows = baseQuery
       .orderBy(...orderBy)
@@ -625,7 +626,7 @@ export function getChat(jid: string, includeLastMessage: boolean = true): Chat |
       .with(lastMessageSq)
       .select({
         jid: schema.chats.jid,
-        name: schema.chats.name,
+        name: chatDisplayName(),
         last_message_time: schema.chats.lastMessageTime,
         last_message: includeLastMessage ? lastMessageSq.content : sql`NULL`,
         last_sender: includeLastMessage ? lastMessageSq.sender : sql`NULL`,
