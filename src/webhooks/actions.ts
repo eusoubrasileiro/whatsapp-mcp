@@ -5,6 +5,7 @@
  */
 
 import { addSubscription, listSubscriptions, removeSubscription } from "./registry.ts";
+import { assertWebhookTarget } from "./target-policy.ts";
 import type { AuthMode, Subscription } from "./types.ts";
 
 /**
@@ -49,6 +50,7 @@ function validateTargetUrl(url: string): void {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`target_url must use http(s), got "${parsed.protocol}".`);
   }
+  assertWebhookTarget(parsed);
 }
 
 export function executeRegisterWebhook(input: RegisterWebhookInput): { id: string } {
