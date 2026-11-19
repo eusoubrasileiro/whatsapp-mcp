@@ -2,6 +2,7 @@ import { normalizeJid } from "@amiticia/baileys-client";
 import { z } from "zod";
 
 import { assertSocketActive } from "../../actions.ts";
+import { summarizeFileInput } from "../../file-input-summary.ts";
 import { resolveRecipient } from "../../recipient.ts";
 import { assertSendAccepted, getSendAckWaitMs, isPresendCheckEnabled } from "../../send-guard.ts";
 import { applySendPolicy } from "../../send-policy.ts";
@@ -133,7 +134,9 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
       allow_cold_contact: z.boolean().optional().default(false).describe(ALLOW_COLD_DESCRIPTION),
     }),
     execute: async ({ recipient, file_path, caption, type, allow_cold_contact }) => {
-      mcpLogger.info(`[MCP Tool] Executing send_file to ${recipient}: ${file_path}`);
+      mcpLogger.info(
+        `[MCP Tool] Executing send_file to ${recipient}: ${summarizeFileInput(file_path)}`,
+      );
       const socket = assertSocketActive();
 
       const normalizedRecipient = normalizeJid(recipient);

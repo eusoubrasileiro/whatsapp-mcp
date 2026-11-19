@@ -131,6 +131,54 @@ describe("createNtfy", () => {
     expect(logger.debug).not.toHaveBeenCalled();
   });
 
+  describe("the topic stays out of the log", () => {
+    const topicUrl = "https://ntfy.sh/wa-alerts-k3x9q";
+
+    function warnings() {
+      const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() } as unknown as Logger & {
+        warn: ReturnType<typeof vi.fn>;
+      };
+      return logger;
+    }
+
+    it("logs only the host when ntfy answers with an error", async () => {
+      vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 429 }));
+      const logger = warnings();
+
+      await createNtfy(logger, { topicUrl })({ title: "T", message: "M" });
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        { status: 429, host: "ntfy.sh" },
+        "ntfy returned non-2xx status",
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("k3x9q");
+    });
+
+    it("logs only the host when the push cannot be sent", async () => {
+      const err = new Error("getaddrinfo ENOTFOUND");
+      vi.mocked(globalThis.fetch).mockRejectedValue(err);
+      const logger = warnings();
+
+      await createNtfy(logger, { topicUrl })({ title: "T", message: "M" });
+
+      expect(logger.warn).toHaveBeenCalledWith({ err, host: "ntfy.sh" }, "ntfy fetch failed");
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("k3x9q");
+    });
+
+    it("says the setting is invalid instead of echoing it", async () => {
+      const err = new TypeError("Failed to parse URL");
+      vi.mocked(globalThis.fetch).mockRejectedValue(err);
+      const logger = warnings();
+
+      await createNtfy(logger, { topicUrl: "ntfy.sh/k3x9q" })({ title: "T", message: "M" });
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        { err, host: "(invalid NTFY_TOPIC_URL)" },
+        "ntfy fetch failed",
+      );
+    });
+  });
+
   /** Sends one push through a fresh sender and returns what fetch received for it. */
   async function pushed(
     config: Partial<NtfyConfig>,

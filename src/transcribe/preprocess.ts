@@ -35,6 +35,14 @@ import { join } from "node:path";
 // below fire only on the actual demux-truncation failure mode (issue #4).
 const DEMUX_ERROR_MARKERS = ["Error during demuxing", "partial file"];
 
+/**
+ * The only demuxers ffmpeg may pick for the input: the containers WhatsApp audio arrives in.
+ * The bytes come from any contact, and ffmpeg's probing would otherwise also pick a playlist
+ * format (HLS, concat) that opens further files. `mov` covers MP4, M4A and 3GP; `matroska`
+ * covers WebM.
+ */
+const AUDIO_DEMUXERS = "ogg,mp3,mov,aac,amr,amrnb,amrwb,wav,flac,matroska,webm,aiff,caf";
+
 export class FfmpegError extends Error {
   stderr?: string;
   code?: number;
@@ -69,6 +77,10 @@ export async function toFlacMono16k(input: Buffer): Promise<Buffer> {
         "-hide_banner",
         "-loglevel",
         "error",
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        AUDIO_DEMUXERS,
         "-i",
         inputPath,
         "-ar",
