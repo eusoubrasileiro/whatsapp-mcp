@@ -2,6 +2,7 @@ import { FastMCP } from "fastmcp";
 import type { Logger } from "pino";
 
 import { type InstanceIdentity, identityParagraph } from "./instance-identity.ts";
+import { allowsNoAuth, authenticateMcpRequest, readAuthToken } from "./listener-auth.ts";
 import { registerActionsTools } from "./mcp/tools/actions.ts";
 import { registerChatsTools } from "./mcp/tools/chats.ts";
 import { registerConnectionTools } from "./mcp/tools/connection.ts";
@@ -53,10 +54,13 @@ export async function startMcpServer(
 ): Promise<void> {
   mcpLogger.info("Initializing FastMCP server...");
 
-  const authToken = process.env.MCP_AUTH_TOKEN;
-  if (!authToken) {
+  // Startup already refused HTTP without a token unless MCP_ALLOW_NO_AUTH=true; the request
+  // check below fails closed on its own as well (src/listener-auth.ts).
+  const authToken = readAuthToken();
+  const allowNoAuth = allowsNoAuth();
+  if (!authToken && allowNoAuth) {
     mcpLogger.warn(
-      "MCP_AUTH_TOKEN not set — HTTP MCP endpoint will accept unauthenticated requests. OK for stdio/local, DO NOT run like this in production.",
+      "MCP_ALLOW_NO_AUTH=true and no MCP_AUTH_TOKEN — the HTTP MCP endpoint accepts anyone. Development only.",
     );
   }
 
@@ -64,25 +68,7 @@ export async function startMcpServer(
     name: "whatsapp-baileys-ts",
     version: "0.3.0",
     instructions: buildServerInstructions(identity),
-    authenticate: async (request) => {
-      // stdio transport passes undefined — trust local invocation.
-      if (!request) return {};
-
-      if (!authToken) return {};
-
-      const header = request.headers.authorization;
-      const raw = Array.isArray(header) ? header[0] : header;
-      if (!raw?.startsWith("Bearer ")) {
-        throw new Response(null, {
-          status: 401,
-          statusText: "Missing or invalid Authorization header",
-        });
-      }
-      if (raw.slice(7) !== authToken) {
-        throw new Response(null, { status: 401, statusText: "Invalid token" });
-      }
-      return {};
-    },
+    authenticate: async (request) => authenticateMcpRequest(request, authToken, allowNoAuth),
   });
 
   const deps: ToolDeps = { mcpLogger, waLogger, identity };

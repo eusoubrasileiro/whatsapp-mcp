@@ -5,6 +5,7 @@ import { executeLogout } from "./actions.ts";
 import { initializeDatabase, setDatabaseLogger } from "./database.ts";
 import { readHubInstanceSecret } from "./hub-instance-secret.ts";
 import { readInstanceIdentity } from "./instance-identity.ts";
+import { assertListenersGuarded, readAuthToken } from "./listener-auth.ts";
 import { startMcpServer } from "./mcp.ts";
 import { createQrServer } from "./qr-server.ts";
 import { ensureBucketReady, putUpload } from "./storage.ts";
@@ -90,6 +91,9 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
   const { mcpLogger, waLogger } = deps;
   const s3Enabled = process.env.S3_ENABLED === "true";
 
+  // No network listener opens without a token: refused here, before anything starts.
+  assertListenersGuarded();
+
   // Set database logger before any database operations
   setDatabaseLogger(waLogger);
 
@@ -137,7 +141,7 @@ export async function startServers(deps: StartServersDeps): Promise<RunningServe
   // Upload server — only if S3 plane is enabled. Lets agents POST host-disk files and
   // get a public URL to pass to send_file.
   const upload = s3Enabled
-    ? createUploadServer(waLogger, { putUpload, authToken: process.env.MCP_AUTH_TOKEN })
+    ? createUploadServer(waLogger, { putUpload, authToken: readAuthToken() })
     : null;
 
   // follow_chat WebSocket stream server — port 39004 by default. Backs the `follow_chat`

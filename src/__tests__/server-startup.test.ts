@@ -102,6 +102,8 @@ describe("startServers", () => {
     vi.stubEnv("STREAM_SERVER_PORT", "0");
     vi.stubEnv("S3_ENABLED", undefined);
     vi.stubEnv("MCP_AUTH_TOKEN", undefined);
+    vi.stubEnv("MCP_ALLOW_NO_AUTH", undefined);
+    vi.stubEnv("MCP_TRANSPORT", undefined);
     vi.stubEnv("INSTANCE_LABEL", undefined);
     vi.stubEnv("INSTANCE_DESCRIPTION", undefined);
     vi.stubEnv("EXPECTED_WA_NUMBER", undefined);
@@ -236,6 +238,7 @@ describe("startServers", () => {
   describe("with S3_ENABLED=true", () => {
     beforeEach(() => {
       vi.stubEnv("S3_ENABLED", "true");
+      vi.stubEnv("MCP_AUTH_TOKEN", "s3cret");
     });
 
     it("ensures the bucket after the registry and before the MCP server starts", async () => {
@@ -273,7 +276,18 @@ describe("startServers", () => {
       expect(authed.status).toBe(415); // past auth, rejected by the MIME sniff
     });
 
-    it("leaves /upload open when MCP_AUTH_TOKEN is unset (local-dev behaviour)", async () => {
+    it("refuses to start the upload server without MCP_AUTH_TOKEN, before anything starts", async () => {
+      vi.stubEnv("MCP_AUTH_TOKEN", undefined);
+      await expect(startServers({ mcpLogger: silent(), waLogger: silent() })).rejects.toThrow(
+        "MCP_AUTH_TOKEN is not set, so the upload server would accept anyone. Set MCP_AUTH_TOKEN, or MCP_ALLOW_NO_AUTH=true on a development machine.",
+      );
+      expect(h.calls).toEqual([]);
+      expect(h.startMcpServer).not.toHaveBeenCalled();
+    });
+
+    it("leaves /upload open without a token only when MCP_ALLOW_NO_AUTH=true", async () => {
+      vi.stubEnv("MCP_AUTH_TOKEN", undefined);
+      vi.stubEnv("MCP_ALLOW_NO_AUTH", "true");
       running = await startServers({ mcpLogger: silent(), waLogger: silent() });
 
       const res = await fetch(`http://127.0.0.1:${portOf(running.upload as Server)}/upload`, {
@@ -292,6 +306,62 @@ describe("startServers", () => {
       );
 
       expect(h.startMcpServer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("without MCP_AUTH_TOKEN", () => {
+    it("starts over stdio, where no network listener needs the token", async () => {
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+      expect(h.startMcpServer).toHaveBeenCalledOnce();
+    });
+
+    it.each(["httpstream", "HTTP", "sse"])(
+      "refuses the %s transport before anything starts",
+      async (transport) => {
+        vi.stubEnv("MCP_TRANSPORT", transport);
+        await expect(startServers({ mcpLogger: silent(), waLogger: silent() })).rejects.toThrow(
+          "MCP_AUTH_TOKEN is not set, so the MCP endpoint would accept anyone. Set MCP_AUTH_TOKEN, or MCP_ALLOW_NO_AUTH=true on a development machine.",
+        );
+        expect(h.calls).toEqual([]);
+      },
+    );
+
+    it.each(["", "   "])("treats a blank token (%j) as no token", async (token) => {
+      vi.stubEnv("MCP_TRANSPORT", "httpstream");
+      vi.stubEnv("MCP_AUTH_TOKEN", token);
+      await expect(startServers({ mcpLogger: silent(), waLogger: silent() })).rejects.toThrow(
+        /MCP_AUTH_TOKEN is not set/,
+      );
+    });
+
+    it.each(["true", " TRUE "])("starts over HTTP when MCP_ALLOW_NO_AUTH is %j", async (flag) => {
+      vi.stubEnv("MCP_TRANSPORT", "httpstream");
+      vi.stubEnv("MCP_ALLOW_NO_AUTH", flag);
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+      expect(h.startMcpServer).toHaveBeenCalledOnce();
+    });
+
+    it.each(["1", "yes", "false", ""])("is not unlocked by MCP_ALLOW_NO_AUTH=%j", async (flag) => {
+      vi.stubEnv("MCP_TRANSPORT", "httpstream");
+      vi.stubEnv("MCP_ALLOW_NO_AUTH", flag);
+      await expect(startServers({ mcpLogger: silent(), waLogger: silent() })).rejects.toThrow(
+        /MCP_AUTH_TOKEN is not set/,
+      );
+    });
+
+    it("names both listeners when both would be open", async () => {
+      vi.stubEnv("MCP_TRANSPORT", "httpstream");
+      vi.stubEnv("S3_ENABLED", "true");
+      await expect(startServers({ mcpLogger: silent(), waLogger: silent() })).rejects.toThrow(
+        "MCP_AUTH_TOKEN is not set, so the MCP endpoint and the upload server would accept anyone.",
+      );
+    });
+
+    it("starts over HTTP with a token", async () => {
+      vi.stubEnv("MCP_TRANSPORT", "httpstream");
+      vi.stubEnv("MCP_AUTH_TOKEN", "s3cret");
+      running = await startServers({ mcpLogger: silent(), waLogger: silent() });
+      expect(h.startMcpServer).toHaveBeenCalledOnce();
     });
   });
 
@@ -321,6 +391,7 @@ describe("startServers", () => {
   });
 
   it("binds the documented default ports on loopback when no port env is set", async () => {
+    vi.stubEnv("MCP_AUTH_TOKEN", "s3cret");
     vi.stubEnv("QR_SERVER_PORT", undefined);
     vi.stubEnv("UPLOAD_SERVER_PORT", undefined);
     vi.stubEnv("STREAM_SERVER_PORT", undefined);
@@ -348,6 +419,7 @@ describe("startServers", () => {
   });
 
   it("honours QR_SERVER_HOST / UPLOAD_SERVER_HOST / STREAM_SERVER_HOST", async () => {
+    vi.stubEnv("MCP_AUTH_TOKEN", "s3cret");
     vi.stubEnv("S3_ENABLED", "true");
     vi.stubEnv("QR_SERVER_HOST", "0.0.0.0");
     vi.stubEnv("UPLOAD_SERVER_HOST", "127.0.0.2");
