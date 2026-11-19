@@ -196,6 +196,14 @@ preserved across recreates via its host bind mount (`/storage/whatsapp-mcp-<labe
 its media objects via the store's (`/storage/whatsapp-mcp-<label>/minio`). You do NOT re-scan
 the QR on updates.
 
+The server and the hub run as the user `wamcp` (uid/gid 10010), not root. On every start the
+container first hands its `/data` to that user, leaving `minio/` (the store's, uid 10001)
+untouched, so a directory written by an older root build needs no manual step: the first start
+changes the owner of its files, later starts change nothing. On the host those files belong to
+uid 10010, which has no login. Run maintenance commands that write under `/data` as that user,
+`docker exec --user wamcp whatsapp-mcp-<label> …`; a file root creates there is handed over
+only at the next start.
+
 Do not `docker compose pull` a number's project as part of an update: that would also fetch a
 newer build of the store image, and the next recreate would start it on the existing objects.
 Update the store on purpose, one number at a time, after reading its release notes.
