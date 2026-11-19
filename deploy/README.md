@@ -151,12 +151,14 @@ any other phone. The hub card's "Connect a client" block gives the address and a
 entry for that number; the token is never shown there — it is in `.env.<label>`.
 
 **Write `EXPECTED_WA_NUMBER` in the form WhatsApp itself uses for that account, which is not
-always the form you dial.** The check is a prefix match on the paired account's own id. A
-Brazilian mobile number, for one, can be registered without the extra 9 (12 digits); the
-13-digit form typed by hand would then make the server log out and purge a correct pairing. Read
-the form from a database that already knows the number (`jid_aliases.pn_jid` in another paired
-number's archive). If you cannot, use a shorter prefix such as the country and area code: it is
-still accepted, and the only loss is that the hub cannot show the last 4 digits before pairing.
+always the form you dial.** The check is an exact match on the digits of the paired account's
+own id: the whole number, nothing shorter. A Brazilian mobile number, for one, can be registered
+without the extra 9 (12 digits); the 13-digit form typed by hand would then make the server log
+out and purge a correct pairing. Read the form from a database that already knows the number
+(`jid_aliases.pn_jid` in another paired number's archive), or from `get_connection_status`
+(`phone_number`) of a pairing you trust. A prefix such as the country and area code is no longer
+accepted: an env file that still holds one purges the pairing at the next reconnect, so write
+the full number there before deploying a build with the exact check.
 
 A label that ends in `-minio` is best avoided: `whatsapp-mcp-<label>-minio` is the name of a
 number's store.

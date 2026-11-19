@@ -164,17 +164,39 @@ describe("createConnectionNotifier", () => {
     expect(onBadPairing).toHaveBeenCalledOnce();
   });
 
-  it("accepts pairing when expectedWaNumber matches", async () => {
-    const onBadPairing = vi.fn();
-    const n = createConnectionNotifier(pino({ level: "silent" }), {
-      sendNtfy,
-      publicQrUrl: "https://wa.example/",
-      expectedWaNumber: "5531",
-      onBadPairing,
+  describe("which paired number is the expected one", () => {
+    const pairAs = async (expectedWaNumber: string, id: string) => {
+      const onBadPairing = vi.fn(async () => {});
+      const n = createConnectionNotifier(pino({ level: "silent" }), {
+        sendNtfy,
+        publicQrUrl: "https://wa.example/",
+        expectedWaNumber,
+        onBadPairing,
+      });
+      await n.onConnected({ id, name: "Someone" });
+      return onBadPairing.mock.calls.length === 0 ? "accepted" : "refused";
+    };
+
+    it.each([
+      ["553100000001", "553100000001:12@s.whatsapp.net"],
+      ["553100000001", "553100000001@s.whatsapp.net"],
+      ["+55 (31) 0000-0001", "553100000001:3@s.whatsapp.net"],
+      ["5531", "5531@s"],
+    ])("accepts %j paired as %s", async (expected, id) => {
+      expect(await pairAs(expected, id)).toBe("accepted");
+      expect(sent).toHaveLength(0);
     });
-    await n.onConnected({ id: "5531999@s", name: "Alice" });
-    expect(sent).toHaveLength(0);
-    expect(onBadPairing).not.toHaveBeenCalled();
+
+    it.each([
+      ["a longer number that starts with it", "553100000001", "5531000000019:12@s.whatsapp.net"],
+      ["a number it starts with", "5531000000019", "553100000001:12@s.whatsapp.net"],
+      ["a prefix-only setting", "5531", "553100000001:12@s.whatsapp.net"],
+      ["the device id taken as digits", "55310000000112", "553100000001:12@s.whatsapp.net"],
+      ["a setting with no digits", "not-a-number", "553100000001:12@s.whatsapp.net"],
+    ])("refuses %s", async (_kind, expected, id) => {
+      expect(await pairAs(expected, id)).toBe("refused");
+      expect(sent[0].title).toContain("indevido");
+    });
   });
 
   it("disconnected → QR within grace flushes disconnect, then QR, then reconnect", async () => {
