@@ -114,16 +114,43 @@ describe("resolveMediaInput", () => {
       expect(result.buffer.equals(PNG)).toBe(true);
     });
 
-    it("refuses a protected directory even when the send directory contains it", async () => {
-      await expect(
-        resolveMediaInput(path.join(base, "auth_info", "creds.json"), { ...local, root: base }),
-      ).rejects.toThrow(
-        `send_file: ${path.join(base, "auth_info", "creds.json")} is in a directory this server never sends from`,
+    const ownFiles = (sendDir: string, dir: string) =>
+      `send_file: local files are not sent from ${sendDir}, because it holds this server's own files (${dir}). Point SEND_FILE_LOCAL_DIR at a directory of its own.`;
+
+    it("sends nothing from a send directory that holds the credentials directory", async () => {
+      const settings = { ...local, root: base };
+      const authInfo = path.join(base, "auth_info");
+      await expect(resolveMediaInput(tmpFile, settings)).rejects.toThrow(ownFiles(base, authInfo));
+      await expect(resolveMediaInput(path.join(authInfo, "creds.json"), settings)).rejects.toThrow(
+        ownFiles(base, authInfo),
       );
     });
 
-    it("still reads other files when the send directory contains a protected one", async () => {
-      const result = await resolveMediaInput(tmpFile, { ...local, root: base });
+    it("sends nothing from a send directory that is the credentials directory", async () => {
+      const authInfo = path.join(base, "auth_info");
+      await expect(
+        resolveMediaInput(path.join(authInfo, "creds.json"), { ...local, root: authInfo }),
+      ).rejects.toThrow(ownFiles(authInfo, authInfo));
+    });
+
+    it("sends nothing from a send directory inside the credentials directory", async () => {
+      const inside = path.join(base, "auth_info", "sub");
+      fs.mkdirSync(inside);
+      fs.writeFileSync(path.join(inside, "photo.png"), PNG);
+      await expect(
+        resolveMediaInput(path.join(inside, "photo.png"), { ...local, root: inside }),
+      ).rejects.toThrow(ownFiles(inside, path.join(base, "auth_info")));
+    });
+
+    it("judges a protected directory that does not exist yet by its path", async () => {
+      const notYet = path.join(base, "data");
+      await expect(
+        resolveMediaInput(tmpFile, { root: base, protectedDirs: [notYet] }),
+      ).rejects.toThrow(ownFiles(base, notYet));
+    });
+
+    it("sends from a send directory beside the protected ones", async () => {
+      const result = await resolveMediaInput(tmpFile, local);
       expect(result.buffer.equals(PNG)).toBe(true);
     });
 

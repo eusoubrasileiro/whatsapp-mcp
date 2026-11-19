@@ -124,8 +124,10 @@ export async function resolveMediaInput(
 
 /**
  * Reads `absPath` only when its real path (every symlink and `..` resolved) lies inside the real
- * send directory and outside every protected directory. The final open refuses a symlink, so a
- * link swapped in after the check is not followed either.
+ * send directory. A send directory that is, holds or sits inside a protected directory (the
+ * pairing credentials, the database) sends nothing: whatever else lies next to those is this
+ * server's own too. The final open refuses a symlink, so a link swapped in after the check is not
+ * followed either.
  */
 async function resolveLocalPath(absPath: string, local: LocalSendConfig): Promise<ResolvedMedia> {
   const root = await fs.realpath(local.root).catch(() => {
@@ -133,18 +135,21 @@ async function resolveLocalPath(absPath: string, local: LocalSendConfig): Promis
       `send_file: local files are only sent from ${local.root}, which does not exist on this server. ${SEND_INSTEAD}`,
     );
   });
+  for (const dir of local.protectedDirs) {
+    // A protected directory not created yet is judged by its path.
+    const protectedDir = await fs.realpath(dir).catch(() => path.resolve(dir));
+    if (isWithin(root, protectedDir) || isWithin(protectedDir, root)) {
+      throw new Error(
+        `send_file: local files are not sent from ${local.root}, because it holds this server's own files (${dir}). Point SEND_FILE_LOCAL_DIR at a directory of its own. ${SEND_INSTEAD}`,
+      );
+    }
+  }
   try {
     const real = await fs.realpath(absPath);
     if (!isWithin(root, real)) {
       throw new Error(
         `send_file: ${absPath} is outside ${local.root}, the only directory this server sends local files from. ${SEND_INSTEAD}`,
       );
-    }
-    for (const dir of local.protectedDirs) {
-      const protectedDir = await fs.realpath(dir).catch(() => null);
-      if (protectedDir !== null && isWithin(protectedDir, real)) {
-        throw new Error(`send_file: ${absPath} is in a directory this server never sends from`);
-      }
     }
     const handle = await fs.open(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
