@@ -2,11 +2,18 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isWithin, type LocalSendConfig, readLocalSendConfig } from "./local-send-dir.ts";
 import {
+  type DestinationPolicy,
+  OutboundError,
+  type OutboundResponse,
+  outboundRequest,
+} from "./outbound-http.ts";
+import {
   extensionFor,
   mimeFromExtension,
   sniffMedia,
   sniffMimetype as sniffMimetypeImpl,
 } from "./sniffed-media.ts";
+import { publicUrlFor } from "./storage.ts";
 
 export const MAX_MEDIA_BYTES = 16 * 1024 * 1024; // WhatsApp / WABA hard cap
 export const FETCH_TIMEOUT_MS = 15_000;
@@ -82,7 +89,7 @@ export function extFromMime(mime: string): string {
  *
  * Accepts three shapes (auto-detected by prefix):
  *   - absolute filesystem path inside the local send directory (`local-send-dir.ts`)
- *   - http(s) URL (fetched with 15s timeout, 16 MB cap)
+ *   - http(s) URL of a public host (`outbound-http.ts`; 15s timeout, 16 MB cap)
  *   - data: URL (base64 only)
  *
  * Any other shape — `file://`, `ftp://`, relative paths — is rejected with a
@@ -92,6 +99,7 @@ export function extFromMime(mime: string): string {
 export async function resolveMediaInput(
   input: string,
   local: LocalSendConfig = readLocalSendConfig(),
+  network: DestinationPolicy = {},
 ): Promise<ResolvedMedia> {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error("send_file: file_path must be a non-empty string");
@@ -102,7 +110,7 @@ export async function resolveMediaInput(
   }
 
   if (input.startsWith("http://") || input.startsWith("https://")) {
-    return resolveHttpUrl(input);
+    return resolveHttpUrl(input, network);
   }
 
   if (input.startsWith("file://")) {
@@ -178,79 +186,58 @@ async function resolveLocalPath(absPath: string, local: LocalSendConfig): Promis
 const SEND_INSTEAD =
   "To send a file from elsewhere, POST it to /upload and pass the returned URL, or pass an http(s) or data: URL.";
 
-async function resolveHttpUrl(url: string): Promise<ResolvedMedia> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+/** Redirects a remote URL may take; every hop passes the destination check again. */
+const MAX_REDIRECTS = 5;
 
-  let res: Response;
-  try {
-    res = await fetch(url, { signal: controller.signal, redirect: "follow" });
-  } catch (err) {
-    clearTimeout(timeout);
-    const isAbort =
-      err instanceof Error && (err.name === "AbortError" || /abort/i.test(err.message));
-    if (isAbort) {
-      throw new Error(`send_file: fetch ${url} timed out after ${FETCH_TIMEOUT_MS}ms`);
-    }
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`send_file: fetch ${url} failed: ${reason}`);
+/**
+ * True for a URL `/upload` handed out (`storage.ts` publicUrlFor) while the media store is on.
+ * Those are this server's own objects, and on a local stack they point at loopback, so they are
+ * the one destination exempt from the address check; they are never redirected.
+ */
+function isOwnStoreUrl(url: string): boolean {
+  if (process.env.S3_ENABLED !== "true") return false;
+  return new URL(url).href.startsWith(new URL(publicUrlFor("")).href);
+}
+
+function describeFailure(url: string, err: unknown): string {
+  const kind = err instanceof OutboundError ? err.kind : "network";
+  const reason = err instanceof Error ? err.message : String(err);
+  if (kind === "timeout") return `send_file: fetch ${url} timed out after ${FETCH_TIMEOUT_MS}ms`;
+  if (kind === "too-large") return `send_file: remote resource at ${url} exceeds 16 MB limit`;
+  if (kind === "blocked") {
+    return `send_file: fetch ${url} ${reason}. Only public URLs are fetched; upload the file first to send it.`;
   }
-  clearTimeout(timeout);
+  return `send_file: fetch ${url} failed: ${reason}`;
+}
 
-  if (!res.ok) {
+async function resolveHttpUrl(url: string, network: DestinationPolicy): Promise<ResolvedMedia> {
+  let res: OutboundResponse;
+  try {
+    const own = isOwnStoreUrl(url);
+    res = await outboundRequest(url, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxBytes: MAX_MEDIA_BYTES,
+      maxRedirects: own ? 0 : MAX_REDIRECTS,
+      ...network,
+      ...(own ? { isAllowed: () => true } : {}),
+    });
+  } catch (err) {
+    throw new Error(describeFailure(url, err));
+  }
+
+  if (res.status < 200 || res.status >= 300) {
     throw new Error(`send_file: fetch ${url} returned HTTP ${res.status}`);
   }
 
-  const contentLengthHeader = res.headers.get("content-length");
-  if (contentLengthHeader) {
-    const declared = Number(contentLengthHeader);
-    if (Number.isFinite(declared) && declared > MAX_MEDIA_BYTES) {
-      throw new Error(
-        `send_file: remote resource is ${declared} bytes (Content-Length), exceeds 16 MB limit`,
-      );
-    }
-  }
-
-  const buffer = await readBodyCapped(res, url);
-  const contentTypeHeader = res.headers.get("content-type");
+  const contentTypeHeader = res.headers["content-type"] ?? null;
   const declaredMime = contentTypeHeader?.split(";")[0].trim() || null;
-  const mimetype = sniffMimetypeImpl(buffer) ?? declaredMime ?? "application/octet-stream";
+  const mimetype = sniffMimetypeImpl(res.body) ?? declaredMime ?? "application/octet-stream";
 
   return {
-    buffer,
+    buffer: res.body,
     fileName: fileNameFromUrl(url, contentTypeHeader),
     mimetype,
   };
-}
-
-async function readBodyCapped(res: Response, url: string): Promise<Buffer> {
-  if (!res.body) {
-    const ab = await res.arrayBuffer();
-    if (ab.byteLength > MAX_MEDIA_BYTES) {
-      throw new Error(`send_file: remote resource at ${url} exceeded 16 MB during read`);
-    }
-    return Buffer.from(ab);
-  }
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = res.body.getReader();
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > MAX_MEDIA_BYTES) {
-        await reader.cancel();
-        throw new Error(`send_file: remote resource at ${url} exceeded 16 MB during read`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock?.();
-  }
-  return Buffer.concat(chunks.map((c) => Buffer.from(c)));
 }
 
 function fileNameFromUrl(url: string, contentType: string | null): string {

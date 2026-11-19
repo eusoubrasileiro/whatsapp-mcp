@@ -8,10 +8,15 @@
 import { createHmac } from "node:crypto";
 import type { Logger } from "pino";
 
+import { outboundRequest } from "../outbound-http.ts";
 import { buildInboundEvent } from "./event.ts";
 import { matchSubscriptions } from "./registry.ts";
 import { wasSentByUs } from "./sent-tracker.ts";
+import { deliveryPolicy } from "./target-policy.ts";
 import type { InboundMessageInput, Subscription } from "./types.ts";
+
+/** A subscriber that has not answered by then is a failed delivery. */
+const DELIVERY_TIMEOUT_MS = 10_000;
 
 /** HMAC-SHA256 hex of `payload` keyed by `secret`. */
 export function signPayload(payload: string, secret: string): string {
@@ -35,7 +40,9 @@ export function isSelfChatJid(chatJid: string, ownUser: string | null | undefine
 }
 
 /**
- * Deliver one event to one subscriber. Never throws.
+ * Deliver one event to one subscriber. Never throws. The POST goes through `outbound-http.ts`:
+ * public addresses only unless the operator listed the host (`target-policy.ts`), no redirect
+ * followed, the reply drained unread, 10 s at most.
  *
  * Auth (when a secret is set):
  *  - `hmac` (default): `X-Webhook-Signature: sha256=<hmac(timestamp.body)>` plus
@@ -65,8 +72,17 @@ export async function deliverEvent(
       }
     }
 
-    const res = await fetch(sub.targetUrl, { method: "POST", headers, body });
-    if (!res.ok) {
+    const res = await outboundRequest(sub.targetUrl, {
+      method: "POST",
+      headers,
+      body,
+      timeoutMs: DELIVERY_TIMEOUT_MS,
+      maxBytes: 0,
+      maxRedirects: 0,
+      readBody: false,
+      ...deliveryPolicy(sub.targetUrl),
+    });
+    if (res.status < 200 || res.status >= 300) {
       logger.warn({ status: res.status, subId: sub.id }, "webhook delivery returned non-2xx");
       return;
     }

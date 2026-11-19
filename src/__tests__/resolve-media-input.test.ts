@@ -1,15 +1,19 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type LocalSendConfig, readLocalSendConfig } from "../local-send-dir.ts";
 import { resolveMediaInput } from "../media-input.ts";
+import type { DestinationPolicy } from "../outbound-http.ts";
+import {
+  type Hit,
+  type LoopbackServer,
+  type Route,
+  startLoopbackServer,
+} from "./helpers/loopback-server.ts";
 
 describe("resolveMediaInput", () => {
-  const originalFetch = globalThis.fetch;
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -241,86 +245,169 @@ describe("resolveMediaInput", () => {
   });
 
   describe("http(s) URL", () => {
-    it("fetches and returns the response buffer", async () => {
-      // Real JPEG magic: FF D8 FF E0 ...
-      const payload = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(payload, {
-          status: 200,
-          headers: { "content-type": "image/jpeg", "content-length": String(payload.length) },
-        }),
-      ) as unknown as typeof fetch;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    let server: LoopbackServer;
+    let port: number;
+    let hits: Hit[];
+    let routes: Record<string, Route>;
+    /** "media.test" stands for a public host: this policy lets it reach the loopback server. */
+    const asIfPublic: DestinationPolicy = {
+      lookup: (hostname, _options, callback) =>
+        hostname === "media.test"
+          ? callback(null, [{ address: "127.0.0.1", family: 4 }])
+          : callback(Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`)), []),
+      isAllowed: (ip) => ip === "127.0.0.1",
+    };
+    const noLocal = { root: "/nonexistent", protectedDirs: [] };
+    const fetchAs = (url: string) => resolveMediaInput(url, noLocal, asIfPublic);
 
-      const result = await resolveMediaInput("https://example.com/path/photo.jpg");
-      expect(result.buffer.equals(payload)).toBe(true);
+    beforeAll(async () => {
+      server = await startLoopbackServer();
+      ({ port, hits, routes } = server);
+    });
+
+    afterAll(() => server.close());
+
+    beforeEach(() => {
+      server.reset();
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("fetches and returns the response buffer", async () => {
+      routes["/path/photo.jpg"] = (_req, res) =>
+        res.writeHead(200, { "content-type": "image/jpeg" }).end(JPEG);
+      const result = await fetchAs(`http://media.test:${port}/path/photo.jpg`);
+      expect(result.buffer.equals(JPEG)).toBe(true);
       expect(result.fileName).toBe("photo.jpg");
       expect(result.mimetype).toBe("image/jpeg");
     });
 
     it("returns sniffed mimetype when Content-Type disagrees with bytes", async () => {
-      // Server lies and says octet-stream, but bytes are JPEG.
-      const payload = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(payload, {
-          status: 200,
-          headers: { "content-type": "application/octet-stream" },
-        }),
-      ) as unknown as typeof fetch;
-
-      const result = await resolveMediaInput("https://example.com/x.bin");
+      routes["/x.bin"] = (_req, res) =>
+        res.writeHead(200, { "content-type": "application/octet-stream" }).end(JPEG);
+      const result = await fetchAs(`http://media.test:${port}/x.bin`);
       expect(result.mimetype).toBe("image/jpeg");
     });
 
-    it("rejects when Content-Length exceeds 16 MB", async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response("", {
-          status: 200,
-          headers: { "content-length": String(17 * 1024 * 1024) },
-        }),
-      ) as unknown as typeof fetch;
+    it("falls back to the declared Content-Type when the bytes are not recognised", async () => {
+      routes["/report"] = (_req, res) =>
+        res.writeHead(200, { "content-type": "application/pdf; charset=binary" }).end("text");
+      const result = await fetchAs(`http://media.test:${port}/report`);
+      expect(result.mimetype).toBe("application/pdf");
+      expect(result.fileName).toBe("report.pdf");
+    });
 
-      await expect(resolveMediaInput("https://example.com/big.bin")).rejects.toThrow(
-        /16 ?MB|too large|size/i,
+    it("rejects when Content-Length exceeds 16 MB", async () => {
+      routes["/big.bin"] = (_req, res) => {
+        res.writeHead(200, { "content-length": String(17 * 1024 * 1024) });
+        res.write("x");
+      };
+      await expect(fetchAs(`http://media.test:${port}/big.bin`)).rejects.toThrow(
+        `send_file: remote resource at http://media.test:${port}/big.bin exceeds 16 MB limit`,
       );
     });
 
     it("rejects on non-2xx response with status in error", async () => {
-      globalThis.fetch = vi
-        .fn()
-        .mockResolvedValue(new Response("Not Found", { status: 404 })) as unknown as typeof fetch;
+      await expect(fetchAs(`http://media.test:${port}/missing.jpg`)).rejects.toThrow(
+        `send_file: fetch http://media.test:${port}/missing.jpg returned HTTP 404`,
+      );
+    });
 
-      await expect(resolveMediaInput("https://example.com/missing.jpg")).rejects.toThrow(/404/);
+    it("rejects a 3xx it does not follow", async () => {
+      routes["/choices"] = (_req, res) => res.writeHead(300).end();
+      await expect(fetchAs(`http://media.test:${port}/choices`)).rejects.toThrow(/HTTP 300$/);
     });
 
     it("rejects on fetch failure", async () => {
-      globalThis.fetch = vi
-        .fn()
-        .mockRejectedValue(new Error("ENOTFOUND")) as unknown as typeof fetch;
-
-      await expect(resolveMediaInput("https://bad.example.com/x")).rejects.toThrow(
-        /fetch|ENOTFOUND/i,
+      await expect(fetchAs("https://bad.example.com/x")).rejects.toThrow(
+        "send_file: fetch https://bad.example.com/x failed: getaddrinfo ENOTFOUND bad.example.com",
       );
     });
 
     it("aborts after the 15s timeout", async () => {
-      globalThis.fetch = vi.fn((_url, init) => {
-        return new Promise((_resolve, reject) => {
-          const signal = (init as RequestInit | undefined)?.signal;
-          if (signal) {
-            signal.addEventListener("abort", () => {
-              const err = new Error("aborted");
-              (err as Error & { name: string }).name = "AbortError";
-              reject(err);
-            });
-          }
-        });
-      }) as unknown as typeof fetch;
-
-      vi.useFakeTimers();
-      const promise = resolveMediaInput("https://slow.example.com/x");
-      const assertion = expect(promise).rejects.toThrow(/timed out|timeout|abort/i);
+      routes["/slow"] = () => {};
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const promise = fetchAs(`http://media.test:${port}/slow`);
+      const assertion = expect(promise).rejects.toThrow(
+        `send_file: fetch http://media.test:${port}/slow timed out after 15000ms`,
+      );
+      await vi.waitFor(() => expect(hits.map((h) => h.url)).toEqual(["/slow"]));
       await vi.advanceTimersByTimeAsync(15_000);
       await assertion;
+    });
+
+    it("follows a redirect to another public URL", async () => {
+      routes["/old"] = (_req, res) => res.writeHead(301, { location: "/new.jpg" }).end();
+      routes["/new.jpg"] = (_req, res) => res.end(JPEG);
+      const result = await fetchAs(`http://media.test:${port}/old`);
+      expect(result.buffer.equals(JPEG)).toBe(true);
+    });
+
+    describe("internal destinations", () => {
+      it("refuses a loopback URL before any request reaches it, saying why", async () => {
+        routes["/health"] = (_req, res) => res.end("{}");
+        await expect(resolveMediaInput(`http://127.0.0.1:${port}/health`, noLocal)).rejects.toThrow(
+          `send_file: fetch http://127.0.0.1:${port}/health refused: 127.0.0.1 is a private, loopback or link-local address. Only public URLs are fetched; upload the file first to send it.`,
+        );
+        expect(hits).toEqual([]);
+      });
+
+      it("refuses the cloud metadata address", async () => {
+        await expect(
+          resolveMediaInput("http://169.254.169.254/latest/meta-data/", noLocal),
+        ).rejects.toThrow(/refused: 169\.254\.169\.254/);
+      });
+
+      it("refuses a redirect from a public URL to an internal one", async () => {
+        routes["/hop"] = (_req, res) =>
+          res.writeHead(302, { location: "http://10.0.0.5/admin" }).end();
+        await expect(fetchAs(`http://media.test:${port}/hop`)).rejects.toThrow(
+          /refused: 10\.0\.0\.5/,
+        );
+      });
+    });
+
+    describe("this server's own upload URLs", () => {
+      const ownBase = () => `http://127.0.0.1:${port}/amiticia-media`;
+
+      it("fetches one even on loopback while the media store is on", async () => {
+        vi.stubEnv("S3_ENABLED", "true");
+        vi.stubEnv("MEDIA_PUBLIC_BASE_URL", ownBase());
+        routes["/amiticia-media/t/default/uploads/a.jpg"] = (_req, res) => res.end(JPEG);
+        const result = await resolveMediaInput(`${ownBase()}/t/default/uploads/a.jpg`, noLocal);
+        expect(result.buffer.equals(JPEG)).toBe(true);
+      });
+
+      it("refuses the same host outside the store's path", async () => {
+        vi.stubEnv("S3_ENABLED", "true");
+        vi.stubEnv("MEDIA_PUBLIC_BASE_URL", ownBase());
+        await expect(resolveMediaInput(`${ownBase()}/../other/x.jpg`, noLocal)).rejects.toThrow(
+          /refused/,
+        );
+        expect(hits).toEqual([]);
+      });
+
+      it("refuses it when the media store is off", async () => {
+        vi.stubEnv("S3_ENABLED", "false");
+        vi.stubEnv("MEDIA_PUBLIC_BASE_URL", ownBase());
+        await expect(
+          resolveMediaInput(`${ownBase()}/t/default/uploads/a.jpg`, noLocal),
+        ).rejects.toThrow(/refused/);
+      });
+
+      it("does not follow a redirect from it", async () => {
+        vi.stubEnv("S3_ENABLED", "true");
+        vi.stubEnv("MEDIA_PUBLIC_BASE_URL", ownBase());
+        routes["/amiticia-media/t/x"] = (_req, res) =>
+          res.writeHead(302, { location: "/amiticia-media/t/y" }).end();
+        routes["/amiticia-media/t/y"] = (_req, res) => res.end(JPEG);
+        await expect(resolveMediaInput(`${ownBase()}/t/x`, noLocal)).rejects.toThrow(
+          /returned HTTP 302$/,
+        );
+      });
     });
   });
 

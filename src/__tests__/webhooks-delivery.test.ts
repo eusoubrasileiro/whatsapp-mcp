@@ -1,12 +1,21 @@
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import type { Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeDatabase, resetDatabase } from "../database.ts";
+import { type OutboundResponse, outboundRequest } from "../outbound-http.ts";
 import { deliverEvent, dispatchInbound, isSelfChatJid, signPayload } from "../webhooks/delivery.ts";
 import { addSubscription, loadRegistry, resetRegistry } from "../webhooks/registry.ts";
 import { markSentByUs, resetSentTracker } from "../webhooks/sent-tracker.ts";
 import type { InboundMessageInput, Subscription } from "../webhooks/types.ts";
+
+vi.mock("../outbound-http.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../outbound-http.ts")>()),
+  outboundRequest: vi.fn(),
+}));
+
+/** What the guarded client returns for a response with this status. */
+function answered(status: number): OutboundResponse {
+  return { status, headers: {}, body: Buffer.alloc(0), url: "https://hook.example/in" };
+}
 
 function fakeLogger() {
   return { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger & {
@@ -49,21 +58,19 @@ function makeMsg(overrides: Partial<InboundMessageInput> = {}): InboundMessageIn
 }
 
 describe("deliverEvent", () => {
-  const originalFetch = globalThis.fetch;
   beforeEach(() => {
-    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    vi.mocked(outboundRequest).mockReset();
   });
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
   it("POSTs JSON to the target with an HMAC signature over timestamp.body", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
 
     await deliverEvent(makeSub(), makeMsg(), null, fakeLogger());
 
-    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const [url, init] = vi.mocked(outboundRequest).mock.calls[0];
     expect(url).toBe("https://hook.example/in");
     expect(init?.method).toBe("POST");
     const headers = new Headers(init?.headers);
@@ -80,29 +87,29 @@ describe("deliverEvent", () => {
   });
 
   it("uses Authorization: Bearer when auth_mode is bearer", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
 
     await deliverEvent(makeSub({ authMode: "bearer" }), makeMsg(), null, fakeLogger());
 
-    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    const init = vi.mocked(outboundRequest).mock.calls[0][1];
     const headers = new Headers(init?.headers);
     expect(headers.get("Authorization")).toBe("Bearer shh-secret");
     expect(headers.get("X-Webhook-Signature")).toBeNull();
   });
 
   it("sends no auth headers when the subscription has no secret", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
 
     await deliverEvent(makeSub({ secret: null }), makeMsg(), null, fakeLogger());
 
-    const init = vi.mocked(globalThis.fetch).mock.calls[0][1];
+    const init = vi.mocked(outboundRequest).mock.calls[0][1];
     const headers = new Headers(init?.headers);
     expect(headers.get("Authorization")).toBeNull();
     expect(headers.get("X-Webhook-Signature")).toBeNull();
   });
 
   it("inlines a transcript into the delivered body", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
 
     await deliverEvent(
       makeSub(),
@@ -111,22 +118,78 @@ describe("deliverEvent", () => {
       fakeLogger(),
     );
 
-    const body = vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string;
+    const body = vi.mocked(outboundRequest).mock.calls[0][1]?.body as string;
     expect(JSON.parse(body).transcript).toBe("olá tudo bem");
   });
 
+  it("never follows a redirect, never reads the reply, and gives up after 10 s", async () => {
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
+
+    await deliverEvent(makeSub(), makeMsg(), null, fakeLogger());
+
+    expect(vi.mocked(outboundRequest).mock.calls[0][1]).toMatchObject({
+      maxRedirects: 0,
+      readBody: false,
+      timeoutMs: 10_000,
+    });
+  });
+
+  it("reaches only public addresses unless the host is listed in WEBHOOK_PRIVATE_HOSTS", async () => {
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
+    vi.stubEnv("WEBHOOK_PRIVATE_HOSTS", "n8n, Hooks.Internal.");
+    try {
+      await deliverEvent(makeSub(), makeMsg(), null, fakeLogger());
+      await deliverEvent(
+        makeSub({ targetUrl: "http://n8n:5678/w" }),
+        makeMsg(),
+        null,
+        fakeLogger(),
+      );
+      await deliverEvent(
+        makeSub({ targetUrl: "http://hooks.internal/w" }),
+        makeMsg(),
+        null,
+        fakeLogger(),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const [publicCall, listedCall, dottedCall] = vi.mocked(outboundRequest).mock.calls;
+    expect(publicCall[1].isAllowed).toBeUndefined();
+    expect(listedCall[1].isAllowed?.("172.18.0.5")).toBe(true);
+    expect(dottedCall[1].isAllowed?.("10.0.0.9")).toBe(true);
+  });
+
+  it.each([
+    [200, false],
+    [204, false],
+    [299, false],
+    [199, true],
+    [300, true],
+    [302, true],
+    [503, true],
+  ])("treats HTTP %i as delivered unless it is outside 2xx (warns: %s)", async (status, warns) => {
+    vi.mocked(outboundRequest).mockResolvedValue(answered(status));
+    const logger = fakeLogger();
+
+    await deliverEvent(makeSub(), makeMsg(), null, logger);
+
+    expect(logger.warn).toHaveBeenCalledTimes(warns ? 1 : 0);
+  });
+
   it("never throws when fetch rejects", async () => {
-    vi.mocked(globalThis.fetch).mockRejectedValue(new Error("network down"));
+    vi.mocked(outboundRequest).mockRejectedValue(new Error("network down"));
     await expect(deliverEvent(makeSub(), makeMsg(), null, fakeLogger())).resolves.toBeUndefined();
   });
 
   it("never throws on a non-2xx response", async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("nope", { status: 503 }));
+    vi.mocked(outboundRequest).mockResolvedValue(answered(503));
     await expect(deliverEvent(makeSub(), makeMsg(), null, fakeLogger())).resolves.toBeUndefined();
   });
 
   it("never leaks the secret into log output", async () => {
-    vi.mocked(globalThis.fetch).mockRejectedValue(new Error("boom"));
+    vi.mocked(outboundRequest).mockRejectedValue(new Error("boom"));
     const logger = fakeLogger();
 
     await deliverEvent(makeSub({ secret: "TOP-SECRET-XYZ" }), makeMsg(), null, logger);
@@ -139,16 +202,14 @@ describe("deliverEvent", () => {
 });
 
 describe("dispatchInbound", () => {
-  const originalFetch = globalThis.fetch;
   beforeEach(() => {
     initializeDatabase(":memory:");
     resetRegistry();
     loadRegistry();
-    globalThis.fetch = vi.fn() as unknown as typeof fetch;
-    vi.mocked(globalThis.fetch).mockResolvedValue(new Response("", { status: 200 }));
+    vi.mocked(outboundRequest).mockReset();
+    vi.mocked(outboundRequest).mockResolvedValue(answered(200));
   });
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     resetRegistry();
     resetDatabase();
     resetSentTracker();
@@ -162,7 +223,7 @@ describe("dispatchInbound", () => {
       allowedJids: ["9999@s.whatsapp.net"],
     });
     await dispatchInbound(makeMsg(), { logger: fakeLogger() });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(outboundRequest).not.toHaveBeenCalled();
   });
 
   it("delivers a text message to each matching subscription", async () => {
@@ -174,7 +235,7 @@ describe("dispatchInbound", () => {
     addSubscription({ tenantId: "default", targetUrl: "https://h/b", allowedJids: ["*"] });
 
     await dispatchInbound(makeMsg(), { logger: fakeLogger() });
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(outboundRequest).toHaveBeenCalledTimes(2);
   });
 
   it("transcribes an audio message once even with several subscribers", async () => {
@@ -196,9 +257,9 @@ describe("dispatchInbound", () => {
     });
 
     expect(transcribe).toHaveBeenCalledTimes(1);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(outboundRequest).toHaveBeenCalledTimes(2);
     const bodies = vi
-      .mocked(globalThis.fetch)
+      .mocked(outboundRequest)
       .mock.calls.map((c) => JSON.parse(c[1]?.body as string));
     expect(bodies.every((b) => b.transcript === "transcribed text")).toBe(true);
   });
@@ -218,7 +279,7 @@ describe("dispatchInbound", () => {
     });
 
     expect(transcribe).not.toHaveBeenCalled();
-    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    const body = JSON.parse(vi.mocked(outboundRequest).mock.calls[0][1]?.body as string);
     expect(body.transcript).toBeNull();
   });
 
@@ -240,8 +301,8 @@ describe("dispatchInbound", () => {
     });
 
     // Only the include_from_me subscription receives it; the inbound-only one is skipped.
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(outboundRequest).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(outboundRequest).mock.calls[0];
     expect(url).toBe("https://h/self-chat");
     const body = JSON.parse(init?.body as string);
     expect(body.is_from_me).toBe(true);
@@ -261,7 +322,7 @@ describe("dispatchInbound", () => {
       logger: fakeLogger(),
     });
 
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(outboundRequest).not.toHaveBeenCalled();
   });
 
   it("auto-forwards your own messages in a self-chat without include_from_me", async () => {
@@ -277,8 +338,8 @@ describe("dispatchInbound", () => {
       ownJids: ["5531@s.whatsapp.net"],
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]?.body as string);
+    expect(outboundRequest).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(vi.mocked(outboundRequest).mock.calls[0][1]?.body as string);
     expect(body.is_from_me).toBe(true);
     expect(body.content).toBe("oi agente");
   });
@@ -295,7 +356,7 @@ describe("dispatchInbound", () => {
       ownJids: ["5531@s.whatsapp.net"],
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(outboundRequest).toHaveBeenCalledTimes(1);
   });
 
   it("matches a self-chat (keyed under your LID) when you allow-listed your NUMBER", async () => {
@@ -312,7 +373,7 @@ describe("dispatchInbound", () => {
       ownJids: ["5531@s.whatsapp.net", "111@lid"],
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(outboundRequest).toHaveBeenCalledTimes(1);
   });
 
   it("still suppresses the agent's own reply in a self-chat (loop guard wins)", async () => {
@@ -328,7 +389,7 @@ describe("dispatchInbound", () => {
       ownJids: ["5531@s.whatsapp.net"],
     });
 
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(outboundRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -350,38 +411,5 @@ describe("isSelfChatJid", () => {
     expect(isSelfChatJid("999@s.whatsapp.net", "551100000013")).toBe(false);
     expect(isSelfChatJid("120363@g.us", "551100000013")).toBe(false);
     expect(isSelfChatJid("551100000013@s.whatsapp.net", null)).toBe(false);
-  });
-});
-
-describe("deliverEvent (real HTTP, end-to-end signature)", () => {
-  it("delivers a verifiable signed POST to a live server", async () => {
-    const received: { headers: http.IncomingHttpHeaders; body: string }[] = [];
-    const server = http.createServer((req, res) => {
-      let data = "";
-      req.on("data", (c) => (data += c));
-      req.on("end", () => {
-        received.push({ headers: req.headers, body: data });
-        res.writeHead(200).end("ok");
-      });
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const { port } = server.address() as AddressInfo;
-
-    try {
-      await deliverEvent(
-        makeSub({ targetUrl: `http://127.0.0.1:${port}/hook`, secret: "k3y" }),
-        makeMsg(),
-        null,
-        fakeLogger(),
-      );
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-
-    expect(received).toHaveLength(1);
-    const { headers, body } = received[0];
-    const ts = headers["x-webhook-timestamp"] as string;
-    expect(headers["x-webhook-signature"]).toBe(`sha256=${signPayload(`${ts}.${body}`, "k3y")}`);
-    expect(JSON.parse(body).event).toBe("inbound_message");
   });
 });
