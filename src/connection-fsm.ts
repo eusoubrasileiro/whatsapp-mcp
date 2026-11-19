@@ -25,6 +25,18 @@ export type ConnectionEvent =
   | { type: "connected"; user: { id: string; name?: string } }
   | { type: "disconnected" };
 
+/**
+ * True when the paired account is exactly `EXPECTED_WA_NUMBER`. The account id is
+ * `<number>[:<device>]@<server>`; its number must equal the setting's digits (`+`, spaces and
+ * punctuation in the setting are ignored). Nothing else is normalised: a number that only starts
+ * or ends like the expected one is a different account.
+ */
+function isExpectedNumber(pairedId: string, expected: string): boolean {
+  const want = expected.replace(/\D/g, "");
+  const number = pairedId.split("@")[0].split(":")[0];
+  return want !== "" && number === want;
+}
+
 function defaultTimer(cb: () => void, ms: number) {
   const id = setTimeout(cb, ms);
   return { cancel: () => clearTimeout(id) };
@@ -145,7 +157,7 @@ export class ConnectionFSM {
     const hadPendingGrace = this.graceTimer !== null;
     this.cancelGrace();
 
-    if (this.config.expectedWaNumber && !user.id.startsWith(this.config.expectedWaNumber)) {
+    if (this.config.expectedWaNumber && !isExpectedNumber(user.id, this.config.expectedWaNumber)) {
       this.logger.error(
         { userId: user.id, expected: this.config.expectedWaNumber },
         "Unexpected WhatsApp number paired — triggering bad-pairing cleanup",
