@@ -226,4 +226,85 @@ describe("toFlacMono16k", () => {
       else process.env.FFMPEG_BIN = prev;
     }
   });
+
+  describe("which containers it opens", () => {
+    /** Encodes one second of tone with ffmpeg into a file and returns its bytes. */
+    async function encoded(ext: string, args: string[]): Promise<Buffer> {
+      const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const path = await import("node:path");
+      const dir = mkdtempSync(path.join(tmpdir(), "wa-fmt-fixture-"));
+      const out = path.join(dir, `in.${ext}`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(
+            "ffmpeg",
+            [
+              "-hide_banner",
+              "-loglevel",
+              "error",
+              "-f",
+              "lavfi",
+              "-i",
+              "sine=frequency=440:duration=1",
+              ...args,
+              "-y",
+              out,
+            ],
+            { stdio: ["ignore", "ignore", "pipe"] },
+          );
+          proc.on("close", (code) =>
+            code === 0 ? resolve() : reject(new Error(`ffmpeg ${ext} fixture exited ${code}`)),
+          );
+          proc.on("error", reject);
+        });
+        return readFileSync(out);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    /** AMR-NB storage format, built by hand: no AMR encoder ships with every ffmpeg. */
+    const amrNb = () =>
+      Buffer.concat([
+        Buffer.from("#!AMR\n"),
+        ...Array(50).fill(Buffer.from([0x3c, ...Array(31).fill(0)])),
+      ]);
+
+    it.each([
+      ["OGG/Opus (voice notes)", "ogg", ["-c:a", "libopus"]],
+      ["MP3", "mp3", ["-c:a", "libmp3lame"]],
+      ["M4A", "m4a", ["-c:a", "aac"]],
+      ["3GP", "3gp", ["-c:a", "aac"]],
+      ["ADTS AAC", "aac", ["-c:a", "aac", "-f", "adts"]],
+      ["FLAC", "flac", []],
+      ["WebM/Opus", "webm", ["-c:a", "libopus"]],
+    ])("still converts %s", async (_kind, ext, args) => {
+      const flac = await toFlacMono16k(await encoded(ext, args as string[]));
+      expect((await ffprobe(flac)).sampleRate).toBe(16000);
+    });
+
+    it("still converts AMR-NB", async () => {
+      const flac = await toFlacMono16k(amrNb());
+      expect((await ffprobe(flac)).sampleRate).toBe(16000);
+    });
+
+    it.each([
+      ["MPEG-TS", "ts", ["-c:a", "aac", "-f", "mpegts"]],
+      ["AVI", "avi", ["-c:a", "pcm_s16le", "-f", "avi"]],
+    ])("refuses %s, a container WhatsApp audio never uses", async (_kind, ext, args) => {
+      const input = await encoded(ext, args as string[]);
+      await expect(toFlacMono16k(input)).rejects.toMatchObject({
+        name: "FfmpegError",
+        stderr: expect.stringContaining("not on whitelist"),
+      });
+    });
+
+    it("refuses a playlist that points at another file", async () => {
+      const playlist = Buffer.from(
+        "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:2.0,\n/etc/hostname.wav\n#EXT-X-ENDLIST\n",
+      );
+      await expect(toFlacMono16k(playlist)).rejects.toThrow(FfmpegError);
+    });
+  });
 });

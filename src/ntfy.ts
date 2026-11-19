@@ -41,6 +41,8 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
   }
 
   const { topicUrl, token, titlePrefix = "" } = config;
+  // On ntfy.sh the topic name is the secret: whoever knows it reads every push. Logs get the host.
+  const host = hostOf(topicUrl);
 
   // HTTP header values must be Latin-1 (bytes 0-255). Strip anything above
   // so em-dashes and other Unicode glyphs don't crash fetch on Title/Tags/Click.
@@ -65,12 +67,20 @@ export function createNtfy(logger: Logger, config: NtfyConfig | null): SendNtfy 
         body: msg.message,
       });
       if (!res.ok) {
-        logger.warn({ status: res.status, topicUrl }, "ntfy returned non-2xx status");
+        logger.warn({ status: res.status, host }, "ntfy returned non-2xx status");
         return;
       }
       logger.info({ title }, "ntfy push sent");
     } catch (err) {
-      logger.warn({ err, topicUrl }, "ntfy fetch failed");
+      logger.warn({ err, host }, "ntfy fetch failed");
     }
   };
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "(invalid NTFY_TOPIC_URL)";
+  }
 }
