@@ -50,9 +50,16 @@ can't verify HMAC. Secrets are never written to logs. **Subscribers should also 
 deliveries whose `X-Webhook-Timestamp` is more than ~5 min from now** (replay guard —
 the MCP signs but can't enforce the window; the receiver must).
 
-> **Security notes.** `target_url` may be an internal/private address — that's
-> intentional (the subscribing agent often runs on the same private network), so internal
-> URLs are *not* blocked; the gate is the `MCP_AUTH_TOKEN` on the registration call.
+> **Security notes.** Webhooks go only to public hosts by default. Registration refuses a
+> `target_url` that is internal on its face: an IP literal in a private, loopback,
+> link-local or other special-purpose range (IPv4 or IPv6), `localhost`, `*.localhost`, or a
+> single-label name such as a Docker service. Delivery checks the address it actually connects
+> to, so a public-looking name that resolves to an internal address is refused there. Delivery
+> follows no redirect, never reads the reply body, and gives up after 10 s. A subscriber that
+> really runs on the private network beside this server is allowed by listing its exact host
+> name in `WEBHOOK_PRIVATE_HOSTS` (see [`configuration.md`](./configuration.md)); a webhook
+> already registered to an unlisted internal host stops receiving deliveries. Who may register
+> at all is still decided by the `MCP_AUTH_TOKEN` on the registration call.
 > `matchSubscriptions` is tenant-agnostic today (one WhatsApp account) — add a tenant
 > filter before onboarding a second tenant.
 

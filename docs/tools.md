@@ -52,7 +52,7 @@ Without a label none of the three appears and every output is as before.
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send text message to contact or group. **Guarded** — see [`send-guards.md`](./send-guards.md): the recipient is verified before sending (a number not on WhatsApp is refused outright, a phone JID is upgraded to its canonical `@lid`), and a server-refused send **throws** instead of reporting success. |
-| `send_file` | Send image/video/document/audio file. Accepts http(s) URL, base64 data: URL, or a server-side absolute path. To send a file from the host disk when the MCP runs remotely, upload it to `/upload` first (see "Sending host-disk files" below) and pass the returned URL. Same send guards as `send_message`. |
+| `send_file` | Send image/video/document/audio file. Accepts an http(s) URL on a public address, a base64 data: URL, or the absolute path of a file on the server inside its send directory (`SEND_FILE_LOCAL_DIR`, default `<data dir>/outbox`; any other local path is refused). To send a file from the host disk when the MCP runs remotely, upload it to `/upload` first (see "Sending host-disk files" below) and pass the returned URL. Same send guards as `send_message`. |
 
 The send path is guarded three ways — see [`send-guards.md`](./send-guards.md) and
 [`account-restrictions.md`](./account-restrictions.md).
@@ -105,7 +105,13 @@ Long-audio note: a 24 MB FLAC ceiling guards the request (OpenRouter's multipart
 
 `send_file`'s `file_path` is resolved **on the server**. When the MCP runs in the canonical remote container, `/tmp/video.mp4` on your machine isn't reachable — the agent has three options, with very different cost:
 
-1. **`http(s)` URL** — works if the file is already hosted somewhere reachable.
+1. **`http(s)` URL** — works if the file is already hosted on a public address. The server
+   fetches only public addresses: a URL whose host is, or resolves to, a private, loopback,
+   link-local or other special-purpose address is refused, and so is a redirect to one.
+   Redirects are followed up to 5 hops, each checked again; the fetch gives up after 15 s and
+   refuses a body over 16 MB. The one exemption is a URL this server's own `/upload` handed out
+   (below), while its media store is on: it is fetched whatever its address, and never
+   redirected.
 2. **`data:` base64 URL** — works for tiny payloads; **blows up the agent's context window** for any real video.
 3. **Upload via `POST /upload`** — the right path for arbitrary host-disk files.
 

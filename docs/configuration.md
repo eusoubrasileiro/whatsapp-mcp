@@ -17,7 +17,8 @@ variables only the deploy files read are [below](#deploy-file-variables).
 | `MCP_HOST` | `127.0.0.1` | Bind host when `MCP_TRANSPORT=httpstream` |
 | `MCP_PORT` | `3001` | Bind port when `MCP_TRANSPORT=httpstream` (the Docker image sets `39001`) |
 | `MCP_ENDPOINT` | `/mcp` | HTTP path for MCP when `MCP_TRANSPORT=httpstream` |
-| `MCP_AUTH_TOKEN` | _(unset)_ | If set, HTTP MCP requires `Authorization: Bearer <token>`. If unset, endpoint accepts unauthenticated requests (stdio/local dev only — never run like this in prod). |
+| `MCP_AUTH_TOKEN` | _(unset)_ | The Bearer token of this number's network listeners: HTTP MCP requires `Authorization: Bearer <token>`, and so does `/upload`. **Required whenever one of them opens** (`MCP_TRANSPORT=httpstream`, or `S3_ENABLED=true` for `/upload`): without it the server refuses to start, naming the listener that would be open. A blank value counts as unset. stdio needs no token. |
+| `MCP_ALLOW_NO_AUTH` | _(unset)_ | `true` (case and surrounding spaces ignored) lets the network listeners start without `MCP_AUTH_TOKEN` and accept anyone; the server logs a warning at start. Development machines only — `docker-compose.dev.yaml` sets it. Any other value is off. |
 | `INSTANCE_LABEL` | _(unset)_ | Names this WhatsApp line (`a-z`, `0-9`, `-`, at most 32 characters; anything else is normalised). When set, the server instructions open by naming the line, `get_connection_status` returns it, every send result ends with `Sent from the "<label>" line.`, ntfy titles start with `[<label>]` and `/health` carries it. Unset: none of that, every output is as before. The deploy files set it from `INSTANCE`. |
 | `INSTANCE_DESCRIPTION` | _(unset)_ | One line of plain words about the line (at most 200 characters), shown to agents and on the hub card. Ignored without `INSTANCE_LABEL`. |
 | `QR_SERVER_HOST` | `127.0.0.1` | Bind host for the status port: `/health`, `/live`, `/qr.png`, and `/internal/unlink` when `HUB_INSTANCE_SECRET` is set. |
@@ -26,6 +27,8 @@ variables only the deploy files read are [below](#deploy-file-variables).
 | `UPLOAD_SERVER_HOST` | `127.0.0.1` | Bind host for the host-disk upload endpoint (only started when `S3_ENABLED=true`) |
 | `UPLOAD_SERVER_PORT` | `39003` | Bind port for the upload endpoint. Exposed publicly via Traefik at `wa.example.com/<label>/upload`. Reuses `MCP_AUTH_TOKEN` for Bearer auth. |
 | `UPLOAD_PUBLIC_URL` | _(unset)_ | The public upload address of this number. When it is an http(s) URL, `send_file`'s `file_path` description names it; unset, the description keeps its generic wording. |
+| `SEND_FILE_LOCAL_DIR` | `<data dir>/outbox` | The one directory `send_file` reads a local `file_path` from. Must be an absolute path; a relative or blank value reads as the default, never as "anywhere". The file's real path must lie inside it (a symlink pointing out is refused), and files over 16 MB are refused. A directory that is, contains or lies inside `auth_info/` or `data/` is refused as a whole. |
+| `WEBHOOK_PRIVATE_HOSTS` | _(unset)_ | Comma-separated host names (exact match, case ignored) that webhooks may reach although they are private or internal. Unset, `register_webhook` and delivery go only to public addresses — see [`webhooks.md`](./webhooks.md). List a host only for a subscriber that really runs on the private network beside this server. |
 | `STREAM_SERVER_HOST` | `127.0.0.1` | Bind host for the `follow_chat` WebSocket presence stream. |
 | `STREAM_SERVER_PORT` | `39004` | Bind port for the stream server. Must be exposed publicly via Traefik at `wa.example.com/<label>/stream` (WebSocket upgrade). |
 | `STREAM_PUBLIC_URL` | _(derived: `ws://<host>:<port>/stream`)_ | Public base URL `follow_chat` embeds in the returned `ws_url`. Prod: `wss://wa.example.com/<label>/stream`. |
@@ -105,6 +108,7 @@ Paths are relative to `WHATSAPP_MCP_DATA_DIR` (defaults to `.` when running via 
 - `auth_info/` - WhatsApp authentication (Baileys multi-file auth state)
 - `watchdog-state.json` - Timestamps of the connection watchdog's recent self-restarts (the `WATCHDOG_MAX_RESTARTS` cap) and whether a "reconectado" push is owed
 - `data/whatsapp.db` - SQLite database (chats, messages, contacts)
+- `outbox/` - the default `SEND_FILE_LOCAL_DIR`: the only place `send_file` reads a local path from. Nothing creates it; an operator who wants to send files from the server's own disk creates it and puts them there
 - `backups/hourly/whatsapp.db` - Rolling hourly snapshot (overwritten, WAL-safe)
 - `backups/daily/whatsapp-YYYY-MM-DD.db` - Per-day snapshots (14-day retention)
 - `backups/daily/auth_info-YYYY-MM-DD.tar.gz` - Per-day auth tarball
