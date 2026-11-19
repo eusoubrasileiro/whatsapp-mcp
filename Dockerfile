@@ -33,6 +33,12 @@ FROM node:24-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini wget ca-certificates sqlite3 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+# The user the server and the hub run as (scripts/container-entrypoint.sh drops to it). A fixed
+# uid that is neither 1000 (a login user on a typical host, which would then own the pairing on
+# the host's disk) nor 10001 (the media store's user).
+RUN groupadd --system --gid 10010 wamcp \
+    && useradd --system --uid 10010 --gid 10010 --no-create-home --home-dir /nonexistent \
+       --shell /usr/sbin/nologin wamcp
 WORKDIR /app/whatsapp-mcp
 
 # Bring over the linked baileys-client + whatsapp-mcp node_modules (incl. better-sqlite3 native binding).
@@ -68,5 +74,8 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s \
   CMD wget -q -O- http://127.0.0.1:39002/live || exit 1
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Starts as root only to hand /data to wamcp, then runs tini and the CMD as wamcp (uid 10010).
+# A volume written by an older root build is fixed on the first start, `minio/` excepted.
+COPY --chmod=0755 scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/container-entrypoint.sh"]
 CMD ["node", "--experimental-strip-types", "src/main.ts"]
