@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isWithin, type LocalSendConfig, readLocalSendConfig } from "./local-send-dir.ts";
 import {
   extensionFor,
   mimeFromExtension,
@@ -80,7 +81,7 @@ export function extFromMime(mime: string): string {
  * Turn a `file_path` argument from the `send_file` MCP tool into a raw buffer.
  *
  * Accepts three shapes (auto-detected by prefix):
- *   - absolute filesystem path (e.g. `/tmp/img.png`)
+ *   - absolute filesystem path inside the local send directory (`local-send-dir.ts`)
  *   - http(s) URL (fetched with 15s timeout, 16 MB cap)
  *   - data: URL (base64 only)
  *
@@ -88,7 +89,10 @@ export function extFromMime(mime: string): string {
  * message that names the detected shape and reason. Errors are caller-surfaced
  * via the MCP `send_file` tool, so phrasing matters for the agent UX.
  */
-export async function resolveMediaInput(input: string): Promise<ResolvedMedia> {
+export async function resolveMediaInput(
+  input: string,
+  local: LocalSendConfig = readLocalSendConfig(),
+): Promise<ResolvedMedia> {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error("send_file: file_path must be a non-empty string");
   }
@@ -115,27 +119,59 @@ export async function resolveMediaInput(input: string): Promise<ResolvedMedia> {
     throw new Error(`send_file: "${input}" is not an absolute path, http(s) URL, or data: URL`);
   }
 
-  return resolveLocalPath(input);
+  return resolveLocalPath(input, local);
 }
 
-async function resolveLocalPath(absPath: string): Promise<ResolvedMedia> {
+/**
+ * Reads `absPath` only when its real path (every symlink and `..` resolved) lies inside the real
+ * send directory and outside every protected directory. The final open refuses a symlink, so a
+ * link swapped in after the check is not followed either.
+ */
+async function resolveLocalPath(absPath: string, local: LocalSendConfig): Promise<ResolvedMedia> {
+  const root = await fs.realpath(local.root).catch(() => {
+    throw new Error(
+      `send_file: local files are only sent from ${local.root}, which does not exist on this server. ${SEND_INSTEAD}`,
+    );
+  });
   try {
-    const buffer = await fs.readFile(absPath);
-    if (buffer.length > MAX_MEDIA_BYTES) {
+    const real = await fs.realpath(absPath);
+    if (!isWithin(root, real)) {
       throw new Error(
-        `send_file: local file ${absPath} is ${buffer.length} bytes, exceeds 16 MB limit`,
+        `send_file: ${absPath} is outside ${local.root}, the only directory this server sends local files from. ${SEND_INSTEAD}`,
       );
     }
-    const ext = path.extname(absPath).slice(1).toLowerCase();
-    const sniffed = sniffMedia(buffer);
-    const mimetype = sniffed?.mimetype ?? mimeFromExtension(ext) ?? "application/octet-stream";
-    return { buffer, fileName: path.basename(absPath), mimetype };
+    for (const dir of local.protectedDirs) {
+      const protectedDir = await fs.realpath(dir).catch(() => null);
+      if (protectedDir !== null && isWithin(protectedDir, real)) {
+        throw new Error(`send_file: ${absPath} is in a directory this server never sends from`);
+      }
+    }
+    const handle = await fs.open(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new Error(`send_file: ${absPath} is not a regular file`);
+      if (stat.size > MAX_MEDIA_BYTES) {
+        throw new Error(
+          `send_file: local file ${absPath} is ${stat.size} bytes, exceeds 16 MB limit`,
+        );
+      }
+      const buffer = await handle.readFile();
+      const ext = path.extname(absPath).slice(1).toLowerCase();
+      const sniffed = sniffMedia(buffer);
+      const mimetype = sniffed?.mimetype ?? mimeFromExtension(ext) ?? "application/octet-stream";
+      return { buffer, fileName: path.basename(absPath), mimetype };
+    } finally {
+      await handle.close();
+    }
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("send_file:")) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`send_file: cannot read local file ${absPath}: ${reason}`);
   }
 }
+
+const SEND_INSTEAD =
+  "To send a file from elsewhere, POST it to /upload and pass the returned URL, or pass an http(s) or data: URL.";
 
 async function resolveHttpUrl(url: string): Promise<ResolvedMedia> {
   const controller = new AbortController();

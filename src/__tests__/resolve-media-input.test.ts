@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type LocalSendConfig, readLocalSendConfig } from "../local-send-dir.ts";
 import { resolveMediaInput } from "../media-input.ts";
 
 describe("resolveMediaInput", () => {
@@ -14,39 +15,201 @@ describe("resolveMediaInput", () => {
   });
 
   describe("local filesystem path", () => {
+    // Full PNG magic: 89 50 4E 47 0D 0A 1A 0A
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let base: string;
+    let root: string;
+    let local: LocalSendConfig;
     let tmpFile: string;
 
     beforeEach(() => {
-      tmpFile = path.join(os.tmpdir(), `resolve-media-${Date.now()}-${Math.random()}.bin`);
-      // Full PNG magic: 89 50 4E 47 0D 0A 1A 0A
-      fs.writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      base = fs.mkdtempSync(path.join(os.tmpdir(), "resolve-media-"));
+      root = path.join(base, "outbox");
+      fs.mkdirSync(root);
+      fs.mkdirSync(path.join(base, "auth_info"));
+      fs.writeFileSync(path.join(base, "auth_info", "creds.json"), '{"noiseKey":"secret"}');
+      local = { root, protectedDirs: [path.join(base, "auth_info")] };
+      tmpFile = path.join(root, "photo.bin");
+      fs.writeFileSync(tmpFile, PNG);
     });
 
     afterEach(() => {
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        // ignore
-      }
+      fs.rmSync(base, { recursive: true, force: true });
     });
 
-    it("reads an absolute path into a buffer with basename as fileName", async () => {
-      const result = await resolveMediaInput(tmpFile);
-      expect(result.buffer).toBeInstanceOf(Buffer);
-      expect(result.buffer.length).toBe(8);
-      expect(result.buffer[0]).toBe(0x89);
-      expect(result.fileName).toBe(path.basename(tmpFile));
+    it("reads a file inside the send directory with basename as fileName", async () => {
+      const result = await resolveMediaInput(tmpFile, local);
+      expect(result.buffer.equals(PNG)).toBe(true);
+      expect(result.fileName).toBe("photo.bin");
     });
 
     it("sniffs mimetype from magic bytes regardless of extension", async () => {
-      const result = await resolveMediaInput(tmpFile);
+      const result = await resolveMediaInput(tmpFile, local);
       expect(result.mimetype).toBe("image/png");
     });
 
+    it("falls back to the extension's mimetype when the bytes are not recognised", async () => {
+      const pdfLike = path.join(root, "notes.pdf");
+      fs.writeFileSync(pdfLike, "not really a pdf");
+      const result = await resolveMediaInput(pdfLike, local);
+      expect(result.mimetype).toBe("application/pdf");
+    });
+
     it("throws when the local file does not exist", async () => {
-      await expect(resolveMediaInput("/nonexistent/path/to/file.bin")).rejects.toThrow(
-        /local file/i,
+      await expect(resolveMediaInput(path.join(root, "missing.bin"), local)).rejects.toThrow(
+        /^send_file: cannot read local file .*missing\.bin/,
       );
+    });
+
+    it("refuses an existing file outside the send directory, naming the directory", async () => {
+      const outside = path.join(base, "elsewhere.png");
+      fs.writeFileSync(outside, PNG);
+      await expect(resolveMediaInput(outside, local)).rejects.toThrow(
+        `send_file: ${outside} is outside ${root}, the only directory this server sends local files from`,
+      );
+    });
+
+    it("refuses the pairing credentials", async () => {
+      await expect(
+        resolveMediaInput(path.join(base, "auth_info", "creds.json"), local),
+      ).rejects.toThrow(/outside/);
+    });
+
+    it("refuses a `..` path that climbs out of the send directory", async () => {
+      fs.writeFileSync(path.join(base, "secret.png"), PNG);
+      await expect(
+        resolveMediaInput(`${root}${path.sep}..${path.sep}secret.png`, local),
+      ).rejects.toThrow(/outside/);
+    });
+
+    it("refuses a symlink inside the send directory that points out of it", async () => {
+      const link = path.join(root, "innocent.png");
+      fs.symlinkSync(path.join(base, "auth_info", "creds.json"), link);
+      await expect(resolveMediaInput(link, local)).rejects.toThrow(/outside/);
+    });
+
+    it("refuses a sibling directory whose name only starts like the send directory", async () => {
+      const sibling = `${root}-other`;
+      fs.mkdirSync(sibling);
+      fs.writeFileSync(path.join(sibling, "x.png"), PNG);
+      await expect(resolveMediaInput(path.join(sibling, "x.png"), local)).rejects.toThrow(
+        /outside/,
+      );
+    });
+
+    it("reads a file whose name begins with two dots", async () => {
+      const dotted = path.join(root, "..photo.png");
+      fs.writeFileSync(dotted, PNG);
+      const result = await resolveMediaInput(dotted, local);
+      expect(result.fileName).toBe("..photo.png");
+    });
+
+    it("follows a send directory that is itself a symlink", async () => {
+      const linkedRoot = path.join(base, "linked-outbox");
+      fs.symlinkSync(root, linkedRoot);
+      const result = await resolveMediaInput(path.join(linkedRoot, "photo.bin"), {
+        ...local,
+        root: linkedRoot,
+      });
+      expect(result.buffer.equals(PNG)).toBe(true);
+    });
+
+    it("refuses a protected directory even when the send directory contains it", async () => {
+      await expect(
+        resolveMediaInput(path.join(base, "auth_info", "creds.json"), { ...local, root: base }),
+      ).rejects.toThrow(
+        `send_file: ${path.join(base, "auth_info", "creds.json")} is in a directory this server never sends from`,
+      );
+    });
+
+    it("still reads other files when the send directory contains a protected one", async () => {
+      const result = await resolveMediaInput(tmpFile, { ...local, root: base });
+      expect(result.buffer.equals(PNG)).toBe(true);
+    });
+
+    it("refuses a directory", async () => {
+      fs.mkdirSync(path.join(root, "folder"));
+      await expect(resolveMediaInput(path.join(root, "folder"), local)).rejects.toThrow(
+        `send_file: ${path.join(root, "folder")} is not a regular file`,
+      );
+    });
+
+    it("refuses a file over 16 MB without reading it", async () => {
+      const big = path.join(root, "big.bin");
+      fs.writeFileSync(big, "");
+      fs.truncateSync(big, 16 * 1024 * 1024 + 1);
+      await expect(resolveMediaInput(big, local)).rejects.toThrow(
+        `send_file: local file ${big} is 16777217 bytes, exceeds 16 MB limit`,
+      );
+    });
+
+    it("reads a file of exactly 16 MB", async () => {
+      const edge = path.join(root, "edge.bin");
+      fs.writeFileSync(edge, "");
+      fs.truncateSync(edge, 16 * 1024 * 1024);
+      const result = await resolveMediaInput(edge, local);
+      expect(result.buffer.length).toBe(16 * 1024 * 1024);
+    });
+
+    it("refuses every local path when the send directory does not exist", async () => {
+      const gone = path.join(base, "no-such-dir");
+      await expect(resolveMediaInput(tmpFile, { ...local, root: gone })).rejects.toThrow(
+        `send_file: local files are only sent from ${gone}, which does not exist on this server`,
+      );
+    });
+
+    it("tells the caller to upload the file or pass a URL instead", async () => {
+      await expect(resolveMediaInput("/etc/hostname", local)).rejects.toThrow(
+        /POST it to \/upload and pass the returned URL, or pass an http\(s\) or data: URL/,
+      );
+    });
+
+    it("reads the send directory from the environment by default", async () => {
+      vi.stubEnv("SEND_FILE_LOCAL_DIR", root);
+      vi.stubEnv("WHATSAPP_MCP_DATA_DIR", base);
+      try {
+        expect((await resolveMediaInput(tmpFile)).buffer.equals(PNG)).toBe(true);
+        await expect(resolveMediaInput(path.join(base, "auth_info", "creds.json"))).rejects.toThrow(
+          /outside/,
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
+
+  describe("readLocalSendConfig", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+
+    it("defaults to <data dir>/outbox and protects auth_info and data", () => {
+      expect(readLocalSendConfig({ WHATSAPP_MCP_DATA_DIR: "/data" })).toEqual({
+        root: "/data/outbox",
+        protectedDirs: ["/data/auth_info", "/data/data"],
+      });
+    });
+
+    it("uses the repository root as the data dir when none is set, like the pairing store", () => {
+      expect(readLocalSendConfig({})).toEqual({
+        root: path.join(repoRoot, "outbox"),
+        protectedDirs: [path.join(repoRoot, "auth_info"), path.join(repoRoot, "data")],
+      });
+    });
+
+    it("takes an absolute SEND_FILE_LOCAL_DIR, trimmed", () => {
+      expect(
+        readLocalSendConfig({ WHATSAPP_MCP_DATA_DIR: "/data", SEND_FILE_LOCAL_DIR: " /srv/out \n" })
+          .root,
+      ).toBe("/srv/out");
+    });
+
+    it.each([
+      ["relative", "outbox"],
+      ["empty", ""],
+      ["blank", "   "],
+    ])("ignores a %s SEND_FILE_LOCAL_DIR and keeps the default", (_kind, value) => {
+      expect(
+        readLocalSendConfig({ WHATSAPP_MCP_DATA_DIR: "/data", SEND_FILE_LOCAL_DIR: value }).root,
+      ).toBe("/data/outbox");
     });
   });
 
