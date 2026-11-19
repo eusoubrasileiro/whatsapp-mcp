@@ -41,6 +41,8 @@ services:
       MEDIA_PUBLIC_BASE_URL: http://localhost:9000/amiticia-media
       TENANT_ID: default
       MCP_TRANSPORT: httpstream
+      # Local development only: no MCP_AUTH_TOKEN, so the MCP endpoint and /upload accept anyone.
+      MCP_ALLOW_NO_AUTH: "true"
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "3001"
       PUBLIC_QR_URL: http://localhost:39002/qr.png
