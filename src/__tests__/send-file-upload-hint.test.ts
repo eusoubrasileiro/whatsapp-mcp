@@ -86,3 +86,11 @@ describe("send_file upload hint", () => {
     expect(Object.keys(after.parameters.shape)).toEqual(Object.keys(before.parameters.shape));
   });
 });
+
+describe("send_file description", () => {
+  it("says local paths are read only from the server's send directory", () => {
+    expect(sendFile().description).toContain(
+      "(c) absolute path of a file ON THE MCP SERVER, inside its send directory (SEND_FILE_LOCAL_DIR, default <data dir>/outbox; any other path is refused)",
+    );
+  });
+});

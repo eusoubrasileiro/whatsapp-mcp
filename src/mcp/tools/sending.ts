@@ -114,7 +114,7 @@ export function registerSendingTools(server: ToolRegistrar, deps: ToolDeps): voi
   server.addTool({
     name: "send_file",
     description:
-      "Send a file (image, video, document, audio) to a contact or group. file_path accepts: (a) http(s) URL, (b) base64 data: URL — context-heavy, only viable for tiny payloads, (c) absolute path that exists ON THE MCP SERVER (NOT your local disk — the server runs in a remote Docker container and cannot read host files). To send a host-disk file: POST raw bytes to `<MCP host>/upload` (Bearer auth = MCP_AUTH_TOKEN), receive `{url}`, then pass that URL here. Max 16 MB. For type=image the bytes must be JPEG or PNG (WebP screenshots are rejected — convert to PNG first).",
+      "Send a file (image, video, document, audio) to a contact or group. file_path accepts: (a) http(s) URL, (b) base64 data: URL — context-heavy, only viable for tiny payloads, (c) absolute path of a file ON THE MCP SERVER, inside its send directory (SEND_FILE_LOCAL_DIR, default <data dir>/outbox; any other path is refused) — NOT your local disk: the server runs in a remote Docker container and cannot read host files. To send a host-disk file: POST raw bytes to `<MCP host>/upload` (Bearer auth = MCP_AUTH_TOKEN), receive `{url}`, then pass that URL here. Max 16 MB. For type=image the bytes must be JPEG or PNG (WebP screenshots are rejected — convert to PNG first).",
     parameters: z.object({
       recipient: z.string().describe("Recipient JID"),
       file_path: z
