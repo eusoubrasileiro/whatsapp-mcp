@@ -476,5 +476,18 @@ describe("outboundRequest", () => {
         outboundRequest(`http://media.test:${deadPort}/`, { ...base, ...asIfPublic }),
       ).rejects.toMatchObject({ kind: "network" });
     });
+
+    it("keeps the reason of a failure that is not an Error object", async () => {
+      const failing = ((_hostname, _options, callback) => {
+        callback("resolver unavailable" as unknown as NodeJS.ErrnoException, []);
+      }) as LookupAll;
+      await expect(
+        outboundRequest(`http://media.test:${port}/`, {
+          ...base,
+          ...asIfPublic,
+          lookup: failing,
+        }),
+      ).rejects.toMatchObject({ kind: "network", message: "resolver unavailable" });
+    });
   });
 });
