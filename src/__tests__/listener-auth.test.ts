@@ -3,6 +3,7 @@ import {
   allowsNoAuth,
   assertListenersGuarded,
   authenticateMcpRequest,
+  openEndpointWarning,
   readAuthToken,
 } from "../listener-auth.ts";
 
@@ -56,6 +57,17 @@ describe("assertListenersGuarded", () => {
     expect(() => assertListenersGuarded(env)).toThrow(
       `MCP_AUTH_TOKEN is not set, so ${open} would accept anyone. Set MCP_AUTH_TOKEN, or MCP_ALLOW_NO_AUTH=true on a development machine.`,
     );
+  });
+});
+
+describe("openEndpointWarning", () => {
+  it("warns only when there is no token and the flag opens the endpoint", () => {
+    expect(openEndpointWarning(undefined, true)).toBe(
+      "MCP_ALLOW_NO_AUTH=true and no MCP_AUTH_TOKEN — the HTTP MCP endpoint accepts anyone. Development only.",
+    );
+    expect(openEndpointWarning(undefined, false)).toBeNull();
+    expect(openEndpointWarning("t", true)).toBeNull();
+    expect(openEndpointWarning("t", false)).toBeNull();
   });
 });
 

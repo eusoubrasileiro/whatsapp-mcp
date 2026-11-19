@@ -32,6 +32,16 @@ export function assertListenersGuarded(env: NodeJS.ProcessEnv = process.env): vo
   );
 }
 
+/** The startup warning when the HTTP endpoint runs open by the flag; `null` otherwise. */
+export function openEndpointWarning(
+  token: string | undefined,
+  allowNoAuth: boolean,
+): string | null {
+  return token === undefined && allowNoAuth
+    ? "MCP_ALLOW_NO_AUTH=true and no MCP_AUTH_TOKEN — the HTTP MCP endpoint accepts anyone. Development only."
+    : null;
+}
+
 /**
  * FastMCP's `authenticate`: returns for an allowed request, throws a 401 `Response` otherwise.
  * `request` is `undefined` over stdio.

@@ -2,7 +2,12 @@ import { FastMCP } from "fastmcp";
 import type { Logger } from "pino";
 
 import { type InstanceIdentity, identityParagraph } from "./instance-identity.ts";
-import { allowsNoAuth, authenticateMcpRequest, readAuthToken } from "./listener-auth.ts";
+import {
+  allowsNoAuth,
+  authenticateMcpRequest,
+  openEndpointWarning,
+  readAuthToken,
+} from "./listener-auth.ts";
 import { registerActionsTools } from "./mcp/tools/actions.ts";
 import { registerChatsTools } from "./mcp/tools/chats.ts";
 import { registerConnectionTools } from "./mcp/tools/connection.ts";
@@ -58,11 +63,8 @@ export async function startMcpServer(
   // check below fails closed on its own as well (src/listener-auth.ts).
   const authToken = readAuthToken();
   const allowNoAuth = allowsNoAuth();
-  if (!authToken && allowNoAuth) {
-    mcpLogger.warn(
-      "MCP_ALLOW_NO_AUTH=true and no MCP_AUTH_TOKEN — the HTTP MCP endpoint accepts anyone. Development only.",
-    );
-  }
+  const warning = openEndpointWarning(authToken, allowNoAuth);
+  if (warning) mcpLogger.warn(warning);
 
   const server = new FastMCP({
     name: "whatsapp-baileys-ts",
